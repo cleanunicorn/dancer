@@ -330,7 +330,7 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			case v.Action == actionAsk:
 				c.askAboutResume(ctx, tt, v)
 			case v.Action == actionAbandon:
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
+				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventNotice, Thread: t.Thread, TaskID: t.ID, Task: &tt,
 					Text: "⏹️ dancer is back — leaving this task: " + reasonOr(v.Reason, "it is no longer worth continuing") +
 						". " + capitalize(pickUpHint(tt))})
 			case tt.Status == store.StatusIdle:
@@ -338,7 +338,7 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				if v.Reason != "" {
 					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
 				}
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
+				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventNotice, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
 			}
 		}
 	}

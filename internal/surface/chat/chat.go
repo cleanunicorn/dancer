@@ -12,7 +12,8 @@
 // duration, tool count and cost.
 //
 // The lines that need the human — a turn's closing line, an error, a
-// permission or question prompt — address the task's requester
+// permission or question prompt, a notice that a restart left the task
+// for them to pick up — address the task's requester
 // (transport.Outbound.Mention), so whoever started the task is notified
 // even with the thread muted, and nobody else is.
 package chat
@@ -166,6 +167,8 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		return s.endWith(ev.Thread, say("✅ thread closed — mention me here to pick it up again"))
 	case surface.EventReply, surface.EventAllowed:
 		msgs = say(ev.Text)
+	case surface.EventNotice:
+		msgs = tell(ev.Text)
 	case surface.EventError:
 		if t := s.turns[ev.Thread]; t != nil {
 			t.errored = true

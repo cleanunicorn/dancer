@@ -129,6 +129,7 @@ const (
 	EventHeartbeat  EventKind = "heartbeat"  // the task is still at it (or just stopped being); Task.Status says which
 	EventClosed     EventKind = "closed"     // the conversation on Thread was closed
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
+	EventNotice     EventKind = "notice"     // Text is dancer's own word on Task that asks the human to act (a restart left it for them)
 	EventError      EventKind = "error"      // Text explains a failure
 )
 

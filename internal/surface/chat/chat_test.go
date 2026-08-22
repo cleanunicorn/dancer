@@ -105,6 +105,8 @@ func TestRenderMentionsRequester(t *testing.T) {
 		{"result", ev(surface.EventAgent, &agent.Event{Type: agent.EventResult, Cost: 0.1}), "U42"},
 		{"agent error", ev(surface.EventAgent, &agent.Event{Type: agent.EventError, Text: "boom"}), "U42"},
 		{"error", surface.Event{Kind: surface.EventError, Thread: th, TaskID: task.ID, Task: task, Text: "send: closed"}, "U42"},
+		{"notice", surface.Event{Kind: surface.EventNotice, Thread: th, TaskID: task.ID, Task: task, Text: "▶️ dancer is back — reply to continue"}, "U42"},
+		{"reply", surface.Event{Kind: surface.EventReply, Thread: th, TaskID: task.ID, Task: task, Text: "task `t1` — status *idle*"}, ""},
 		{"failed", surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Requester: "U42", Status: store.StatusFailed}}, "U42"},
 		{"cancelled", surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Requester: "U42", Status: store.StatusCancelled}}, ""},
 		{"no task", surface.Event{Kind: surface.EventQuestion, Thread: th, PromptID: "p2", Question: &agent.Question{Text: "Which agent?"}}, ""},
