@@ -209,10 +209,13 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	}
 	text := address(msg.Text, msg.Mention)
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
+		// A section block holds 3000 characters; a longer prompt (a tool
+		// input nobody capped) is cut rather than rejected with the
+		// buttons, which would leave the agent waiting on nobody.
 		opts = append(opts,
 			slack.MsgOptionText(text, false),
 			slack.MsgOptionBlocks(
-				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, text, false, false), nil, nil),
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, truncate(text, 2900), false, false), nil, nil),
 				slack.NewActionBlock(msg.Prompt.ID, promptElements(msg.Prompt)...),
 			))
 		_, _, err := c.api.PostMessageContext(ctx, chID, opts...)
