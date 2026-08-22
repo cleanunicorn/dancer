@@ -35,6 +35,15 @@ type TaskState struct {
 	Session    string
 	Status     string // "queued", "running", "waiting_permission", "done", "failed"
 	LastSeq    int64
+	// Prompt is the last prompt handed to the agent. A restart re-runs a
+	// task that never reached a session with it.
+	Prompt string
+	// Resumes counts consecutive automatic resumes after a restart, so a
+	// task that keeps dying with dancer cannot restart-loop forever. It is
+	// cleared by any turn that ends on its own.
+	Resumes int
+	// UpdatedAt is when the projection was last written (set by the store).
+	UpdatedAt time.Time
 }
 
 // Store persists the log and projections.

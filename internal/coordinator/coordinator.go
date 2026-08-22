@@ -57,6 +57,18 @@ type Coordinator struct {
 	// store (the config file), so it survives a re-seed on restart. Nil
 	// keeps it in the store only.
 	SaveDefinition func(ctx context.Context, d agent.Definition) error
+	// AutoResume continues tasks that a restart cut short as soon as dancer
+	// is back, instead of waiting for a message on their thread.
+	AutoResume bool
+	// ResumePrompt is what an auto-resumed session is told; empty uses
+	// defaultResumePrompt.
+	ResumePrompt string
+	// AutoResumeWithin skips tasks last touched longer ago than this, so a
+	// restart after a long stop does not relaunch stale work (default 12h).
+	AutoResumeWithin time.Duration
+	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
+	// task that keeps taking dancer down cannot restart-loop (default 3).
+	MaxAutoResumes int
 
 	drives sync.WaitGroup
 
@@ -141,6 +153,10 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 		live[th] = id
 	}
 	c.mu.Unlock()
+	tail := "reply in this thread to resume"
+	if c.AutoResume {
+		tail = "it continues on its own when dancer is back"
+	}
 	for th, id := range live {
 		st, err := c.Store.GetTask(sctx, id)
 		if err != nil {
@@ -148,7 +164,7 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 		}
 		c.Log.Info("shutdown: notifying live task", "task", id, "thread", th)
 		c.emitTo(sctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: th, TaskID: id, Task: &st,
-			Text: "⏸️ dancer is restarting — the agent finishes its current step and stops; reply in this thread to resume"})
+			Text: "⏸️ dancer is restarting — the agent finishes its current step and stops; " + tail})
 	}
 
 	done := make(chan struct{})
@@ -183,31 +199,116 @@ func (c *Coordinator) seedThreads(ctx context.Context) {
 	c.Log.Info("seeded transport threads", "threads", n)
 }
 
-// recover marks tasks that were live before a restart as idle; their
-// sessions are resumable with the next message on the thread.
+// defaultResumePrompt is the turn given to a session that a restart cut
+// short. It has to stand on its own: the agent sees it as the next user
+// message of the resumed session.
+const defaultResumePrompt = "dancer restarted and cut your last turn short. Continue the work in progress from where it stopped, without waiting for further instructions. If the task was already finished, say so in one line instead of redoing it."
+
+// recover picks up the tasks that a restart cut short. With AutoResume
+// each of them continues on its own — resumed from its session, or started
+// again when it never got one — so nobody has to type in the thread; the
+// rest are marked idle and resume with the next message.
 func (c *Coordinator) recover(ctx context.Context) error {
+	var resume []store.TaskState
 	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued, store.StatusInterrupted} {
 		tasks, err := c.Store.ListTasks(ctx, status)
 		if err != nil {
 			return err
 		}
 		for _, t := range tasks {
-			t.Status = store.StatusIdle
-			if t.Session == "" {
+			auto := c.autoResumable(t)
+			switch {
+			case auto:
+				t.Status = store.StatusIdle
+				t.Resumes++
+			case t.Session == "":
 				t.Status = store.StatusFailed
+			default:
+				t.Status = store.StatusIdle
 			}
 			if err := c.Store.PutTask(ctx, t); err != nil {
 				return err
 			}
-			c.Log.Info("recovered task", "task", t.ID, "status", t.Status)
-			if t.Status == store.StatusIdle {
-				tt := t
+			c.Log.Info("recovered task", "task", t.ID, "status", t.Status, "auto_resume", auto, "resumes", t.Resumes)
+			tt := t
+			switch {
+			case auto:
+				resume = append(resume, tt)
+			case tt.Status == store.StatusIdle:
 				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
 					Text: "▶️ dancer is back — reply in this thread to continue where the agent left off"})
 			}
 		}
 	}
+	for _, t := range resume {
+		c.autoResume(ctx, t)
+	}
 	return nil
+}
+
+// autoResumable reports whether a task cut short by a restart may continue
+// by itself: AutoResume is on, there is something to continue from (a
+// session, or the prompt of a task that never started), it was touched
+// recently enough, and it has not already been resumed too many times.
+func (c *Coordinator) autoResumable(t store.TaskState) bool {
+	if !c.AutoResume {
+		return false
+	}
+	if t.Session == "" && strings.TrimSpace(t.Prompt) == "" {
+		return false
+	}
+	max := c.MaxAutoResumes
+	if max <= 0 {
+		max = 3
+	}
+	if t.Resumes >= max {
+		c.Log.Warn("task not auto-resumed: too many restarts", "task", t.ID, "resumes", t.Resumes)
+		return false
+	}
+	within := c.AutoResumeWithin
+	if within <= 0 {
+		within = 12 * time.Hour
+	}
+	if !t.UpdatedAt.IsZero() && time.Since(t.UpdatedAt) > within {
+		c.Log.Info("task not auto-resumed: too old", "task", t.ID, "age", time.Since(t.UpdatedAt).Round(time.Minute))
+		return false
+	}
+	return true
+}
+
+// autoResume drives one recovered task without waiting for a message.
+func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState) {
+	prompt, note := c.resumePrompt(), "▶️ dancer is back — picking up this task where the agent left off"
+	if t.Session == "" {
+		// The task never reached a session: run the original request again.
+		prompt, note = t.Prompt, "▶️ dancer is back — this task never started, running it again"
+	}
+	if t.Definition.Environment.Workdir == "" && c.WorkdirRoot != "" {
+		t.Definition.Environment.Workdir = filepath.Join(c.WorkdirRoot, string(t.ID))
+	}
+	c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &t, Text: note})
+	c.bind(t.Thread, t.ID, c.surfaceOn(t.Transport))
+	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: t.Thread, TaskID: t.ID, Task: &t})
+	c.Log.Info("auto-resuming task", "task", t.ID, "thread", t.Thread, "session", t.Session)
+	c.drives.Add(1)
+	go c.drive(ctx, t, prompt)
+}
+
+func (c *Coordinator) resumePrompt() string {
+	if strings.TrimSpace(c.ResumePrompt) != "" {
+		return c.ResumePrompt
+	}
+	return defaultResumePrompt
+}
+
+// surfaceOn names a surface bound to a transport (for task ownership).
+func (c *Coordinator) surfaceOn(transportName string) string {
+	for _, s := range c.Surfaces {
+		if transportName == "" || s.Transport() == transportName {
+			return s.Name()
+		}
+	}
+	return ""
 }
 
 // handle offers an inbound message to the surfaces on its transport and
@@ -439,6 +540,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt string) {
 	defer c.drives.Done()
 	st.Status = store.StatusRunning
+	st.Prompt = prompt
 	_ = c.Store.PutTask(ctx, st)
 	sink := &taskSink{c: c, state: st}
 	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session}, sink)
@@ -499,6 +601,7 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		s.state.Status = store.StatusWaitingPermission
 	case agent.EventResult, agent.EventError:
 		s.state.Status = store.StatusIdle
+		s.state.Resumes = 0 // the agent got through a turn; not a restart loop
 	default:
 		s.state.Status = store.StatusRunning
 	}

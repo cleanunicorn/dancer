@@ -9,6 +9,10 @@ drain_timeout = "2m"        # on restart, let in-flight tool calls finish before
 verbose = false             # true: post every tool call to the thread
 default_agent = "coder"     # used by `run <prompt>` without an agent name
 transports = ["slack"]      # "slack", "terminal"
+auto_resume = true          # after a restart, continue cut-short tasks without waiting for a reply
+auto_resume_within = "12h"  # skip tasks last touched longer ago than this
+max_auto_resumes = 3        # consecutive automatic resumes of one task before it waits for a human
+# resume_prompt = "Continue where you left off."   # what an auto-resumed session is told
 
 [claude]
 binary = "claude"
