@@ -129,7 +129,7 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 			// Never got a session: there is nothing to resume, and the
 			// question's own hint said so. Start it again by hand.
 			c.emitTo(ctx, st.Transport, surface.Event{Kind: surface.EventNotice, Thread: st.Thread, TaskID: st.ID, Task: &st,
-				Text: "this task never started — " + pickUpHint(st)})
+				Text: "⏹️ this task never started — " + pickUpHint(st)})
 			return
 		}
 		st.Resumes++
