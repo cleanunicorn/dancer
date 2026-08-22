@@ -35,6 +35,9 @@ type TaskState struct {
 	// Requester is the transport user id of the human who started the
 	// task. Surfaces address them when the agent finishes or waits for
 	// an answer, so a muted thread still reaches the one person it is for.
+	// Set once when the task is created and never reassigned: a follow-up
+	// by someone else still addresses the original requester. Empty for
+	// tasks recorded before the column existed, which address nobody.
 	Requester string
 	Session   string
 	Status    string // "queued", "running", "waiting_permission", "done", "failed"
