@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -92,8 +93,8 @@ type Claude struct {
 // answer everything, which is also the fallback whenever the decider
 // fails, times out or answers something unacceptable.
 type Decider struct {
-	Kind  string `toml:"kind"`  // "off" (default) | "claude"
-	Model string `toml:"model"` // default "haiku"
+	Kind  string `toml:"kind"`  // "off" (default) | "claude" | "openai"
+	Model string `toml:"model"` // claude: default "haiku"; openai: required, the endpoint's own name
 	// Uses lists the question kinds the decider may answer ("resume",
 	// "permission").
 	// Empty means none, so switching it on is deliberate per kind.
@@ -105,6 +106,18 @@ type Decider struct {
 	// every permission prompt still reaches a person.
 	AutoAllow  []string `toml:"auto_allow"`
 	MaxPerTask int      `toml:"max_per_task"`
+	// OpenAI configures kind = "openai": any endpoint that speaks the
+	// OpenAI chat-completions shape (OpenAI, DeepSeek, Groq, Mistral,
+	// OpenRouter, a local Ollama or vLLM).
+	OpenAI OpenAI `toml:"openai"`
+}
+
+// OpenAI points the "openai" decider at an endpoint. The key lives here,
+// next to the Slack tokens, in the 0600 config file; empty sends no
+// Authorization header at all, which is what a local server wants.
+type OpenAI struct {
+	BaseURL string `toml:"base_url"` // default "https://api.openai.com/v1"; "/chat/completions" is appended
+	APIKey  string `toml:"api_key"`  // bearer token; "" for servers that need none
 }
 
 // Enabled reports whether a decider other than the built-in rules is set.
@@ -246,8 +259,11 @@ func (c *Config) applyDefaults(path string) {
 	if c.Decider.Kind == "" {
 		c.Decider.Kind = "off"
 	}
-	if c.Decider.Model == "" {
-		c.Decider.Model = "haiku"
+	if c.Decider.Model == "" && c.Decider.Kind == "claude" {
+		c.Decider.Model = "haiku" // only claude has a model every install can name
+	}
+	if c.Decider.OpenAI.BaseURL == "" {
+		c.Decider.OpenAI.BaseURL = "https://api.openai.com/v1"
 	}
 	if c.Decider.Timeout.Duration == 0 {
 		c.Decider.Timeout.Duration = 15 * time.Second
@@ -316,8 +332,16 @@ func (c *Config) ChannelAgents() map[string]string {
 func (c *Config) validate() error {
 	switch c.Decider.Kind {
 	case "off", "claude":
+	case "openai":
+		if c.Decider.Model == "" {
+			return fmt.Errorf("config: decider kind \"openai\" needs a model (e.g. \"gpt-4o-mini\", \"deepseek-chat\")")
+		}
+		u, err := url.Parse(c.Decider.OpenAI.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("config: decider.openai.base_url %q is not an http(s) URL", c.Decider.OpenAI.BaseURL)
+		}
 	default:
-		return fmt.Errorf("config: unknown decider kind %q (off|claude)", c.Decider.Kind)
+		return fmt.Errorf("config: unknown decider kind %q (off|claude|openai)", c.Decider.Kind)
 	}
 	for _, u := range c.Decider.Uses {
 		if u != "resume" && u != "permission" {

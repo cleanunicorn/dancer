@@ -23,8 +23,8 @@ binary = "claude"
 # the decider fails, times out or answers something outside the options.
 
 [decider]
-kind = "off"                # off | claude
-model = "haiku"
+kind = "off"                # off | claude | openai
+model = "haiku"             # claude: haiku/sonnet/…; openai: the endpoint's model name, required
 uses = ["resume"]           # question kinds it may answer: resume, permission; [] = never asked
 timeout = "15s"
 max_per_task = 20           # questions one task may cost before the rules take over
@@ -32,6 +32,14 @@ max_per_task = 20           # questions one task may cost before the rules take 
 # asking you. Same syntax as a definition's allowed_tools. Empty (the default)
 # means every permission prompt still reaches you, whatever the decider thinks.
 auto_allow = []             # e.g. ["Read", "Glob", "Grep", "Bash(go test:*)"]
+# kind = "openai" talks to any OpenAI-compatible chat endpoint: OpenAI itself,
+# DeepSeek, Groq, Mistral, OpenRouter, a local Ollama or vLLM. Set model above
+# to the endpoint's own name (haiku is a claude name), e.g.
+#   kind = "openai"
+#   model = "gpt-4o-mini"
+[decider.openai]
+base_url = "https://api.openai.com/v1"   # e.g. "https://api.deepseek.com/v1", "http://localhost:11434/v1"
+api_key = ""                             # the key itself; this file is 0600. Empty = no Authorization header (local servers)
 
 [docker]
 binary = "docker"

@@ -294,13 +294,35 @@ word the resume in the task's own terms. See [DECIDER.md](DECIDER.md).
 
 ```toml
 [decider]
-kind = "claude"       # off (default) | claude
+kind = "claude"       # off (default) | claude | openai
 model = "haiku"
 uses = ["resume", "permission"]   # question kinds it may answer; [] = never asked
 timeout = "15s"
 max_per_task = 20
 auto_allow = ["Read", "Glob", "Grep", "Bash(go test:*)"]   # see "permission" below
 ```
+
+`kind = "claude"` runs the `claude` CLI you already have. `kind = "openai"`
+talks to any OpenAI-compatible endpoint instead — OpenAI, DeepSeek, Groq,
+Mistral, OpenRouter, or a local Ollama/vLLM — and then `model` is the
+endpoint's own model name:
+
+```toml
+[decider]
+kind = "openai"
+model = "gpt-4o-mini"                      # or "deepseek-chat", "llama3.2", …
+[decider.openai]
+base_url = "https://api.openai.com/v1"     # "https://api.deepseek.com/v1", "http://localhost:11434/v1"
+api_key = "sk-…"                           # leave out for a local server that needs none
+```
+
+The key lives in `config.toml` next to your Slack tokens (the file is
+`0600`); nothing is read from the environment. `dancer doctor` calls the
+endpoint's `/models` with that key and fails the check if it is unreachable
+or the key is rejected — the one misconfiguration that would otherwise fall
+back to the rules silently on every question. No `temperature` or
+`response_format` is sent, so reasoning models and minimal endpoints work
+as-is.
 
 On a restart it judges each cut-short task from the tail of its own thread —
 the last thing you asked, the agent's last words, its recent tool calls, the

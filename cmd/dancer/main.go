@@ -156,7 +156,15 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	c.WorkdirRoot = cfg.Server.WorkdirRoot
 	c.DrainTimeout = cfg.Server.DrainTimeout.Duration
 	if cfg.Decider.Enabled() {
-		c.Decider = decider.Claude{Binary: cfg.Claude.Binary, Model: cfg.Decider.Model, Timeout: cfg.Decider.Timeout.Duration}
+		switch cfg.Decider.Kind {
+		case "claude":
+			c.Decider = decider.Claude{Binary: cfg.Claude.Binary, Model: cfg.Decider.Model, Timeout: cfg.Decider.Timeout.Duration}
+		case "openai":
+			c.Decider = decider.OpenAI{BaseURL: cfg.Decider.OpenAI.BaseURL, APIKey: cfg.Decider.OpenAI.APIKey,
+				Model: cfg.Decider.Model, Timeout: cfg.Decider.Timeout.Duration}
+		default:
+			return fmt.Errorf("unknown decider kind %q", cfg.Decider.Kind)
+		}
 		c.DeciderUses = cfg.Decider.Uses
 		c.DeciderTimeout = cfg.Decider.Timeout.Duration
 		c.MaxDecisionsPerTask = cfg.Decider.MaxPerTask
