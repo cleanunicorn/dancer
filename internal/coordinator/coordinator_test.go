@@ -562,8 +562,8 @@ func TestChannelDefaultsAndRunPicker(t *testing.T) {
 	if o := tr.waitFor(t, th, "wants to run"); o.Mention != "u1" {
 		t.Errorf("permission prompt addressed to %q, want the one who typed `run`", o.Mention)
 	}
-	if st, err := st.LatestTaskForThread(ctx, th); err != nil || st.Requester != "u1" {
-		t.Errorf("requester = %q err=%v", st.Requester, err)
+	if ts, err := st.LatestTaskForThread(ctx, th); err != nil || ts.Requester != "u1" {
+		t.Errorf("requester = %q err=%v", ts.Requester, err)
 	}
 
 	// `run <agent>` without a prompt asks for the prompt; a typed agent
