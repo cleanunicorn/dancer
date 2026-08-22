@@ -331,15 +331,27 @@ func boolStr(b bool) string {
 	return "false"
 }
 
-func TestFilePathRE(t *testing.T) {
-	text := "Screenshots: `/tmp/settings-top.png` and ![mid](out/mid.jpeg). Also /etc/passwd, shot.webp, and notafile.png."
-	var got []string
-	for _, m := range filePathRE.FindAllStringSubmatch(text, -1) {
-		got = append(got, m[1])
+func TestMentionedPaths(t *testing.T) {
+	cases := []struct {
+		text string
+		want []string
+	}{
+		{"Screenshots: `/tmp/settings-top.png` and ![mid](out/mid.jpeg). Also /etc/passwd, shot.webp, and notafile.png.",
+			[]string{"/tmp/settings-top.png", "out/mid.jpeg", "shot.webp", "notafile.png"}},
+		// adjacent lines (the bug: the newline was consumed as a trailing delimiter)
+		{"/tmp/settings-general.png\n/tmp/settings-mid.png\n/tmp/settings-full.png",
+			[]string{"/tmp/settings-general.png", "/tmp/settings-mid.png", "/tmp/settings-full.png"}},
+		{"a.png b.png c.png", []string{"a.png", "b.png", "c.png"}},
+		{"- `/tmp/a.png` — top\n- `/tmp/b.png` — mid", []string{"/tmp/a.png", "/tmp/b.png"}},
+		// longer tokens are not files
+		{"see shot.png.bak and shot.pngx and a/b.png/c", nil},
+		{"Saved to /tmp/report.pdf.", []string{"/tmp/report.pdf"}},
 	}
-	want := []string{"/tmp/settings-top.png", "out/mid.jpeg", "shot.webp", "notafile.png"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("paths = %v, want %v", got, want)
+	for _, c := range cases {
+		got := mentionedPaths(c.text)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%q: paths = %v, want %v", c.text, got, c.want)
+		}
 	}
 }
 

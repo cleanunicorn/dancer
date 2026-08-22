@@ -181,8 +181,44 @@ func events(run agent.Run) <-chan agent.Event { return run.Events() }
 
 // filePathRE finds file paths with a shareable extension in agent text:
 // absolute (/tmp/shot.png), relative with a directory (out/report.pdf) or
-// bare (shot.png). Surrounding markdown/backticks are tolerated.
-var filePathRE = regexp.MustCompile(`(?i)(?:^|[\s` + "`" + `("'\[<])((?:/|\./|~/)?(?:[\w.@-]+/)*[\w.@-]+\.(?:png|jpe?g|gif|webp|svg|pdf|mp4|webm|mov|txt|md|csv|json|log|html?|zip|tar\.gz|diff|patch))(?:[\s` + "`" + `)"'\]>.,;:]|$)`)
+// bare (shot.png). Surrounding markdown/backticks are tolerated. The
+// trailing boundary is checked in code (pathEndsAt) rather than consumed
+// by the pattern, so paths on adjacent lines or separated by one space
+// are all found.
+var filePathRE = regexp.MustCompile(`(?im)(?:^|[\s` + "`" + `("'\[<])((?:/|\./|~/)?(?:[\w.@-]+/)*[\w.@-]+\.(?:png|jpe?g|gif|webp|svg|pdf|mp4|webm|mov|txt|md|csv|json|log|html?|zip|tar\.gz|diff|patch))`)
+
+// pathEndsAt reports whether a path match ending at end is not just the
+// prefix of a longer token (shot.png.bak, shot.pngx, a/b.png/c).
+func pathEndsAt(text string, end int) bool {
+	if end >= len(text) {
+		return true
+	}
+	c := text[end]
+	switch {
+	case c == '/' || c == '-' || c == '_' || c == '@':
+		return false
+	case c >= '0' && c <= '9', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
+		return false
+	case c == '.':
+		if end+1 < len(text) {
+			n := text[end+1]
+			return !(n >= '0' && n <= '9' || n >= 'a' && n <= 'z' || n >= 'A' && n <= 'Z' || n == '_')
+		}
+	}
+	return true
+}
+
+// mentionedPaths returns the candidate file paths in text, in order.
+func mentionedPaths(text string) []string {
+	var out []string
+	for _, m := range filePathRE.FindAllStringSubmatchIndex(text, -1) {
+		start, end := m[2], m[3]
+		if pathEndsAt(text, end) {
+			out = append(out, text[start:end])
+		}
+	}
+	return out
+}
 
 // attachFiles pulls files the agent mentioned out of its environment.
 func (e *Executor) attachFiles(ctx context.Context, env environment.Environment, text string, sent map[string]bool) []agent.File {
@@ -198,8 +234,7 @@ func (e *Executor) attachFiles(ctx context.Context, env environment.Environment,
 		maxFiles = 10
 	}
 	var out []agent.File
-	for _, m := range filePathRE.FindAllStringSubmatch(text, -1) {
-		p := m[1]
+	for _, p := range mentionedPaths(text) {
 		if sent[p] || len(out) >= maxFiles {
 			continue
 		}
