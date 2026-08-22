@@ -11,6 +11,9 @@ GROUP_  ?= $(shell id -gn)
 HOME_   ?= $(shell getent passwd $(USER_) | cut -d: -f6)
 UNIT    ?= /etc/systemd/system/dancer.service
 GO      ?= go
+# BIN and the unit live under root-owned prefixes. Set SUDO= (empty) to install
+# into a prefix you already own, e.g. `make install BIN=$$HOME/bin/dancer SUDO=`.
+SUDO    ?= sudo
 
 # auto-update: a root-owned deploy clone, polled by a systemd timer
 REPO       ?= $(shell git remote get-url origin)
@@ -81,12 +84,12 @@ tidy: ## go mod tidy
 
 ## ---- install as a service -----------------------------------------------------
 
-install: build ## Copy the binary to BIN=$(BIN)
-	install -d $(dir $(BIN))
-	install -m 0755 bin/dancer $(BIN)
+install: build ## Copy the binary to BIN=$(BIN)   (SUDO= to skip sudo)
+	$(SUDO) install -d $(dir $(BIN))
+	$(SUDO) install -m 0755 bin/dancer $(BIN)
 
 uninstall: ## Remove the binary
-	-sudo rm -f $(BIN)
+	-$(SUDO) rm -f $(BIN)
 
 service-install: install ## Install + enable + start the systemd unit for USER_=$(USER_)
 	sed -e 's|__USER__|$(USER_)|g' -e 's|__GROUP__|$(GROUP_)|g' -e 's|__HOME__|$(HOME_)|g' -e 's|__BIN__|$(BIN)|g' \
