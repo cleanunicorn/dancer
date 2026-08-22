@@ -512,6 +512,13 @@ func TestChannelDefaultsAndRunPicker(t *testing.T) {
 	// Plain text follows the channel default, else the global one.
 	tr.say("C-review/1.0", "look at this")
 	tr.waitFor(t, "C-review/1.0", "started with agent *reviewer*")
+	// ...and records who asked, like `run` does.
+	if o := tr.waitFor(t, "C-review/1.0", "wants to run"); o.Mention != "u1" {
+		t.Errorf("default-agent prompt addressed to %q, want u1", o.Mention)
+	}
+	if ts, err := st.LatestTaskForThread(ctx, "C-review/1.0"); err != nil || ts.Requester != "u1" {
+		t.Errorf("default-agent requester = %q err=%v", ts.Requester, err)
+	}
 	tr.say("C-dev/1.0", "build this")
 	tr.waitFor(t, "C-dev/1.0", "started with agent *coder*")
 
