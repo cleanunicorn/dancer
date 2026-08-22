@@ -121,7 +121,7 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 			if inner.BotID != "" || inner.User == c.botUserID || inner.SubType != "" {
 				return
 			}
-			mentioned := strings.Contains(inner.Text, "<@"+c.botUserID+">")
+			mentioned := strings.Contains(inner.Text, mention(c.botUserID))
 			if mentioned {
 				return // delivered via AppMentionEvent
 			}
@@ -156,7 +156,7 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 			// prompt that still opens with it reads as if it were waiting.
 			settled := leadingMentionRE.ReplaceAllString(firstText(cb.Message), "")
 			_, _, _, err := c.api.UpdateMessageContext(ctx, cb.Channel.ID, cb.Message.Timestamp,
-				slack.MsgOptionText(fmt.Sprintf("%s\n→ *%s* by <@%s>", settled, choice, cb.User.ID), false),
+				slack.MsgOptionText(fmt.Sprintf("%s\n→ *%s* by %s", settled, choice, mention(cb.User.ID)), false),
 				slack.MsgOptionBlocks())
 			if err != nil {
 				c.log.Warn("slack update message", "err", err)
@@ -327,8 +327,11 @@ func address(text, user string) string {
 	if user == "" {
 		return text
 	}
-	return "<@" + user + "> " + text
+	return mention(user) + " " + text
 }
+
+// mention is Slack's mrkdwn for addressing a user.
+func mention(userID string) string { return "<@" + userID + ">" }
 
 // threadTS is the root message ts of a thread id, "" at top level.
 func threadTS(th transport.ThreadID) string {
@@ -485,7 +488,7 @@ func threadID(ch, threadTS, ts string) transport.ThreadID {
 var leadingMentionRE = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 
 func stripMention(text, botID string) string {
-	text = strings.ReplaceAll(text, "<@"+botID+">", "")
+	text = strings.ReplaceAll(text, mention(botID), "")
 	return strings.TrimSpace(text)
 }
 
