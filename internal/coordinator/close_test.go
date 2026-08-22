@@ -73,9 +73,17 @@ func TestCloseThread(t *testing.T) {
 		t.Fatal("task still running after close")
 	}
 
-	// Closing twice says so rather than closing again.
+	// Closing twice says so rather than closing again. Reaching the bot in
+	// the thread at all lifts Slack's tombstone, so a command that does not
+	// reopen the thread has to put it back.
+	before := tr.forgetCount(th)
 	tr.say(th, "close")
 	tr.waitFor(t, th, "already closed")
+	waitForget(t, tr, th, before+1)
+	before = tr.forgetCount(th)
+	tr.say(th, "status")
+	tr.waitFor(t, th, "task `")
+	waitForget(t, tr, th, before+1)
 
 	cancel()
 	select {
@@ -239,4 +247,19 @@ func TestCloseUnknownThread(t *testing.T) {
 	if closed, _ := st.ClosedThreads(ctx); len(closed) != 1 {
 		t.Fatalf("closed threads = %v", closed)
 	}
+}
+
+// waitForget waits for the coordinator to have told the transport to forget
+// th at least want times. The forget lands just after the reply goes out,
+// so waitFor alone is not enough to observe it.
+func waitForget(t *testing.T, tr *fakeTransport, th transport.ThreadID, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if tr.forgetCount(th) >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("thread %s forgotten %d times, want >= %d", th, tr.forgetCount(th), want)
 }

@@ -71,6 +71,20 @@ func (f *fakeTransport) forgot(th transport.ThreadID) bool {
 	return false
 }
 
+// forgetCount is how many times the coordinator told the transport to
+// forget th; a mention in a closed thread must re-tombstone it.
+func (f *fakeTransport) forgetCount(th transport.ThreadID) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, t := range f.forgotten {
+		if t == th {
+			n++
+		}
+	}
+	return n
+}
+
 func (f *fakeTransport) wasRemembered(th transport.ThreadID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

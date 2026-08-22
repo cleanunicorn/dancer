@@ -366,6 +366,15 @@ func (c *Coordinator) handle(ctx context.Context, in transport.Inbound) {
 }
 
 func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transport.Inbound, it surface.Intent) {
+	// Addressing the bot lifts the transport's tombstone before the
+	// coordinator sees the message — that is how reopening works. If the
+	// intent did not actually reopen the thread (`close` again, `status`,
+	// a wizard step), put the tombstone back so plain replies stay ignored.
+	defer func() {
+		if in.Thread != "" && c.threadClosed(in.Thread) {
+			c.forget(s.Transport(), in.Thread)
+		}
+	}()
 	switch it := it.(type) {
 	case surface.Say:
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: it.Text}, s)
