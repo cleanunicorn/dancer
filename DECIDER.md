@@ -37,10 +37,11 @@ Milestone 2 — better facts and more verdicts ✅
 - [x] Verdicts `ask` and `abandon` on top of `continue | wait`; `ask` renders the decider's question with buttons, a plain reply still resumes with the human's own words
 - [x] Live test: three interrupted tasks of different shapes, three verdicts (`DANCER_LIVE=1 go test ./internal/coordinator -run TestLiveResumeVerdicts`)
 
-Backends ✅
-- [x] `openai`: one chat completion against any OpenAI-compatible `/chat/completions` (OpenAI, DeepSeek, Groq, Mistral, OpenRouter, Ollama, vLLM); `[decider.openai] base_url`, `api_key_env`; stdlib `net/http`, no new dependency
+Backends
+- [x] `openai`: one chat completion against any OpenAI-compatible `/chat/completions` (OpenAI, DeepSeek, Groq, Mistral, OpenRouter, Ollama, vLLM); `[decider.openai] base_url`, `api_key` (in the 0600 config file, like the Slack tokens); stdlib `net/http`, no new dependency. No `temperature` or `response_format` on the wire: reasoning models reject the former, minimal endpoints the latter, and the policy plus `parseVerdict` already get one JSON object out
 - [x] The policy text is shared by every backend (`policy.go`); a backend is one `Decide` method behind the same seam, validation, budget and log
-- [x] Tests: httptest server pins the request shape (system/user messages, `json_object`, bearer header or none) and the failure paths; live test joins when `DANCER_OPENAI_MODEL` is set
+- [x] Tests: httptest server pins the request shape (system/user messages, bearer header or none, nothing else sent) and the failure paths including a truncated reply; live test joins when `DANCER_OPENAI_MODEL` is set
+- [x] `dancer doctor` probes `/models` with the configured key and fails on an unreachable endpoint or a rejected key
 - [ ] `codex`: one-shot `codex exec --json`, same shape as `Claude`
 
 Milestone 3 — permission triage ✅
@@ -114,8 +115,8 @@ Implementations: `Static` (returns `q.Static`; the default and every fallback),
 `--no-session-persistence`, an empty scratch directory, MCP off, hard timeout)
 and `OpenAI` (one chat completion against any OpenAI-compatible endpoint —
 OpenAI, DeepSeek, Groq, Mistral, OpenRouter, a local Ollama or vLLM — policy as
-the system message, the question as the user message, `response_format:
-json_object`, no tools offered). All backends share the same policy text
+the system message, the question as the user message, no tools, no
+temperature, no response_format). All backends share the same policy text
 (`policy.go`) and the same seam; a backend is one `Decide` method. `decider.Validate`
 is what enforces the contract: an action outside `Options` is an error, not a
 verdict.
@@ -277,14 +278,15 @@ kind = "openai"
 model = "deepseek-chat"            # required: the endpoint's own model name
 [decider.openai]
 base_url = "https://api.deepseek.com/v1"   # OpenAI: https://api.openai.com/v1 (default); Ollama: http://localhost:11434/v1
-api_key_env = "DEEPSEEK_API_KEY"           # the variable's *name*; the key never goes in the file
+api_key = "sk-…"                           # omit for a local server that needs none
 ```
 
 `dancer doctor` prints what is in force:
 
 ```
   ✔ decider                claude/haiku for [resume] (timeout 15s)
-  ✔ decider                openai/deepseek-chat for [resume permission] (timeout 15s) @ https://api.deepseek.com/v1, key from $DEEPSEEK_API_KEY
+  ✔ decider                openai/deepseek-chat for [resume] (timeout 15s) @ https://api.deepseek.com/v1, endpoint answers
+  ✘ decider                openai/deepseek-chat for [resume] (timeout 15s) @ https://api.deepseek.com/v1, no api_key; endpoint check failed: Authentication Fails (authentication_error, HTTP 401) — set [decider.openai] api_key
 ```
 
 ## What it does today

@@ -11,15 +11,17 @@ import (
 
 // chatServer is an OpenAI-compatible stand-in that records the request it
 // got and answers with the given body and status.
-func chatServer(t *testing.T, status int, reply string) (*httptest.Server, *chatRequest, *http.Header) {
+func chatServer(t *testing.T, status int, reply string) (*httptest.Server, *map[string]json.RawMessage, *http.Header) {
 	t.Helper()
-	var got chatRequest
+	var got map[string]json.RawMessage
 	var hdr http.Header
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" || r.Method != http.MethodPost {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		hdr = r.Header.Clone()
+		// Raw keys, not chatRequest: the test must see which fields were
+		// sent, and a typed decode cannot tell "absent" from "zero".
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
@@ -49,14 +51,26 @@ func TestOpenAIAsksTheQuestionAndReadsTheVerdict(t *testing.T) {
 	if v.Action != "wait" || v.Reason != "stale" || v.By != "openai" {
 		t.Fatalf("verdict = %+v", v)
 	}
-	if got.Model != "gpt-4o-mini" || got.Temperature != 0 || got.ResponseFormat == nil || got.ResponseFormat.Type != "json_object" {
-		t.Fatalf("request = %+v", got)
+	var model string
+	var messages []chatMessage
+	if err := json.Unmarshal((*got)["model"], &model); err != nil || model != "gpt-4o-mini" {
+		t.Fatalf("model = %s (%v)", (*got)["model"], err)
 	}
-	if len(got.Messages) != 2 || got.Messages[0].Role != "system" || got.Messages[0].Content != policy || got.Messages[1].Role != "user" {
-		t.Fatalf("messages = %+v", got.Messages)
+	if err := json.Unmarshal((*got)["messages"], &messages); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(got.Messages[1].Content, `"last_prompt":"add retries"`) || !strings.Contains(got.Messages[1].Content, `"options":["continue","wait"]`) {
-		t.Fatalf("the question was not handed over whole: %s", got.Messages[1].Content)
+	if len(messages) != 2 || messages[0].Role != "system" || messages[0].Content != policy || messages[1].Role != "user" {
+		t.Fatalf("messages = %+v", messages)
+	}
+	if !strings.Contains(messages[1].Content, `"last_prompt":"add retries"`) || !strings.Contains(messages[1].Content, `"options":["continue","wait"]`) {
+		t.Fatalf("the question was not handed over whole: %s", messages[1].Content)
+	}
+	// Reasoning models reject any temperature but their default, and not
+	// every endpoint implements response_format: neither may be sent.
+	for _, k := range []string{"temperature", "response_format", "tools"} {
+		if _, sent := (*got)[k]; sent {
+			t.Fatalf("%q was sent: %s", k, (*got)[k])
+		}
 	}
 	if hdr.Get("Authorization") != "Bearer sk-test" {
 		t.Fatalf("Authorization = %q", hdr.Get("Authorization"))
@@ -90,6 +104,7 @@ func TestOpenAIFailuresAreErrorsNotVerdicts(t *testing.T) {
 		"no choices":      {http.StatusOK, `{"choices":[]}`, "no choices"},
 		"not json":        {http.StatusOK, `{"choices":[{"message":{"content":"I would continue."}}]}`, "no JSON object"},
 		"outside options": {http.StatusOK, `{"choices":[{"message":{"content":"{\"action\":\"abandon\"}"}}]}`, "not one of"},
+		"truncated":       {http.StatusOK, `{"choices":[{"message":{"content":"{\"action\":\"continue\",\"prompt\":\"Finish the"},"finish_reason":"length"}]}`, "truncated"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, _, _ := chatServer(t, tc.status, tc.reply)
@@ -102,5 +117,43 @@ func TestOpenAIFailuresAreErrorsNotVerdicts(t *testing.T) {
 	}
 	if _, err := (OpenAI{BaseURL: "http://127.0.0.1:9"}).Decide(context.Background(), question()); err == nil || !strings.Contains(err.Error(), "no model") {
 		t.Fatalf("a missing model should be an error before any request: %v", err)
+	}
+	if _, err := (OpenAI{Model: "m"}).Decide(context.Background(), question()); err == nil || !strings.Contains(err.Error(), "no base_url") {
+		t.Fatalf("a missing base_url should be an error before any request: %v", err)
+	}
+}
+
+// TestOpenAIPing: doctor's endpoint check — reachable and keyed is fine,
+// a rejected key or a dead server is an error that quotes the reason.
+func TestOpenAIPing(t *testing.T) {
+	var hdr http.Header
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" || r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		hdr = r.Header.Clone()
+		w.WriteHeader(status)
+		if status == http.StatusOK {
+			_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"m"}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"error":{"message":"Incorrect API key provided","type":"invalid_request_error"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	d := OpenAI{BaseURL: srv.URL + "/v1", APIKey: "sk-test", Model: "m"}
+	if err := d.Ping(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Get("Authorization") != "Bearer sk-test" {
+		t.Fatalf("Authorization = %q", hdr.Get("Authorization"))
+	}
+	status = http.StatusUnauthorized
+	if err := d.Ping(context.Background()); err == nil || !strings.Contains(err.Error(), "Incorrect API key") {
+		t.Fatalf("a rejected key should be reported: %v", err)
+	}
+	if err := (OpenAI{BaseURL: "http://127.0.0.1:9/v1"}).Ping(context.Background()); err == nil {
+		t.Fatal("a dead server should be an error")
 	}
 }

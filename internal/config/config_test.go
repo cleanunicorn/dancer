@@ -427,25 +427,21 @@ func TestDeciderConfigValidation(t *testing.T) {
 		})
 	}
 
-	cfg, err := load(t, "kind = \"openai\"\nmodel = \"deepseek-chat\"\n[decider.openai]\nbase_url = \"https://api.deepseek.com/v1/\"\napi_key_env = \"DEEPSEEK_API_KEY\"\n")
+	cfg, err := load(t, "kind = \"openai\"\nmodel = \"deepseek-chat\"\n[decider.openai]\nbase_url = \"https://api.deepseek.com/v1/\"\napi_key = \"sk-x\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Decider.Model != "deepseek-chat" || cfg.Decider.OpenAI.BaseURL != "https://api.deepseek.com/v1/" || cfg.Decider.OpenAI.APIKeyEnv != "DEEPSEEK_API_KEY" {
+	if cfg.Decider.Model != "deepseek-chat" || cfg.Decider.OpenAI.BaseURL != "https://api.deepseek.com/v1/" || cfg.Decider.OpenAI.APIKey != "sk-x" {
 		t.Fatalf("decider = %+v", cfg.Decider)
 	}
-	t.Setenv("DEEPSEEK_API_KEY", "sk-x")
-	if cfg.Decider.OpenAI.APIKey() != "sk-x" {
-		t.Fatalf("APIKey() = %q", cfg.Decider.OpenAI.APIKey())
-	}
 
-	// Defaults: claude gets haiku; openai gets the public endpoint and the
-	// conventional variable name, but never a model it did not ask for.
+	// Defaults: claude gets haiku; openai gets the public endpoint and no
+	// key, but never a model it did not ask for.
 	cfg, err = load(t, "kind = \"claude\"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Decider.Model != "haiku" || cfg.Decider.OpenAI.BaseURL != "https://api.openai.com/v1" || cfg.Decider.OpenAI.APIKeyEnv != "OPENAI_API_KEY" {
+	if cfg.Decider.Model != "haiku" || cfg.Decider.OpenAI.BaseURL != "https://api.openai.com/v1" || cfg.Decider.OpenAI.APIKey != "" {
 		t.Fatalf("defaults = %+v", cfg.Decider)
 	}
 	if _, err := load(t, "kind = \"openai\"\n[decider.openai]\nbase_url = \"http://localhost:11434/v1\"\n"); err == nil {

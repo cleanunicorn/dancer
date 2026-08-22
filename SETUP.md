@@ -313,13 +313,16 @@ kind = "openai"
 model = "gpt-4o-mini"                      # or "deepseek-chat", "llama3.2", …
 [decider.openai]
 base_url = "https://api.openai.com/v1"     # "https://api.deepseek.com/v1", "http://localhost:11434/v1"
-api_key_env = "OPENAI_API_KEY"             # name of the variable holding the key; unset = no key sent
+api_key = "sk-…"                           # leave out for a local server that needs none
 ```
 
-The key is read from that environment variable when dancer starts (put it in
-the systemd unit's `Environment=` or an `EnvironmentFile=`), never from
-`config.toml`. `dancer doctor` says which variable it looked at and whether
-it was set.
+The key lives in `config.toml` next to your Slack tokens (the file is
+`0600`); nothing is read from the environment. `dancer doctor` calls the
+endpoint's `/models` with that key and fails the check if it is unreachable
+or the key is rejected — the one misconfiguration that would otherwise fall
+back to the rules silently on every question. No `temperature` or
+`response_format` is sent, so reasoning models and minimal endpoints work
+as-is.
 
 On a restart it judges each cut-short task from the tail of its own thread —
 the last thing you asked, the agent's last words, its recent tool calls, the

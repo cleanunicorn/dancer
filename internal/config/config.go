@@ -93,8 +93,8 @@ type Claude struct {
 // answer everything, which is also the fallback whenever the decider
 // fails, times out or answers something unacceptable.
 type Decider struct {
-	Kind  string `toml:"kind"`  // "off" (default) | "claude"
-	Model string `toml:"model"` // default "haiku"
+	Kind  string `toml:"kind"`  // "off" (default) | "claude" | "openai"
+	Model string `toml:"model"` // claude: default "haiku"; openai: required, the endpoint's own name
 	// Uses lists the question kinds the decider may answer ("resume",
 	// "permission").
 	// Empty means none, so switching it on is deliberate per kind.
@@ -112,20 +112,16 @@ type Decider struct {
 	OpenAI OpenAI `toml:"openai"`
 }
 
-// OpenAI points the "openai" decider at an endpoint. The key itself never
-// goes in the file: APIKeyEnv names the environment variable that holds
-// it, and an unset variable sends no Authorization header at all, which is
-// what a local server wants.
+// OpenAI points the "openai" decider at an endpoint. The key lives here,
+// next to the Slack tokens, in the 0600 config file; empty sends no
+// Authorization header at all, which is what a local server wants.
 type OpenAI struct {
-	BaseURL   string `toml:"base_url"`    // default "https://api.openai.com/v1"; "/chat/completions" is appended
-	APIKeyEnv string `toml:"api_key_env"` // default "OPENAI_API_KEY"
+	BaseURL string `toml:"base_url"` // default "https://api.openai.com/v1"; "/chat/completions" is appended
+	APIKey  string `toml:"api_key"`  // bearer token; "" for servers that need none
 }
 
 // Enabled reports whether a decider other than the built-in rules is set.
 func (d Decider) Enabled() bool { return d.Kind != "" && d.Kind != "off" }
-
-// APIKey reads the OpenAI key from the environment variable the config names.
-func (o OpenAI) APIKey() string { return os.Getenv(o.APIKeyEnv) }
 
 // Docker is host-wide container behaviour; per-agent settings live on the
 // definition's [definitions.environment].
@@ -263,14 +259,11 @@ func (c *Config) applyDefaults(path string) {
 	if c.Decider.Kind == "" {
 		c.Decider.Kind = "off"
 	}
-	if c.Decider.Model == "" && c.Decider.Kind != "openai" {
-		c.Decider.Model = "haiku" // an OpenAI-compatible endpoint has no sensible default model
+	if c.Decider.Model == "" && c.Decider.Kind == "claude" {
+		c.Decider.Model = "haiku" // only claude has a model every install can name
 	}
 	if c.Decider.OpenAI.BaseURL == "" {
 		c.Decider.OpenAI.BaseURL = "https://api.openai.com/v1"
-	}
-	if c.Decider.OpenAI.APIKeyEnv == "" {
-		c.Decider.OpenAI.APIKeyEnv = "OPENAI_API_KEY"
 	}
 	if c.Decider.Timeout.Duration == 0 {
 		c.Decider.Timeout.Duration = 15 * time.Second

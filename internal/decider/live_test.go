@@ -10,7 +10,8 @@ import (
 // liveDeciders returns the real backends to drive, or skips. Run with
 // DANCER_LIVE=1; each question costs a fraction of a cent. Claude needs
 // `claude` logged in. OpenAI joins when DANCER_OPENAI_MODEL is set, against
-// DANCER_OPENAI_BASE_URL (default api.openai.com) with OPENAI_API_KEY.
+// DANCER_OPENAI_BASE_URL (default api.openai.com) with OPENAI_API_KEY. The
+// service itself reads the key from config.toml; these are test knobs only.
 func liveDeciders(t *testing.T) []Decider {
 	t.Helper()
 	if os.Getenv("DANCER_LIVE") == "" {
@@ -18,8 +19,11 @@ func liveDeciders(t *testing.T) []Decider {
 	}
 	ds := []Decider{Claude{Model: "haiku", Timeout: 60 * time.Second}}
 	if model := os.Getenv("DANCER_OPENAI_MODEL"); model != "" {
-		ds = append(ds, OpenAI{BaseURL: os.Getenv("DANCER_OPENAI_BASE_URL"), APIKey: os.Getenv("OPENAI_API_KEY"),
-			Model: model, Timeout: 60 * time.Second})
+		base := os.Getenv("DANCER_OPENAI_BASE_URL")
+		if base == "" {
+			base = "https://api.openai.com/v1"
+		}
+		ds = append(ds, OpenAI{BaseURL: base, APIKey: os.Getenv("OPENAI_API_KEY"), Model: model, Timeout: 60 * time.Second})
 	}
 	return ds
 }

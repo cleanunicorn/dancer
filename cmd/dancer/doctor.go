@@ -12,6 +12,7 @@ import (
 	"github.com/slack-go/slack"
 
 	"github.com/cleanunicorn/dancer/internal/config"
+	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
 )
 
@@ -30,7 +31,10 @@ func (c check) String() string {
 }
 
 // checkDecider reports the policy decider: off (dancer's own rules decide)
-// or the model and the question kinds it is allowed to answer.
+// or the model and the question kinds it is allowed to answer. For openai
+// it also proves the endpoint answers with the configured key — the same
+// standard checkClaude holds the CLI to — since a decider that 401s on
+// every question falls back to the rules with nothing but a warn log.
 func checkDecider(cfg *config.Config) check {
 	if !cfg.Decider.Enabled() {
 		return check{"decider", true, "off — dancer's rules decide"}
@@ -42,11 +46,20 @@ func checkDecider(cfg *config.Config) check {
 	if cfg.Decider.Kind == "openai" {
 		o := cfg.Decider.OpenAI
 		info += " @ " + o.BaseURL
-		if o.APIKey() == "" {
-			info += fmt.Sprintf(", no key ($%s unset — fine for a local server, not for a hosted one)", o.APIKeyEnv)
-		} else {
-			info += fmt.Sprintf(", key from $%s", o.APIKeyEnv)
+		if o.APIKey == "" {
+			info += ", no api_key"
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		d := decider.OpenAI{BaseURL: o.BaseURL, APIKey: o.APIKey, Model: cfg.Decider.Model}
+		if err := d.Ping(ctx); err != nil {
+			hint := ""
+			if msg := err.Error(); strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403") {
+				hint = " — check [decider.openai] api_key"
+			}
+			return check{"decider", false, info + "; endpoint check failed: " + truncate(strings.TrimPrefix(err.Error(), "decider: openai: "), 160) + hint}
+		}
+		info += ", endpoint answers"
 	}
 	for _, u := range cfg.Decider.Uses {
 		if u != "permission" {

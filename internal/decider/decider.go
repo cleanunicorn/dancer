@@ -34,7 +34,7 @@ type Verdict struct {
 	Action string `json:"action"`
 	Prompt string `json:"prompt,omitempty"`
 	Reason string `json:"reason,omitempty"`
-	By     string `json:"by,omitempty"` // "static", "claude"
+	By     string `json:"by,omitempty"` // "static", or the backend's Name(): "claude", "openai"
 }
 
 // Caps on what a verdict may carry. A prompt reaches an agent, so it is
