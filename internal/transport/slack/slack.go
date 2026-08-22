@@ -155,7 +155,12 @@ func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound,
 	}
 	th := threadID(ch, threadTS, ts)
 	if !direct && !c.known(th) {
-		return // unrelated chatter in a channel we are in
+		// Unrelated chatter in a channel we are in. Logged because it is
+		// also what a second dancer instance sees for every thread the
+		// other instance owns — a silent drop that looks like the bot
+		// going deaf mid-conversation.
+		c.log.Debug("slack message in an unknown thread ignored", "thread", th)
+		return
 	}
 	c.remember(th)
 	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, Text: stripMention(text, c.botUserID)}
