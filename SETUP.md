@@ -294,13 +294,32 @@ word the resume in the task's own terms. See [DECIDER.md](DECIDER.md).
 
 ```toml
 [decider]
-kind = "claude"       # off (default) | claude
+kind = "claude"       # off (default) | claude | openai
 model = "haiku"
 uses = ["resume", "permission"]   # question kinds it may answer; [] = never asked
 timeout = "15s"
 max_per_task = 20
 auto_allow = ["Read", "Glob", "Grep", "Bash(go test:*)"]   # see "permission" below
 ```
+
+`kind = "claude"` runs the `claude` CLI you already have. `kind = "openai"`
+talks to any OpenAI-compatible endpoint instead — OpenAI, DeepSeek, Groq,
+Mistral, OpenRouter, or a local Ollama/vLLM — and then `model` is the
+endpoint's own model name:
+
+```toml
+[decider]
+kind = "openai"
+model = "gpt-4o-mini"                      # or "deepseek-chat", "llama3.2", …
+[decider.openai]
+base_url = "https://api.openai.com/v1"     # "https://api.deepseek.com/v1", "http://localhost:11434/v1"
+api_key_env = "OPENAI_API_KEY"             # name of the variable holding the key; unset = no key sent
+```
+
+The key is read from that environment variable when dancer starts (put it in
+the systemd unit's `Environment=` or an `EnvironmentFile=`), never from
+`config.toml`. `dancer doctor` says which variable it looked at and whether
+it was set.
 
 On a restart it judges each cut-short task from the tail of its own thread —
 the last thing you asked, the agent's last words, its recent tool calls, the

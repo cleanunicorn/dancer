@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -105,10 +106,26 @@ type Decider struct {
 	// every permission prompt still reaches a person.
 	AutoAllow  []string `toml:"auto_allow"`
 	MaxPerTask int      `toml:"max_per_task"`
+	// OpenAI configures kind = "openai": any endpoint that speaks the
+	// OpenAI chat-completions shape (OpenAI, DeepSeek, Groq, Mistral,
+	// OpenRouter, a local Ollama or vLLM).
+	OpenAI OpenAI `toml:"openai"`
+}
+
+// OpenAI points the "openai" decider at an endpoint. The key itself never
+// goes in the file: APIKeyEnv names the environment variable that holds
+// it, and an unset variable sends no Authorization header at all, which is
+// what a local server wants.
+type OpenAI struct {
+	BaseURL   string `toml:"base_url"`    // default "https://api.openai.com/v1"; "/chat/completions" is appended
+	APIKeyEnv string `toml:"api_key_env"` // default "OPENAI_API_KEY"
 }
 
 // Enabled reports whether a decider other than the built-in rules is set.
 func (d Decider) Enabled() bool { return d.Kind != "" && d.Kind != "off" }
+
+// APIKey reads the OpenAI key from the environment variable the config names.
+func (o OpenAI) APIKey() string { return os.Getenv(o.APIKeyEnv) }
 
 // Docker is host-wide container behaviour; per-agent settings live on the
 // definition's [definitions.environment].
@@ -246,8 +263,14 @@ func (c *Config) applyDefaults(path string) {
 	if c.Decider.Kind == "" {
 		c.Decider.Kind = "off"
 	}
-	if c.Decider.Model == "" {
-		c.Decider.Model = "haiku"
+	if c.Decider.Model == "" && c.Decider.Kind != "openai" {
+		c.Decider.Model = "haiku" // an OpenAI-compatible endpoint has no sensible default model
+	}
+	if c.Decider.OpenAI.BaseURL == "" {
+		c.Decider.OpenAI.BaseURL = "https://api.openai.com/v1"
+	}
+	if c.Decider.OpenAI.APIKeyEnv == "" {
+		c.Decider.OpenAI.APIKeyEnv = "OPENAI_API_KEY"
 	}
 	if c.Decider.Timeout.Duration == 0 {
 		c.Decider.Timeout.Duration = 15 * time.Second
@@ -316,8 +339,16 @@ func (c *Config) ChannelAgents() map[string]string {
 func (c *Config) validate() error {
 	switch c.Decider.Kind {
 	case "off", "claude":
+	case "openai":
+		if c.Decider.Model == "" {
+			return fmt.Errorf("config: decider kind \"openai\" needs a model (e.g. \"gpt-4o-mini\", \"deepseek-chat\")")
+		}
+		u, err := url.Parse(c.Decider.OpenAI.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("config: decider.openai.base_url %q is not an http(s) URL", c.Decider.OpenAI.BaseURL)
+		}
 	default:
-		return fmt.Errorf("config: unknown decider kind %q (off|claude)", c.Decider.Kind)
+		return fmt.Errorf("config: unknown decider kind %q (off|claude|openai)", c.Decider.Kind)
 	}
 	for _, u := range c.Decider.Uses {
 		if u != "resume" && u != "permission" {

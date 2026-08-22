@@ -39,6 +39,15 @@ func checkDecider(cfg *config.Config) check {
 		return check{"decider", false, fmt.Sprintf("kind %q but uses = [] — it is never asked anything", cfg.Decider.Kind)}
 	}
 	info := fmt.Sprintf("%s/%s for %v (timeout %s)", cfg.Decider.Kind, cfg.Decider.Model, cfg.Decider.Uses, cfg.Decider.Timeout.Duration)
+	if cfg.Decider.Kind == "openai" {
+		o := cfg.Decider.OpenAI
+		info += " @ " + o.BaseURL
+		if o.APIKey() == "" {
+			info += fmt.Sprintf(", no key ($%s unset — fine for a local server, not for a hosted one)", o.APIKeyEnv)
+		} else {
+			info += fmt.Sprintf(", key from $%s", o.APIKeyEnv)
+		}
+	}
 	for _, u := range cfg.Decider.Uses {
 		if u != "permission" {
 			continue

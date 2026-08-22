@@ -402,3 +402,53 @@ func TestDockerConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestDeciderConfigValidation(t *testing.T) {
+	load := func(t *testing.T, decider string) (*Config, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		src := "[server]\ndb = \"/tmp/x.db\"\n\n[[definitions]]\nname = \"a\"\nkind = \"claude\"\n[definitions.environment]\nkind = \"local\"\n\n[decider]\n" + decider
+		if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	for name, decider := range map[string]string{
+		"unknown kind":              "kind = \"gemini\"\n",
+		"openai without model":      "kind = \"openai\"\n",
+		"openai bad url":            "kind = \"openai\"\nmodel = \"m\"\n[decider.openai]\nbase_url = \"api.openai.com/v1\"\n",
+		"openai ftp url":            "kind = \"openai\"\nmodel = \"m\"\n[decider.openai]\nbase_url = \"ftp://x/v1\"\n",
+		"kind that cannot be asked": "kind = \"openai\"\nmodel = \"m\"\nuses = [\"route\"]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := load(t, decider); err == nil {
+				t.Fatal("bad value was accepted")
+			}
+		})
+	}
+
+	cfg, err := load(t, "kind = \"openai\"\nmodel = \"deepseek-chat\"\n[decider.openai]\nbase_url = \"https://api.deepseek.com/v1/\"\napi_key_env = \"DEEPSEEK_API_KEY\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Decider.Model != "deepseek-chat" || cfg.Decider.OpenAI.BaseURL != "https://api.deepseek.com/v1/" || cfg.Decider.OpenAI.APIKeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("decider = %+v", cfg.Decider)
+	}
+	t.Setenv("DEEPSEEK_API_KEY", "sk-x")
+	if cfg.Decider.OpenAI.APIKey() != "sk-x" {
+		t.Fatalf("APIKey() = %q", cfg.Decider.OpenAI.APIKey())
+	}
+
+	// Defaults: claude gets haiku; openai gets the public endpoint and the
+	// conventional variable name, but never a model it did not ask for.
+	cfg, err = load(t, "kind = \"claude\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Decider.Model != "haiku" || cfg.Decider.OpenAI.BaseURL != "https://api.openai.com/v1" || cfg.Decider.OpenAI.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Fatalf("defaults = %+v", cfg.Decider)
+	}
+	if _, err := load(t, "kind = \"openai\"\n[decider.openai]\nbase_url = \"http://localhost:11434/v1\"\n"); err == nil {
+		t.Fatal("openai without a model was accepted because of a default")
+	}
+}
