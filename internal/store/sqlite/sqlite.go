@@ -108,6 +108,7 @@ func migrate(db *sql.DB) error {
 		{"transport", `ALTER TABLE tasks ADD COLUMN transport TEXT NOT NULL DEFAULT ''`},
 		{"prompt", `ALTER TABLE tasks ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`},
 		{"resumes", `ALTER TABLE tasks ADD COLUMN resumes INTEGER NOT NULL DEFAULT 0`},
+		{"requester", `ALTER TABLE tasks ADD COLUMN requester TEXT NOT NULL DEFAULT ''`},
 	} {
 		if cols[add.col] {
 			continue
@@ -214,24 +215,31 @@ func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind stri
 		string(task), kind, limit)
 }
 
+// taskCols is the tasks column list, in the order scanTask reads it and
+// PutTask binds it. A column added here needs a `?` in PutTask's VALUES,
+// an `excluded.` line in its ON CONFLICT SET, a dest in scanTask, and an
+// ALTER entry in migrate — the CREATE TABLE above only runs for a fresh
+// database, which is why transport and requester live in migrate alone.
+const taskCols = "id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at"
+
 func (s *Store) PutTask(ctx context.Context, t store.TaskState) error {
 	def, err := json.Marshal(t.Definition)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO tasks(id, transport, thread, definition, session, status, last_seq, prompt, resumes, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)
+		INSERT INTO tasks(`+taskCols+`)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET transport=excluded.transport, thread=excluded.thread, definition=excluded.definition,
-			session=excluded.session, status=excluded.status, last_seq=excluded.last_seq,
+			requester=excluded.requester, session=excluded.session, status=excluded.status, last_seq=excluded.last_seq,
 			prompt=excluded.prompt, resumes=excluded.resumes, updated_at=excluded.updated_at`,
-		string(t.ID), t.Transport, string(t.Thread), def, t.Session, t.Status, t.LastSeq, t.Prompt, t.Resumes,
+		string(t.ID), t.Transport, string(t.Thread), def, t.Requester, t.Session, t.Status, t.LastSeq, t.Prompt, t.Resumes,
 		time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) GetTask(ctx context.Context, id executor.TaskID) (store.TaskState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, transport, thread, definition, session, status, last_seq, prompt, resumes, updated_at FROM tasks WHERE id = ?`, string(id))
+	row := s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = ?`, string(id))
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, store.ErrNotFound
@@ -240,7 +248,7 @@ func (s *Store) GetTask(ctx context.Context, id executor.TaskID) (store.TaskStat
 }
 
 func (s *Store) ListTasks(ctx context.Context, status string) ([]store.TaskState, error) {
-	q := `SELECT id, transport, thread, definition, session, status, last_seq, prompt, resumes, updated_at FROM tasks`
+	q := `SELECT ` + taskCols + ` FROM tasks`
 	var args []any
 	if status != "" {
 		q += ` WHERE status = ?`
@@ -265,7 +273,7 @@ func (s *Store) ListTasks(ctx context.Context, status string) ([]store.TaskState
 
 // LatestTaskForThread returns the most recently updated task on a thread.
 func (s *Store) LatestTaskForThread(ctx context.Context, thread transport.ThreadID) (store.TaskState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, transport, thread, definition, session, status, last_seq, prompt, resumes, updated_at FROM tasks WHERE thread = ? ORDER BY updated_at DESC LIMIT 1`, string(thread))
+	row := s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE thread = ? ORDER BY updated_at DESC LIMIT 1`, string(thread))
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, store.ErrNotFound
@@ -275,11 +283,12 @@ func (s *Store) LatestTaskForThread(ctx context.Context, thread transport.Thread
 
 type scanner interface{ Scan(dest ...any) error }
 
+// scanTask reads one row of taskCols.
 func scanTask(sc scanner) (store.TaskState, error) {
 	var t store.TaskState
 	var id, thread, updated string
 	var def []byte
-	if err := sc.Scan(&id, &t.Transport, &thread, &def, &t.Session, &t.Status, &t.LastSeq, &t.Prompt, &t.Resumes, &updated); err != nil {
+	if err := sc.Scan(&id, &t.Transport, &thread, &def, &t.Requester, &t.Session, &t.Status, &t.LastSeq, &t.Prompt, &t.Resumes, &updated); err != nil {
 		return t, err
 	}
 	t.ID, t.Thread = executor.TaskID(id), transport.ThreadID(thread)

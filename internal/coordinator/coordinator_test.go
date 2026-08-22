@@ -129,21 +129,35 @@ func (f *fakeTransport) Send(ctx context.Context, msg transport.Outbound) error 
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeTransport) say(th transport.ThreadID, text string) {
-	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: "u1", Text: text}
+func (f *fakeTransport) say(th transport.ThreadID, text string) { f.sayAs(th, "u1", text) }
+func (f *fakeTransport) sayAs(th transport.ThreadID, user, text string) {
+	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: user, Text: text}
 }
 func (f *fakeTransport) decide(th transport.ThreadID, id, choice string) {
-	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: "u1", Decision: &transport.Decision{PromptID: id, Choice: choice}}
+	f.decideAs(th, "u1", id, choice)
+}
+func (f *fakeTransport) decideAs(th transport.ThreadID, user, id, choice string) {
+	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: user, Decision: &transport.Decision{PromptID: id, Choice: choice}}
 }
 func (f *fakeTransport) waitFor(t *testing.T, th transport.ThreadID, sub string) transport.Outbound {
+	t.Helper()
+	return f.waitForN(t, th, sub, 1)
+}
+
+// waitForN returns the n-th message on th containing sub.
+func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string, n int) transport.Outbound {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		f.mu.Lock()
+		seen := 0
 		for _, o := range f.out {
 			if o.Thread == th && strings.Contains(o.Text, sub) {
-				f.mu.Unlock()
-				return o
+				seen++
+				if seen == n {
+					f.mu.Unlock()
+					return o
+				}
 			}
 		}
 		f.mu.Unlock()
@@ -151,7 +165,7 @@ func (f *fakeTransport) waitFor(t *testing.T, th transport.ThreadID, sub string)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	t.Fatalf("no outbound on %s containing %q; got %+v", th, sub, f.out)
+	t.Fatalf("fewer than %d outbounds on %s containing %q; got %+v", n, th, sub, f.out)
 	return transport.Outbound{}
 }
 
@@ -346,6 +360,75 @@ func TestTwoSurfacesOneTransport(t *testing.T) {
 	tr.waitFor(t, th3, "answers=Banana|medium, actually")
 }
 
+// TestMentionStaysWithRequester: the lines that need a human address the
+// one who started the task, even when someone else answers its prompt or
+// follows it up after idle.
+func TestMentionStaysWithRequester(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/1.0")
+	tr.sayAs(th, "u1", "run coder do the thing")
+	p := tr.waitFor(t, th, "wants to run")
+	if p.Mention != "u1" {
+		t.Errorf("prompt addressed to %q, want u1", p.Mention)
+	}
+	tr.decideAs(th, "u2", p.Prompt.ID, "allow")
+	if o := tr.waitFor(t, th, "✅ done"); o.Mention != "u1" {
+		t.Errorf("done line addressed to %q after u2 allowed, want u1", o.Mention)
+	}
+
+	// u2 follows up after the idle timeout: the resumed turn still reports to u1.
+	id := firstTask(t, st)
+	deadline := time.Now().Add(3 * time.Second)
+	for ex.IsRunning(id) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	tr.sayAs(th, "u2", "again")
+	tr.waitFor(t, th, "echo:again")
+	if o := tr.waitForN(t, th, "✅ done", 2); o.Mention != "u1" {
+		t.Errorf("resumed done line addressed to %q after u2 followed up, want u1", o.Mention)
+	}
+	if ts, err := st.GetTask(ctx, id); err != nil || ts.Requester != "u1" {
+		t.Errorf("requester = %q err=%v, want u1", ts.Requester, err)
+	}
+
+	// A new task on the same thread, started by u2, is u2's. `run` is
+	// refused while the thread is bound to the first task, so wait for
+	// exactly that to clear.
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		if _, busy := c.lookup(th); !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("thread still bound to the first task after the idle timeout")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	tr.sayAs(th, "u2", "run coder other thing")
+	if o := tr.waitForN(t, th, "wants to run", 2); o.Mention != "u2" {
+		t.Errorf("u2's own task addressed to %q, want u2", o.Mention)
+	}
+	if ts, err := st.LatestTaskForThread(ctx, th); err != nil || ts.ID == id || ts.Requester != "u2" {
+		t.Errorf("u2's task = %+v err=%v, want a new task with requester u2", ts, err)
+	}
+}
+
 func TestGracefulRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "c.db")
 	st, err := sqlite.Open(dbPath)
@@ -397,7 +480,9 @@ func TestGracefulRestart(t *testing.T) {
 	c2.DefaultDefinition = "coder"
 	go c2.Run(ctx2)
 	<-tr2.ready
-	tr2.waitFor(t, th, "dancer is back")
+	if o := tr2.waitFor(t, th, "dancer is back"); o.Mention != "u1" {
+		t.Errorf("restart notice addressed to %q, want the requester u1", o.Mention)
+	}
 	tr2.mu.Lock()
 	seeded := len(tr2.remembered) == 1 && tr2.remembered[0] == th
 	tr2.mu.Unlock()
@@ -451,6 +536,13 @@ func TestChannelDefaultsAndRunPicker(t *testing.T) {
 	// Plain text follows the channel default, else the global one.
 	tr.say("C-review/1.0", "look at this")
 	tr.waitFor(t, "C-review/1.0", "started with agent *reviewer*")
+	// ...and records who asked, like `run` does.
+	if o := tr.waitFor(t, "C-review/1.0", "wants to run"); o.Mention != "u1" {
+		t.Errorf("default-agent prompt addressed to %q, want u1", o.Mention)
+	}
+	if ts, err := st.LatestTaskForThread(ctx, "C-review/1.0"); err != nil || ts.Requester != "u1" {
+		t.Errorf("default-agent requester = %q err=%v", ts.Requester, err)
+	}
 	tr.say("C-dev/1.0", "build this")
 	tr.waitFor(t, "C-dev/1.0", "started with agent *coder*")
 
@@ -484,14 +576,20 @@ func TestChannelDefaultsAndRunPicker(t *testing.T) {
 	if q.Prompt == nil || len(q.Prompt.Options) != 2 || !q.Prompt.FreeText || !strings.Contains(q.Prompt.Options[1].Description, "default here") {
 		t.Fatalf("picker prompt = %+v", q.Prompt)
 	}
-	tr.decide(th, q.Prompt.ID, "coder")
+	// Someone else answers the picker: the task is still u1's.
+	tr.decideAs(th, "u2", q.Prompt.ID, "coder")
 	p := tr.waitFor(t, th, "What should *coder* do?")
 	if p.Prompt == nil || len(p.Prompt.Options) != 0 {
 		t.Fatalf("prompt question = %+v", p.Prompt)
 	}
-	tr.say(th, "do the thing")
+	tr.sayAs(th, "u2", "do the thing")
 	tr.waitFor(t, th, "started with agent *coder*")
-	tr.waitFor(t, th, "wants to run")
+	if o := tr.waitFor(t, th, "wants to run"); o.Mention != "u1" {
+		t.Errorf("permission prompt addressed to %q, want the one who typed `run`", o.Mention)
+	}
+	if ts, err := st.LatestTaskForThread(ctx, th); err != nil || ts.Requester != "u1" {
+		t.Errorf("requester = %q err=%v", ts.Requester, err)
+	}
 
 	// `run <agent>` without a prompt asks for the prompt; a typed agent
 	// name works for the picker too; `cancel` abandons it.

@@ -56,7 +56,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		if !s.Approvals {
 			return nil
 		}
-		text := fmt.Sprintf("🔐 `%s` — *%s* wants to run:\n```%s```", ev.TaskID, ev.Agent.Tool, describeInput(ev.Agent))
+		text := fmt.Sprintf("🔐 `%s` — *%s* wants to run:\n```%s```", ev.TaskID, ev.Agent.Tool, truncate(describeInput(ev.Agent), 2500))
 		return []transport.Outbound{{Thread: s.thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
 	case surface.EventAllowed:
 		// The feed that would have shown the prompt shows what ran instead.

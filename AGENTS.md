@@ -112,7 +112,10 @@ files first — they carry the contract, the concrete packages under them are im
   (Slack: `"<channel>/<thread_ts>"`, `"<channel>/"` posts top level). It never interprets a message.
   Keyed messages (`Outbound.Key`) are its one stateful feature: Slack edits/deletes the message it
   posted under the key and mirrors the text into the thread's assistant status; the terminal redraws
-  the line.
+  the line. `Outbound.Mention` addresses one user (Slack: `<@U…>` in front of the text; terminal
+  ignores it); the chat surface sets it to the task's `Requester` on the lines that need a human —
+  prompts, the closing line, errors, the restart notices that ask someone to pick a task up — never
+  on the agent's Markdown text, which the markdown block does not render mentions in.
 - **`surface`** (chat, feed) — everything about *how* humans interact. `Handle` turns an inbound
   message into `[]Intent` (returning `ok=false` passes it to the next surface on that transport);
   `Render` turns a coordinator `Event` into outbound messages. Several surfaces share one transport,

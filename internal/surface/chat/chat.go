@@ -10,6 +10,14 @@
 // away when the agent asks the human something (the prompt says it all)
 // and when the turn ends, replaced by a closing line with the outcome,
 // duration, tool count and cost.
+//
+// The lines that need the human — a turn's closing line, an error, a
+// permission or question prompt, a notice that a restart left the task
+// for them to pick up — address the task's requester
+// (transport.Outbound.Mention), so whoever started the task is notified
+// even with the thread muted, and nobody else is. "⏹️ cancelled" is the
+// exception: the human who asked for it is already there. Lines without
+// a task (help, a wizard's questions) have nobody to address.
 package chat
 
 import (
@@ -19,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/store"
@@ -82,7 +91,7 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Say{Thread: in.Thread, Text: help}}, true
 	case "run":
 		name, prompt := splitWord(rest)
-		return []surface.Intent{surface.RunTask{Thread: in.Thread, Agent: name, Prompt: prompt}}, true
+		return []surface.Intent{surface.RunTask{Thread: in.Thread, Agent: name, Prompt: prompt, User: in.UserID}}, true
 	case "default":
 		name, extra := splitWord(rest)
 		if extra != "" {
@@ -106,7 +115,7 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 			return []surface.Intent{surface.Say{Thread: in.Thread, Text: fmt.Sprintf("`%s agent` is now `agent %s` — %s", strings.ToLower(cmd), strings.ToLower(cmd), agentUsage)}}, true
 		}
 	}
-	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text}}, true
+	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text, User: in.UserID}}, true
 }
 
 // Render turns a coordinator event into messages. Besides the lines a
@@ -120,6 +129,10 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	now := s.now()
 	say := func(text string) []transport.Outbound {
 		return []transport.Outbound{{Thread: ev.Thread, Text: text}}
+	}
+	// tell is say for the lines the requester must not miss.
+	tell := func(text string) []transport.Outbound {
+		return []transport.Outbound{{Thread: ev.Thread, Text: text, Mention: requester(ev)}}
 	}
 	var msgs []transport.Outbound
 	switch ev.Kind {
@@ -135,10 +148,12 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		if t := s.turns[ev.Thread]; t != nil {
 			t.activity = describeTool(ev.Agent)
 		}
-		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, describeInput(ev.Agent))
-		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}})
+		// Cut a huge input here, where the code fence can still be closed;
+		// Slack's section block holds 3000 characters.
+		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, truncate(describeInput(ev.Agent), 2500))
+		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: text, Mention: requester(ev), Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}})
 	case surface.EventQuestion:
-		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}})
+		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Mention: requester(ev), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}})
 	case surface.EventAgent:
 		return s.renderAgent(ev, now)
 	case surface.EventFinished:
@@ -149,7 +164,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 			closing = say("⏹️ cancelled")
 		case store.StatusFailed:
 			if t == nil || !t.errored { // else the error line said it already
-				closing = say("❌ task failed")
+				closing = tell("❌ task failed")
 			}
 		}
 		return s.endWith(ev.Thread, closing)
@@ -157,11 +172,13 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		return s.endWith(ev.Thread, say("✅ thread closed — mention me here to pick it up again"))
 	case surface.EventReply, surface.EventAllowed:
 		msgs = say(ev.Text)
+	case surface.EventNotice:
+		msgs = tell(ev.Text)
 	case surface.EventError:
 		if t := s.turns[ev.Thread]; t != nil {
 			t.errored = true
 		}
-		msgs = say("❌ " + ev.Text)
+		msgs = tell("❌ " + ev.Text)
 	default:
 		return nil
 	}
@@ -210,12 +227,12 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		}
 		text = "⚠️ tool error: " + truncate(a.Text, 300)
 	case agent.EventResult:
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Files: files(a)}})
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Mention: requester(ev), Files: files(a)}})
 	case agent.EventError:
 		if t != nil {
 			t.errored = true
 		}
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: "❌ " + a.Text, Files: files(a)}})
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: "❌ " + a.Text, Mention: requester(ev), Files: files(a)}})
 	default:
 		return nil
 	}
@@ -224,6 +241,16 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		return s.refresh(ev.Thread, now)
 	}
 	return s.withStatus(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: text, Files: fs, Markdown: markdown}}, now)
+}
+
+// requester is who to address on the lines that need a human: the user
+// who started the event's task, "" when the event has no task (help, a
+// wizard question) or the task predates requesters.
+func requester(ev surface.Event) string {
+	if ev.Task == nil {
+		return ""
+	}
+	return ev.Task.Requester
 }
 
 func files(a *agent.Event) []transport.File {
@@ -559,9 +586,13 @@ func splitWord(s string) (string, string) {
 	return s[:i], strings.TrimSpace(s[i:])
 }
 
+// truncate cuts s to n bytes on a rune boundary, marking the cut.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "…"
 }

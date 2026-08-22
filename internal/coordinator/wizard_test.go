@@ -20,27 +20,6 @@ import (
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
 
-// waitForNth waits until sub has appeared n times on th.
-func waitForNth(t *testing.T, tr *fakeTransport, th transport.ThreadID, sub string, n int) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		seen := 0
-		tr.mu.Lock()
-		for _, o := range tr.out {
-			if o.Thread == th && strings.Contains(o.Text, sub) {
-				seen++
-			}
-		}
-		tr.mu.Unlock()
-		if seen >= n {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("%q did not appear %d times on %s", sub, n, th)
-}
-
 func TestAddAgentFlow(t *testing.T) {
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -77,7 +56,7 @@ func TestAddAgentFlow(t *testing.T) {
 
 	workdir := t.TempDir()
 	tr.say(th, "agent add")
-	waitForNth(t, tr, th, "Name for the new agent", 2)
+	tr.waitForN(t, th, "Name for the new agent", 2)
 	// Name: invalid, taken, then fine. Typed replies answer the question.
 	tr.say(th, "bad name")
 	tr.waitFor(t, th, "is not a valid name")
@@ -263,20 +242,20 @@ func TestEditAndDeleteAgent(t *testing.T) {
 
 	// Change the model (button), the tools (typed), then save.
 	tr.say(th, "agent edit reviewer")
-	waitForNth(t, tr, th, "What do you want to change?", 2)
+	tr.waitForN(t, th, "What do you want to change?", 2)
 	tr.say(th, "nope")
 	tr.waitFor(t, th, "pick one of the listed fields")
 	tr.say(th, "Model")
 	tr.waitFor(t, th, "Which model?")
 	tr.say(th, "haiku")
-	menu2 := waitForNthOut(t, tr, th, "What do you want to change?", 4) // 3rd was the re-ask after "nope"
+	menu2 := tr.waitForN(t, th, "What do you want to change?", 4) // 3rd was the re-ask after "nope"
 	if menu2.Prompt.Options[0].Description != "haiku" {
 		t.Fatalf("menu after model change = %+v", menu2.Prompt.Options)
 	}
 	tr.say(th, "tools")
 	tr.waitFor(t, th, "Pre-approved tools")
 	tr.say(th, "Read, Edit, Bash(go test:*)")
-	waitForNth(t, tr, th, "What do you want to change?", 5)
+	tr.waitForN(t, th, "What do you want to change?", 5)
 	tr.say(th, "Save")
 	tr.waitFor(t, th, "agent *reviewer* updated")
 	def, err := st.GetDefinition(ctx, "reviewer")
@@ -309,7 +288,7 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	tr.say(th2, "thread")
 	tr.waitFor(t, th2, "Host directory to mount")
 	tr.say(th2, "none")
-	m := waitForNthOut(t, tr, th2, "What do you want to change?", 2)
+	m := tr.waitForN(t, th2, "What do you want to change?", 2)
 	if !strings.Contains(m.Text, "docker ghcr.io/x/claude · provisioned · container per thread · directory dancer manages") || strings.Contains(m.Text, "env FOO") {
 		t.Fatalf("menu after environment change (env must not carry over to another kind):\n%s", m.Text)
 	}
@@ -338,7 +317,7 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	tr.say(th3, "agent delete")
 	p := tr.waitFor(t, th3, "Which agent do you want to delete?")
 	tr.decide(th3, p.Prompt.ID, "tester")
-	q2 := waitForNthOut(t, tr, th3, "Delete agent *tester*", 2)
+	q2 := tr.waitForN(t, th3, "Delete agent *tester*", 2)
 	tr.decide(th3, q2.Prompt.ID, "Delete")
 	tr.waitFor(t, th3, "agent *tester* deleted")
 	if _, err := st.GetDefinition(ctx, "tester"); !errors.Is(err, store.ErrNotFound) {
@@ -356,22 +335,4 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	if flows, _ := st.ListFlows(ctx); len(flows) != 0 {
 		t.Fatalf("flow left behind: %+v", flows)
 	}
-}
-
-// waitForNthOut waits for the nth outbound on th containing sub and returns it.
-func waitForNthOut(t *testing.T, tr *fakeTransport, th transport.ThreadID, sub string, n int) transport.Outbound {
-	t.Helper()
-	waitForNth(t, tr, th, sub, n)
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-	seen := 0
-	for _, o := range tr.out {
-		if o.Thread == th && strings.Contains(o.Text, sub) {
-			seen++
-			if seen == n {
-				return o
-			}
-		}
-	}
-	return transport.Outbound{}
 }

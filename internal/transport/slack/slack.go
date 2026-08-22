@@ -14,7 +14,13 @@
 // without them the first failure turns the mirror off for the process.
 // Agent text (Outbound.Markdown) goes out as a Block Kit "markdown" block,
 // which renders standard Markdown; Slack's own mrkdwn would show **bold**
-// and # headings literally.
+// and # headings literally. Outbound.Mention goes out as "<@U…> " in front
+// of plain and prompt text, so Slack notifies that user even in a muted
+// thread; keyed messages ignore it, and surfaces do not set one on the
+// agent's Markdown text (see transport.Outbound.Mention). A settled prompt
+// drops that leading mention again when its buttons are replaced: the
+// notification has done its job, and a prompt that still opens with it
+// reads as if it were waiting.
 package slack
 
 import (
@@ -25,6 +31,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -61,11 +68,16 @@ func New(appToken, botToken string, allowedUsers []string, log *slog.Logger) (*T
 	if err != nil {
 		return nil, fmt.Errorf("slack: auth test: %w", err)
 	}
+	return newTransport(api, auth.UserID, allowedUsers, log), nil
+}
+
+// newTransport wires a transport to a Web API client; tests hand it a fake.
+func newTransport(api *slack.Client, botUserID string, allowedUsers []string, log *slog.Logger) *Transport {
 	c := &Transport{
 		api:          api,
 		sm:           socketmode.New(api),
 		log:          log,
-		botUserID:    auth.UserID,
+		botUserID:    botUserID,
 		allowedUsers: map[string]bool{},
 		threads:      map[transport.ThreadID]bool{},
 		keyed:        map[string]string{},
@@ -73,7 +85,7 @@ func New(appToken, botToken string, allowedUsers []string, log *slog.Logger) (*T
 	for _, u := range allowedUsers {
 		c.allowedUsers[u] = true
 	}
-	return c, nil
+	return c
 }
 
 func (c *Transport) Name() string { return "slack" }
@@ -119,7 +131,7 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 			if inner.BotID != "" || inner.User == c.botUserID || inner.SubType != "" {
 				return
 			}
-			mentioned := strings.Contains(inner.Text, "<@"+c.botUserID+">")
+			mentioned := strings.Contains(inner.Text, mention(c.botUserID))
 			if mentioned {
 				return // delivered via AppMentionEvent
 			}
@@ -149,9 +161,12 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 				choice = a.SelectedOption.Value // static_select
 			}
 			thread := threadID(cb.Channel.ID, cb.Message.ThreadTimestamp, cb.Message.Timestamp)
-			// Replace the buttons with the outcome so they cannot be clicked twice.
+			// Replace the buttons with the outcome so they cannot be clicked
+			// twice. The prompt's leading mention has done its job; a settled
+			// prompt that still opens with it reads as if it were waiting.
+			settled := unaddress(firstText(cb.Message))
 			_, _, _, err := c.api.UpdateMessageContext(ctx, cb.Channel.ID, cb.Message.Timestamp,
-				slack.MsgOptionText(fmt.Sprintf("%s\n→ *%s* by <@%s>", firstText(cb.Message), choice, cb.User.ID), false),
+				slack.MsgOptionText(fmt.Sprintf("%s\n→ *%s* by %s", settled, choice, mention(cb.User.ID)), false),
 				slack.MsgOptionBlocks())
 			if err != nil {
 				c.log.Warn("slack update message", "err", err)
@@ -201,17 +216,22 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	if msg.Key != "" {
 		return c.sendKeyed(ctx, chID, opts, msg)
 	}
+	text := address(msg.Text, msg.Mention)
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
+		// A section block holds 3000 characters and a message 4000; a
+		// longer prompt (a tool input nobody capped) is cut — with the
+		// same headroom sendKeyed leaves — rather than rejected together
+		// with its buttons, which would leave the agent waiting on nobody.
 		opts = append(opts,
-			slack.MsgOptionText(msg.Text, false),
+			slack.MsgOptionText(truncate(text, 3900), false),
 			slack.MsgOptionBlocks(
-				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, msg.Text, false, false), nil, nil),
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, truncate(text, 2900), false, false), nil, nil),
 				slack.NewActionBlock(msg.Prompt.ID, promptElements(msg.Prompt)...),
 			))
 		_, _, err := c.api.PostMessageContext(ctx, chID, opts...)
 		return err
 	}
-	for _, chunk := range chunks(msg.Text, 3900) {
+	for _, chunk := range chunks(text, 3900) {
 		if chunk == "" {
 			continue
 		}
@@ -313,6 +333,26 @@ func (c *Transport) setStatus(ctx context.Context, chID, ts, text string) {
 	c.log.Info("slack assistant status unavailable; the status line in the thread still works (enable Agents & AI Apps and the assistant:write scope to get it)", "err", err)
 }
 
+// address puts a mention of user in front of text, so Slack notifies
+// them even with the thread muted. The mention is ordinary mrkdwn, which
+// the markdown block for agent text does not render, so surfaces only set
+// it on dancer's own lines.
+func address(text, user string) string {
+	if user == "" || text == "" {
+		return text
+	}
+	return mention(user) + " " + text
+}
+
+// mention is Slack's mrkdwn for addressing a user.
+func mention(userID string) string { return "<@" + userID + ">" }
+
+// unaddress drops the address() prefix from text, and only that one.
+func unaddress(text string) string { return leadingMentionRE.ReplaceAllString(text, "") }
+
+// leadingMentionRE matches the mention address() put in front of a message.
+var leadingMentionRE = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
+
 // threadTS is the root message ts of a thread id, "" at top level.
 func threadTS(th transport.ThreadID) string {
 	_, ts, _ := strings.Cut(string(th), "/")
@@ -377,11 +417,17 @@ func promptOptions(p *transport.Prompt) []transport.Option {
 	return out
 }
 
+// truncate cuts s to under n bytes on a rune boundary, marking the cut.
+// Slack's limits count characters, so bytes is the safe side to count.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	i := n - 1
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + "…"
 }
 
 func (c *Transport) allowed(user string) bool {
@@ -464,10 +510,8 @@ func threadID(ch, threadTS, ts string) transport.ThreadID {
 	return transport.ThreadID(ch + "/" + threadTS)
 }
 
-var mentionRE = regexp.MustCompile(`<@[A-Z0-9]+>`)
-
 func stripMention(text, botID string) string {
-	text = strings.ReplaceAll(text, "<@"+botID+">", "")
+	text = strings.ReplaceAll(text, mention(botID), "")
 	return strings.TrimSpace(text)
 }
 
@@ -495,5 +539,3 @@ func chunks(s string, n int) []string {
 	}
 	return append(out, s)
 }
-
-var _ = mentionRE

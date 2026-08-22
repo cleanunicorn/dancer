@@ -41,6 +41,7 @@ type RunTask struct {
 	Thread transport.ThreadID
 	Agent  string // definition name; "" = the channel's or coordinator's default
 	Prompt string
+	User   string // transport user id of who asked (transport.Inbound.UserID); the task's requester
 }
 
 // SetDefault sets the default agent of the channel Thread belongs to, or
@@ -54,6 +55,7 @@ type SetDefault struct {
 type FollowUp struct {
 	Thread transport.ThreadID
 	Text   string
+	User   string // transport user id of who wrote it; the requester if this starts a task
 }
 
 // Cancel stops the task on Thread.
@@ -127,6 +129,7 @@ const (
 	EventHeartbeat  EventKind = "heartbeat"  // the task is still at it (or just stopped being); Task.Status says which
 	EventClosed     EventKind = "closed"     // the conversation on Thread was closed
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
+	EventNotice     EventKind = "notice"     // Text is dancer's own word on Task that asks the human to act (a restart left it for them)
 	EventError      EventKind = "error"      // Text explains a failure
 )
 
@@ -142,10 +145,10 @@ const (
 type Event struct {
 	Kind     EventKind
 	Thread   transport.ThreadID
-	Task     *store.TaskState // nil for Reply/Error without a task
+	Task     *store.TaskState // nil for Reply/Error without a task; EventNotice always carries the task whose requester it addresses
 	TaskID   executor.TaskID
 	Agent    *agent.Event    // EventAgent, EventPermission
 	PromptID string          // EventPermission/EventQuestion: id the Decide intent must echo
 	Question *agent.Question // EventQuestion: the single question this event carries
-	Text     string          // EventReply, EventError
+	Text     string          // EventReply, EventNotice, EventAllowed, EventError
 }

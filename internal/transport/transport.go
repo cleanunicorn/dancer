@@ -39,6 +39,17 @@ type Outbound struct {
 	// transport's own markup. A transport with a different dialect
 	// converts or hands it to a renderer that understands it.
 	Markdown bool
+	// Mention is the transport user id (Inbound.UserID) of the human this
+	// message addresses: the transport renders it the way that notifies
+	// them (Slack: "<@U…> " in front of Text), so someone who muted the
+	// thread still hears that the agent finished or needs an answer. It
+	// is honoured on ordinary and prompt text: a keyed message is edited in place
+	// and must not re-notify, so transports ignore Mention there; and a
+	// transport that hands Markdown text to a separate renderer may not
+	// render the mention at all, so surfaces set it on their own lines,
+	// never on the agent's. A transport without mentions (the terminal)
+	// ignores it.
+	Mention string
 	// Key names a message the surface will post again. A transport that
 	// can edit what it posted (Slack, a terminal) replaces the earlier
 	// message with this Key on the same Thread instead of adding a new

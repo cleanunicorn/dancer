@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
@@ -71,6 +72,69 @@ func TestHandleCommands(t *testing.T) {
 		if say, ok := got[0].(surface.Say); !ok || !strings.Contains(say.Text, "usage") {
 			t.Errorf("%q → %+v", text, got)
 		}
+	}
+}
+
+func TestHandleCarriesUser(t *testing.T) {
+	s := New("chat", "slack", false)
+	in := transport.Inbound{Transport: "slack", Thread: "C1/1.0", UserID: "U42", Text: "run coder fix it"}
+	if got, _ := s.Handle(context.Background(), in); got[0].(surface.RunTask).User != "U42" {
+		t.Errorf("run: user = %q", got[0].(surface.RunTask).User)
+	}
+	in.Text = "and the tests"
+	if got, _ := s.Handle(context.Background(), in); got[0].(surface.FollowUp).User != "U42" {
+		t.Errorf("follow-up: user = %q", got[0].(surface.FollowUp).User)
+	}
+}
+
+func TestRenderMentionsRequester(t *testing.T) {
+	th := transport.ThreadID("C1/1.0")
+	task := &store.TaskState{ID: "t1", Thread: th, Requester: "U42", Status: store.StatusRunning, Definition: agent.Definition{Name: "coder", Kind: agent.KindClaude, Environment: environment.Spec{Kind: environment.KindLocal}}}
+	ev := func(kind surface.EventKind, a *agent.Event) surface.Event {
+		return surface.Event{Kind: kind, Thread: th, TaskID: task.ID, Task: task, Agent: a, PromptID: "p1", Question: &agent.Question{Text: "Which?"}}
+	}
+	cases := []struct {
+		name string
+		ev   surface.Event
+		want string // Mention of the one message that is not the status line
+	}{
+		{"started", ev(surface.EventStarted, nil), ""},
+		{"text", ev(surface.EventAgent, &agent.Event{Type: agent.EventText, Text: "hi"}), ""},
+		{"tool", ev(surface.EventAgent, &agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolInput: map[string]any{"command": "ls"}}), ""},
+		{"permission", ev(surface.EventPermission, &agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolInput: map[string]any{"command": "rm"}}), "U42"},
+		{"question", ev(surface.EventQuestion, nil), "U42"},
+		{"result", ev(surface.EventAgent, &agent.Event{Type: agent.EventResult, Cost: 0.1}), "U42"},
+		{"agent error", ev(surface.EventAgent, &agent.Event{Type: agent.EventError, Text: "boom"}), "U42"},
+		{"error", surface.Event{Kind: surface.EventError, Thread: th, TaskID: task.ID, Task: task, Text: "executor: start environment: no docker"}, "U42"},
+		{"notice", surface.Event{Kind: surface.EventNotice, Thread: th, TaskID: task.ID, Task: task, Text: "▶️ dancer is back — reply to continue"}, "U42"},
+		{"reply", surface.Event{Kind: surface.EventReply, Thread: th, TaskID: task.ID, Task: task, Text: "task `t1` — status *idle*"}, ""},
+		{"failed", surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Requester: "U42", Status: store.StatusFailed}}, "U42"},
+		{"cancelled", surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Requester: "U42", Status: store.StatusCancelled}}, ""},
+		{"no task", surface.Event{Kind: surface.EventQuestion, Thread: th, PromptID: "p2", Question: &agent.Question{Text: "Which agent?"}}, ""},
+	}
+	for _, c := range cases {
+		s := New("chat", "slack", true)
+		out := lines(s.Render(c.ev))
+		if len(out) != 1 {
+			t.Fatalf("%s: got %d messages: %+v", c.name, len(out), out)
+		}
+		if out[0].Mention != c.want {
+			t.Errorf("%s: mention = %q want %q", c.name, out[0].Mention, c.want)
+		}
+		if out[0].Mention != "" && out[0].Markdown {
+			t.Errorf("%s: a mention on Markdown text, which Slack's markdown block does not render", c.name)
+		}
+	}
+}
+
+func TestPermissionPromptIsCutWithItsFenceClosed(t *testing.T) {
+	s := New("chat", "slack", false)
+	task := &store.TaskState{ID: "t1", Requester: "U42", Definition: agent.Definition{Name: "coder"}}
+	ev := surface.Event{Kind: surface.EventPermission, Thread: "C1/1.0", TaskID: "t1", Task: task, PromptID: "p1",
+		Agent: &agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolInput: map[string]any{"command": strings.Repeat("中", 3000)}}}
+	out := lines(s.Render(ev))
+	if len(out) != 1 || !strings.HasSuffix(out[0].Text, "…```") || !utf8.ValidString(out[0].Text) || len(out[0].Text) > 2600 {
+		t.Fatalf("cut prompt = %d bytes, valid=%v, tail %q", len(out[0].Text), utf8.ValidString(out[0].Text), out[0].Text[len(out[0].Text)-12:])
 	}
 }
 

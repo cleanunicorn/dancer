@@ -330,15 +330,14 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			case v.Action == actionAsk:
 				c.askAboutResume(ctx, tt, v)
 			case v.Action == actionAbandon:
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
-					Text: "⏹️ dancer is back — leaving this task: " + reasonOr(v.Reason, "it is no longer worth continuing") +
-						". " + capitalize(pickUpHint(tt))})
+				c.notice(ctx, tt, "⏹️ dancer is back — leaving this task: "+reasonOr(v.Reason, "it is no longer worth continuing")+
+					". "+capitalize(pickUpHint(tt)))
 			case tt.Status == store.StatusIdle:
 				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
 				if v.Reason != "" {
 					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
 				}
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
+				c.notice(ctx, tt, text)
 			}
 		}
 	}
@@ -729,7 +728,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if it.Agent == "" && strings.TrimSpace(it.Prompt) == "" {
 		// Bare `run`: ask for the agent and the prompt on the thread.
-		c.startPick(ctx, s, it.Thread, "")
+		c.startPick(ctx, s, it.Thread, "", it.User)
 		return
 	}
 	def, err := c.Store.GetDefinition(ctx, it.Agent)
@@ -744,7 +743,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if strings.TrimSpace(prompt) == "" {
 		// `run <agent>` without a prompt: ask for it.
-		c.startPick(ctx, s, it.Thread, def.Name)
+		c.startPick(ctx, s, it.Thread, def.Name, it.User)
 		return
 	}
 	id := executor.TaskID(newID())
@@ -752,7 +751,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 		def.Environment.Kind = environment.KindLocal
 	}
 	def.Environment = c.resolveEnv(def.Environment, def.Name, string(it.Thread), string(id))
-	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Status: store.StatusQueued}
+	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Requester: it.User, Status: store.StatusQueued}
 	if err := c.Store.PutTask(ctx, st); err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "store: " + err.Error()}, s)
 		return
@@ -833,7 +832,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
 	if def := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
 		// A fresh thread with plain text: start a task with the channel's default agent.
-		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text})
+		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User})
 		return
 	}
 	if err != nil {
@@ -1276,6 +1275,12 @@ func (c *Coordinator) broadcast(ctx context.Context, ev surface.Event) {
 	for _, s := range c.Surfaces {
 		c.emit(ctx, ev, s)
 	}
+}
+
+// notice tells t's thread that a restart left the task for its requester
+// to act on. Every notice carries its task, so surfaces can address them.
+func (c *Coordinator) notice(ctx context.Context, t store.TaskState, text string) {
+	c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventNotice, Thread: t.Thread, TaskID: t.ID, Task: &t, Text: text})
 }
 
 // append writes a record to the log. It must not be lost during shutdown,
