@@ -17,7 +17,10 @@
 // and # headings literally. Outbound.Mention goes out as "<@U…> " in front
 // of plain and prompt text, so Slack notifies that user even in a muted
 // thread; keyed messages ignore it, and surfaces do not set one on the
-// agent's Markdown text (see transport.Outbound.Mention).
+// agent's Markdown text (see transport.Outbound.Mention). A settled prompt
+// drops that leading mention again when its buttons are replaced: the
+// notification has done its job, and a prompt that still opens with it
+// reads as if it were waiting.
 package slack
 
 import (
