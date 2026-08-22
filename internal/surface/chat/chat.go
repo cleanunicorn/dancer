@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
 	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/surface"
 	"github.com/cleanunicorn/dancer/internal/transport"
@@ -22,6 +22,9 @@ type Surface struct {
 	transport string
 	// Verbose also posts tool calls and tool errors.
 	Verbose bool
+
+	mu       sync.Mutex
+	lastInit map[transport.ThreadID]string // last session-details line posted per thread
 }
 
 // New binds a chat surface to a transport.
@@ -100,7 +103,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	case surface.EventStarted:
 		return out(fmt.Sprintf("▶️ task `%s` started with agent *%s* (%s)", ev.TaskID, ev.Task.Definition.Name, ev.Task.Definition.Environment.Kind))
 	case surface.EventResumed:
-		return out("⏯️ resuming session")
+		return out(fmt.Sprintf("⏯️ resuming session with agent *%s*", ev.Task.Definition.Name))
 	case surface.EventPermission:
 		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, describeInput(ev.Agent))
 		return []transport.Outbound{{Thread: ev.Thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
@@ -134,7 +137,10 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 	var text string
 	switch a.Type {
 	case agent.EventInit:
-		text = describeInit(ev)
+		if a.ParentID != "" {
+			return nil // a sub-agent's session, not the one the human talks to
+		}
+		text = s.initLine(ev)
 	case agent.EventText:
 		if a.ParentID != "" && !s.Verbose {
 			return nil
@@ -167,15 +173,35 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 	return []transport.Outbound{{Thread: ev.Thread, Text: text, Files: files}}
 }
 
-// describeInit renders the session details an agent reports when it starts
-// or resumes: the model it actually runs (the definition may leave it to the
-// CLI's default), its permission mode, CLI version, billing and where it runs.
-func describeInit(ev surface.Event) string {
-	a := ev.Agent
-	var parts []string
-	if ev.Task != nil {
-		parts = append(parts, fmt.Sprintf("*%s*", ev.Task.Definition.Name))
+// initLine is the session-details line for an init event, or "" when the
+// thread already saw the same one from this dancer process. A follow-up
+// after idle_timeout resumes the CLI and reports the same details again;
+// a restart clears the memory, so the line comes back when dancer does.
+func (s *Surface) initLine(ev surface.Event) string {
+	text := describeInit(ev)
+	if text == "" {
+		return ""
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastInit[ev.Thread] == text {
+		return ""
+	}
+	if s.lastInit == nil {
+		s.lastInit = map[transport.ThreadID]string{}
+	}
+	s.lastInit[ev.Thread] = text
+	return text
+}
+
+// describeInit renders what an agent reports when its session starts or
+// resumes: the model it actually runs (the definition may leave it to the
+// CLI's default), its permission mode, CLI version, billing and where it
+// runs. The ▶️/⏯️ line before it already says which agent. Empty when the
+// agent reported nothing beyond a session id.
+func describeInit(ev surface.Event) string {
+	a, def := ev.Agent, ev.Task.Definition
+	var parts []string
 	if a.Model != "" {
 		parts = append(parts, "`"+a.Model+"`")
 	}
@@ -183,7 +209,7 @@ func describeInit(ev surface.Event) string {
 		parts = append(parts, string(a.Mode))
 	}
 	if a.Version != "" {
-		parts = append(parts, "claude "+a.Version)
+		parts = append(parts, string(def.Kind)+" "+a.Version)
 	}
 	switch a.Billing {
 	case agent.BillingSubscription:
@@ -191,40 +217,15 @@ func describeInit(ev surface.Event) string {
 	case agent.BillingAPIKey:
 		parts = append(parts, "API key")
 	}
-	if ev.Task != nil {
-		parts = append(parts, describeEnvironment(ev.Task.Definition.Environment, a.Workdir))
-	} else if a.Workdir != "" {
-		parts = append(parts, a.Workdir)
+	if len(parts) == 0 {
+		return ""
 	}
+	env := def.Environment
+	if a.Workdir != "" {
+		env.Workdir = a.Workdir // the directory the agent reports beats the configured one
+	}
+	parts = append(parts, env.String())
 	return "🤖 " + strings.Join(parts, " · ")
-}
-
-// describeEnvironment names where the agent runs: kind, then the docker
-// image or ssh host, then the working directory (the one the agent reports,
-// falling back to the definition's).
-func describeEnvironment(spec environment.Spec, workdir string) string {
-	kind := string(spec.Kind)
-	if kind == "" {
-		kind = string(environment.KindLocal)
-	}
-	s := kind
-	switch spec.Kind {
-	case environment.KindDocker:
-		if spec.Image != "" {
-			s += " " + spec.Image
-		}
-	case environment.KindSSH:
-		if spec.Host != "" {
-			s += " " + spec.Host
-		}
-	}
-	if workdir == "" {
-		workdir = spec.Workdir
-	}
-	if workdir != "" {
-		s += " " + workdir
-	}
-	return s
 }
 
 // FormatCost renders a result's cost: a plain charge for API-key runs, an

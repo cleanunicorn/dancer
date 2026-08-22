@@ -310,7 +310,7 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	tr.waitFor(t, th2, "Host directory to mount")
 	tr.say(th2, "none")
 	m := waitForNthOut(t, tr, th2, "What do you want to change?", 2)
-	if !strings.Contains(m.Text, "docker · image `ghcr.io/x/claude` · provisioned · container per thread · directory dancer manages") || strings.Contains(m.Text, "env FOO") {
+	if !strings.Contains(m.Text, "docker ghcr.io/x/claude · provisioned · container per thread · directory dancer manages") || strings.Contains(m.Text, "env FOO") {
 		t.Fatalf("menu after environment change (env must not carry over to another kind):\n%s", m.Text)
 	}
 	tr.say(th2, "Cancel")
