@@ -555,12 +555,13 @@ func TestChannelDefaultsAndRunPicker(t *testing.T) {
 	if q.Prompt == nil || len(q.Prompt.Options) != 2 || !q.Prompt.FreeText || !strings.Contains(q.Prompt.Options[1].Description, "default here") {
 		t.Fatalf("picker prompt = %+v", q.Prompt)
 	}
-	tr.decide(th, q.Prompt.ID, "coder")
+	// Someone else answers the picker: the task is still u1's.
+	tr.decideAs(th, "u2", q.Prompt.ID, "coder")
 	p := tr.waitFor(t, th, "What should *coder* do?")
 	if p.Prompt == nil || len(p.Prompt.Options) != 0 {
 		t.Fatalf("prompt question = %+v", p.Prompt)
 	}
-	tr.say(th, "do the thing")
+	tr.sayAs(th, "u2", "do the thing")
 	tr.waitFor(t, th, "started with agent *coder*")
 	if o := tr.waitFor(t, th, "wants to run"); o.Mention != "u1" {
 		t.Errorf("permission prompt addressed to %q, want the one who typed `run`", o.Mention)
