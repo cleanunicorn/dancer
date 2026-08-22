@@ -156,6 +156,44 @@ func TestAskPutsTheChoiceToTheThread(t *testing.T) {
 	}
 }
 
+// TestStaleResumeAnswerIsIgnored: the question stays clickable for hours.
+// If the human replied instead and the task ran another turn, a later
+// click must not write the pre-restart snapshot back over it.
+func TestStaleResumeAnswerIsIgnored(t *testing.T) {
+	d := &stubDecider{verdict: decider.Verdict{Action: actionAsk, Prompt: "Finish the run?"}}
+	tr, st, th := startWithDecider(t, d, []string{kindResume})
+
+	q := tr.waitFor(t, th, "Finish the run?")
+
+	// The human types instead of clicking: the task resumes, finishes its
+	// turn and lands with a newer session.
+	tr.say(th, "yes please, and add a test")
+	tr.waitFor(t, th, "echo:yes please, and add a test")
+	deadline := time.Now().Add(3 * time.Second)
+	var moved store.TaskState
+	for time.Now().Before(deadline) {
+		moved, _ = st.GetTask(context.Background(), "t-1")
+		if moved.LastSeq > 0 && moved.Status == store.StatusIdle {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if moved.LastSeq == 0 {
+		t.Fatalf("the follow-up turn did not land: %+v", moved)
+	}
+
+	// Now the stale click arrives.
+	tr.decide(th, q.Prompt.ID, "drop")
+	time.Sleep(300 * time.Millisecond)
+	after, _ := st.GetTask(context.Background(), "t-1")
+	if after.Status == store.StatusCancelled {
+		t.Fatalf("a stale click cancelled a task that had moved on: %+v", after)
+	}
+	if after.LastSeq != moved.LastSeq || after.Session != moved.Session {
+		t.Fatalf("a stale click clobbered newer state: %+v, was %+v", after, moved)
+	}
+}
+
 // TestAbandonStopsOfferingTheTask: abandoned tasks are cancelled, say why,
 // and are not picked up by the next restart either.
 func TestAbandonStopsOfferingTheTask(t *testing.T) {

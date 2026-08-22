@@ -5,15 +5,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
 
 // Claude answers with one `claude -p` call: a small model, no tools, no
-// session, no working directory of its own. It always runs on the dancer
-// host — a policy question is about dancer, not about the task's
+// session, and an empty scratch directory to run in. It always runs on the
+// dancer host — a policy question is about dancer, not about the task's
 // environment.
+//
+// The scratch directory matters more than it looks. dancer is normally
+// started from a repository checkout, and a CLI started there would read
+// that project's CLAUDE.md, .claude/settings.json (hooks included) and MCP
+// config — reaching the decider as instructions, ahead of its own policy.
+// The whole point of this package is that project and agent text is
+// evidence to judge, never orders, so the decider is run somewhere with
+// nothing in it and with MCP servers switched off.
 type Claude struct {
 	Binary  string        // default "claude"
 	Model   string        // default "haiku"
@@ -65,14 +74,22 @@ func (c Claude) Decide(ctx context.Context, q Question) (Verdict, error) {
 	if model == "" {
 		model = "haiku"
 	}
+	dir, err := os.MkdirTemp("", "dancer-decider-")
+	if err != nil {
+		return Verdict{}, fmt.Errorf("decider: scratch dir: %w", err)
+	}
+	defer os.RemoveAll(dir)
+
 	cmd := exec.CommandContext(ctx, bin,
 		"-p",
 		"--output-format", "json",
 		"--model", model,
 		"--allowedTools", "",
 		"--permission-mode", "manual",
+		"--strict-mcp-config", // no MCP servers: nothing to reach out to
 		"--append-system-prompt", policy,
 	)
+	cmd.Dir = dir // empty: no project CLAUDE.md, settings or hooks
 	cmd.Stdin = bytes.NewReader(body)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

@@ -89,11 +89,16 @@ func (c *Coordinator) autoAllowed(ev agent.Event) bool {
 // syntax is the one definitions already use for allowed_tools:
 //
 //	Read              any Read call
-//	Bash(go test:*)   a Bash call whose command starts with "go test"
+//	Read(/repo/*)     a Read call under /repo/
+//	Bash(go test:*)   a Bash call running "go test …"
 //	Bash(*)           any Bash call
 //
-// The prefix must end at a word boundary, so "go test" does not match
-// "go testrunner-that-deletes-things".
+// A prefix must end at a boundary, so "go test" does not match
+// "go testrunner-that-deletes-things". A command is matched in every
+// segment a shell would run — `go test ./... && rm -rf /` is three words
+// of the operator's prefix followed by something they never allowed, so
+// each segment has to match, and a command that hides code in a
+// substitution matches nothing at all.
 func matchesTool(pattern string, ev agent.Event) bool {
 	pattern = strings.TrimSpace(pattern)
 	name, rest, hasArgs := strings.Cut(pattern, "(")
@@ -105,17 +110,89 @@ func matchesTool(pattern string, ev agent.Event) bool {
 	}
 	arg := strings.TrimSuffix(strings.TrimSpace(rest), ")")
 	arg = strings.TrimSuffix(arg, ":*")
-	arg = strings.TrimSuffix(arg, "*")
+	arg = strings.TrimRight(arg, "*")
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
-		return true
+		return true // Tool(*): the operator asked for every call of it
 	}
-	call := oneLine(summarizeInput(ev.ToolInput))
-	if !strings.HasPrefix(call, arg) {
+	raw := rawInput(ev.ToolInput) // not flattened: newlines separate commands
+	if strings.TrimSpace(raw) == "" {
 		return false
 	}
-	rem := call[len(arg):]
-	return rem == "" || rem[0] == ' ' || rem[0] == '/' || rem[0] == ':'
+	segments := []string{oneLine(raw)}
+	if isShellTool(ev.Tool) {
+		if hidesCode(raw) {
+			return false // a substitution can run anything; no prefix covers it
+		}
+		segments = shellSegments(raw)
+	}
+	for _, seg := range segments {
+		if !hasPrefixAtBoundary(seg, arg) {
+			return false
+		}
+	}
+	return true
+}
+
+// isShellTool reports whether a tool's input is a command line rather than
+// a plain argument, and so has to be read the way a shell would read it.
+func isShellTool(tool string) bool {
+	switch tool {
+	case "Bash", "BashOutput", "Shell", "Run":
+		return true
+	}
+	return false
+}
+
+// hidesCode reports whether a command can run something the prefix cannot
+// be checked against: a substitution, an eval of piped input, a here-doc.
+func hidesCode(cmd string) bool {
+	for _, s := range []string{"$(", "`", "${", "<(", ">(", "eval "} {
+		if strings.Contains(cmd, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// shellSegments splits a command on the operators that start a new command.
+func shellSegments(cmd string) []string {
+	fields := strings.FieldsFunc(cmd, func(r rune) bool {
+		return r == ';' || r == '|' || r == '&' || r == '\n' || r == '\r'
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	if len(out) == 0 {
+		return []string{cmd}
+	}
+	return out
+}
+
+// hasPrefixAtBoundary reports whether s starts with prefix and the prefix
+// ends where a token does — so "go test" covers "go test ./..." but not
+// "go testrunner". A prefix that already ends in a separator ("/repo/")
+// needs no boundary of its own.
+func hasPrefixAtBoundary(s, prefix string) bool {
+	if !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	rem := s[len(prefix):]
+	if rem == "" {
+		return true
+	}
+	switch prefix[len(prefix)-1] {
+	case '/', ':', '-', '=', '_', '.':
+		return true // the pattern named a directory or an option prefix
+	}
+	switch rem[0] {
+	case ' ', '\t', '/', ':', '=':
+		return true
+	}
+	return false
 }
 
 // marshalInput is the whole tool input, for a decision that turns on a

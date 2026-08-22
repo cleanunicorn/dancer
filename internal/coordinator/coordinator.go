@@ -103,7 +103,6 @@ type Coordinator struct {
 	mu        sync.Mutex
 	decisions map[executor.TaskID]int                   // questions asked about a task
 	allowed   map[executor.TaskID]int                   // tool calls auto-allowed for a task
-	verdicts  map[executor.TaskID]decider.Verdict       // last verdict, for `status`
 	threads   map[transport.ThreadID]executor.TaskID    // live task per thread
 	owner     map[executor.TaskID]string                // task -> surface that started it
 	pending   map[string]chan transport.Decision        // prompt base id -> waiter
@@ -121,7 +120,6 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		transports: map[string]transport.Transport{},
 		decisions:  map[executor.TaskID]int{},
 		allowed:    map[executor.TaskID]int{},
-		verdicts:   map[executor.TaskID]decider.Verdict{},
 		threads:    map[transport.ThreadID]executor.TaskID{},
 		owner:      map[executor.TaskID]string{},
 		pending:    map[string]chan transport.Decision{},
@@ -247,6 +245,13 @@ const defaultResumePrompt = "dancer restarted and cut your last turn short. Cont
 // again when they never got one — so nobody has to type in the thread; the
 // rest are marked idle and resume with the next message.
 func (c *Coordinator) recover(ctx context.Context) error {
+	// Deciding happens before the transports are up, so it is dead time on
+	// every start. One question is seconds; a crash that left twenty tasks
+	// behind would be minutes of a silent bot. The whole of recovery gets
+	// one budget, and the tasks past it are answered by the rules.
+	dctx, cancelDecisions := context.WithTimeout(ctx, c.recoveryBudget())
+	defer cancelDecisions()
+
 	var resume []resumable
 	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued, store.StatusInterrupted} {
 		tasks, err := c.Store.ListTasks(ctx, status)
@@ -258,7 +263,7 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			if c.autoResumable(t) {
 				// The rules say this one may continue; the decider chooses
 				// what actually happens to it, and may word the resume.
-				v = c.decide(ctx, decider.Question{
+				v = c.decide(dctx, decider.Question{
 					Kind: kindResume, Task: string(t.ID), Thread: string(t.Thread),
 					Options: []string{actionContinue, actionWait, actionAsk, actionAbandon},
 					Facts:   c.factsForResume(ctx, t),
@@ -271,6 +276,8 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				t.Resumes++
 			case v.Action == actionAbandon:
 				t.Status = store.StatusCancelled
+			case v.Action == actionAsk:
+				t.Status = store.StatusIdle // the question needs it pick-up-able
 			case t.Session == "":
 				t.Status = store.StatusFailed
 			default:
@@ -289,7 +296,7 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			case v.Action == actionAbandon:
 				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
 					Text: "⏹️ dancer is back — leaving this task: " + reasonOr(v.Reason, "it is no longer worth continuing") +
-						". Reply in this thread if you want it picked up anyway."})
+						". " + capitalize(pickUpHint(tt))})
 			case tt.Status == store.StatusIdle:
 				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
 				if v.Reason != "" {
@@ -303,6 +310,24 @@ func (c *Coordinator) recover(ctx context.Context) error {
 		c.autoResume(ctx, r.task, r.prompt)
 	}
 	return nil
+}
+
+// recoveryBudget bounds the time all of recovery may spend on decisions:
+// four questions' worth, so a handful of tasks each get their answer and a
+// wedged CLI cannot hold the bot offline.
+func (c *Coordinator) recoveryBudget() time.Duration {
+	per := c.DeciderTimeout
+	if per <= 0 {
+		per = 15 * time.Second
+	}
+	return 4 * per
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // resumable is a task recover() decided to pick up, with the turn it is to
@@ -417,7 +442,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 			return
 		}
 		text := fmt.Sprintf("task `%s` — agent *%s* — status *%s* — session `%s`", st.ID, st.Definition.Name, st.Status, st.Session)
-		if v, ok := c.lastVerdict(st.ID); ok && v.By != "" {
+		if v, ok := c.lastVerdict(ctx, st); ok && v.By != "" {
 			text += fmt.Sprintf("\n· last decision: *%s* by %s", v.Action, v.By)
 			if v.Reason != "" {
 				text += " — " + v.Reason
@@ -876,6 +901,10 @@ func (c *Coordinator) unbind(th transport.ThreadID, id executor.TaskID) {
 		delete(c.threads, th)
 	}
 	delete(c.owner, id)
+	// The decision budget and the auto-allow count belong to a run, not to
+	// a task id that a long-lived server would otherwise remember forever.
+	delete(c.decisions, id)
+	delete(c.allowed, id)
 	c.mu.Unlock()
 }
 

@@ -53,7 +53,8 @@ func (s *stubDecider) questions() []decider.Question {
 func startWithDecider(t *testing.T, d decider.Decider, uses []string) (*fakeTransport, store.Store, transport.ThreadID) {
 	t.Helper()
 	th := transport.ThreadID("C-dev/30.0")
-	def := agent.Definition{Name: "coder", Kind: "fake", Environment: environment.Spec{Kind: environment.KindLocal}}
+	def := agent.Definition{Name: "coder", Kind: "fake",
+		Environment: environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()}}
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +129,59 @@ func TestDeciderIsNotAskedAboutKindsItMayNotAnswer(t *testing.T) {
 	tr.waitFor(t, th, "echo:"+defaultResumePrompt)
 	if qs := d.questions(); len(qs) != 0 {
 		t.Fatalf("decider was asked anyway: %+v", qs)
+	}
+}
+
+// TestDeciderAnswerOutsideTheOptionsIsDiscarded: the seam enforces the
+// contract, not each implementation. A decider that returns a nil error
+// with an action nobody offered must not reach the task.
+func TestDeciderAnswerOutsideTheOptionsIsDiscarded(t *testing.T) {
+	d := &rawDecider{verdict: decider.Verdict{Action: "allow_all",
+		Prompt: "rm -rf /", Reason: "trust me", By: "rogue"}}
+	tr, _, th := startWithDecider(t, d, []string{kindResume})
+	tr.waitFor(t, th, "echo:"+defaultResumePrompt) // the rules answered
+}
+
+// rawDecider skips decider.Validate, the way a third-party implementation
+// could. Only the coordinator stands between it and the task.
+type rawDecider struct{ verdict decider.Verdict }
+
+func (r *rawDecider) Name() string { return "raw" }
+func (r *rawDecider) Decide(context.Context, decider.Question) (decider.Verdict, error) {
+	return r.verdict, nil
+}
+
+// TestBudgetIsSpentOnlyOnQuestionsADeciderSaw: a question answered by the
+// rules — wrong kind, no decider — must not use up the task's budget, or
+// tool prompts would quietly switch the resume decider off.
+func TestBudgetIsSpentOnlyOnQuestionsADeciderSaw(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := New(st, nil, nil, nil, nil)
+	c.Decider = &stubDecider{verdict: decider.Verdict{Action: actionWait}}
+	c.DeciderUses = []string{kindResume}
+	ctx := context.Background()
+
+	q := decider.Question{Kind: kindPermission, Task: "t-1",
+		Options: []string{actionAllow, actionAsk}, Static: decider.Verdict{Action: actionAsk}}
+	for i := 0; i < 50; i++ {
+		if v := c.decide(ctx, q); v.Action != actionAsk || v.By != "static" {
+			t.Fatalf("permission answer = %+v", v)
+		}
+	}
+	c.mu.Lock()
+	spent := c.decisions["t-1"]
+	c.mu.Unlock()
+	if spent != 0 {
+		t.Fatalf("budget spent on questions no decider saw: %d", spent)
+	}
+	resume := decider.Question{Kind: kindResume, Task: "t-1",
+		Options: []string{actionContinue, actionWait}, Static: decider.Verdict{Action: actionContinue}}
+	if v := c.decide(ctx, resume); v.Action != actionWait {
+		t.Fatalf("the resume decider was disabled by tool prompts: %+v", v)
 	}
 }
 

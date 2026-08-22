@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Question is one decision. Facts is marshalled to JSON for the model and
@@ -84,9 +85,15 @@ func allowed(options []string, action string) bool {
 	return false
 }
 
+// truncate cuts at a rune boundary: a verdict is JSON-marshalled into the
+// event log and posted to a chat thread, and half a rune survives neither.
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return strings.TrimSpace(s[:max]) + "…"
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }

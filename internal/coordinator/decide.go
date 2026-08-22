@@ -77,19 +77,41 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 			c.Log.Info("resume answer ignored: the thread moved on", "task", t.ID, "choice", d.Choice)
 			return
 		}
-		if d.Choice != actionContinue {
-			st := t
-			st.Status = store.StatusCancelled
-			_ = c.Store.PutTask(ctx, st)
-			c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &st,
-				Text: "⏹️ dropped — reply in this thread if you want it picked up after all"})
+		// The question outlives whole turns: someone may have replied hours
+		// ago, run the task again and left it idle with a newer session. The
+		// snapshot recover() took is then stale, and writing it back would
+		// undo that turn — so re-read, and only act if nothing moved.
+		st, err := c.Store.GetTask(ctx, t.ID)
+		if err != nil {
+			c.Log.Warn("resume answer dropped: task is gone", "task", t.ID, "err", err)
 			return
 		}
-		st := t
+		if st.Session != t.Session || st.LastSeq != t.LastSeq || st.Status == store.StatusRunning {
+			c.Log.Info("resume answer ignored: the task moved on", "task", t.ID, "choice", d.Choice,
+				"status", st.Status, "was_seq", t.LastSeq, "now_seq", st.LastSeq)
+			return
+		}
+		if d.Choice != actionContinue {
+			st.Status = store.StatusCancelled
+			_ = c.Store.PutTask(ctx, st)
+			c.emitTo(ctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: st.Thread, TaskID: st.ID, Task: &st,
+				Text: "⏹️ dropped — " + pickUpHint(st)})
+			return
+		}
 		st.Resumes++
 		_ = c.Store.PutTask(ctx, st)
 		c.autoResume(ctx, st, "")
 	}()
+}
+
+// pickUpHint says how a task can still be picked up by hand. followUp
+// resumes a session; a task that never got one has to be started again,
+// so the two cases must not be promised the same thing.
+func pickUpHint(t store.TaskState) string {
+	if t.Session == "" {
+		return "say `run` to start it again"
+	}
+	return "reply in this thread if you want it picked up after all"
 }
 
 func reasonSuffix(reason string) string {
@@ -116,26 +138,35 @@ func (c *Coordinator) decide(ctx context.Context, q decider.Question) decider.Ve
 	if err != nil { // Static cannot fail; keep the compiler honest about it
 		v = q.Static
 	}
-	if d := c.deciderFor(q); d != nil {
-		timeout := c.DeciderTimeout
-		if timeout <= 0 {
-			timeout = 15 * time.Second
+	d := c.deciderFor(q)
+	if d == nil {
+		return v // the rules answer it; nothing was spent and nothing to record
+	}
+	timeout := c.DeciderTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	dctx, cancel := context.WithTimeout(ctx, timeout)
+	got, derr := d.Decide(dctx, q)
+	cancel()
+	switch {
+	case derr != nil:
+		c.Log.Warn("decider fell back to the rules", "kind", q.Kind, "task", q.Task, "decider", d.Name(), "err", derr)
+	default:
+		// The interface cannot promise this — only Validate can. A verdict
+		// that leaves the options, or arrives oversized, is a decider bug
+		// and ends where every other failure does: at the rules.
+		valid, verr := decider.Validate(q, got)
+		if verr != nil {
+			c.Log.Warn("decider answered outside the question", "kind", q.Kind, "task", q.Task, "decider", d.Name(), "err", verr)
+			break
 		}
-		dctx, cancel := context.WithTimeout(ctx, timeout)
-		got, derr := d.Decide(dctx, q)
-		cancel()
-		switch {
-		case derr != nil:
-			c.Log.Warn("decider fell back to the rules", "kind", q.Kind, "task", q.Task, "decider", d.Name(), "err", derr)
-		default:
-			v = got
-			c.Log.Info("decision", "kind", q.Kind, "task", q.Task, "action", v.Action, "by", v.By, "reason", v.Reason)
-		}
+		v = valid
+		c.Log.Info("decision", "kind", q.Kind, "task", q.Task, "action", v.Action, "by", v.By, "reason", v.Reason)
 	}
 	id := executor.TaskID(q.Task)
 	c.mu.Lock()
-	c.decisions[id]++
-	c.verdicts[id] = v
+	c.decisions[id]++ // only questions a decider actually saw cost budget
 	c.mu.Unlock()
 	c.append(ctx, id, transport.ThreadID(q.Thread), "decision", struct {
 		Question decider.Question `json:"question"`
@@ -169,12 +200,29 @@ func (c *Coordinator) deciderFor(q decider.Question) decider.Decider {
 }
 
 // lastVerdict returns the last decision made about a task, for `status`.
-// It lives in memory: after a restart the log still has it, `status` does not.
-func (c *Coordinator) lastVerdict(id executor.TaskID) (decider.Verdict, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	v, ok := c.verdicts[id]
-	return v, ok
+// It reads the log rather than a map, so it costs nothing to keep, holds
+// nothing forever, and still answers after a restart.
+func (c *Coordinator) lastVerdict(ctx context.Context, t store.TaskState) (decider.Verdict, bool) {
+	records, err := c.Store.ThreadRecords(ctx, t.Thread, factRecords)
+	if err != nil {
+		c.Log.Warn("reading decisions from the log", "task", t.ID, "err", err)
+		return decider.Verdict{}, false
+	}
+	var out decider.Verdict
+	var found bool
+	for _, r := range records {
+		if r.Kind != "decision" || r.Task != t.ID {
+			continue
+		}
+		var rec struct {
+			Verdict decider.Verdict `json:"verdict"`
+		}
+		if json.Unmarshal(r.Payload, &rec) != nil || rec.Verdict.Action == "" {
+			continue // a button click, not a decider verdict
+		}
+		out, found = rec.Verdict, true
+	}
+	return out, found
 }
 
 // resumeFacts is what the decider is told about a task a restart cut short.
@@ -302,10 +350,14 @@ func describeEvent(ev agent.Event) string {
 }
 
 // summarizeInput picks the one field of a tool call that says what it did.
-func summarizeInput(in map[string]any) string {
+func summarizeInput(in map[string]any) string { return oneLine(rawInput(in)) }
+
+// rawInput is the same field, unflattened. Whoever has to read a command
+// the way a shell would needs its newlines: they separate commands.
+func rawInput(in map[string]any) string {
 	for _, k := range []string{"command", "file_path", "path", "pattern", "url"} {
 		if v, ok := in[k].(string); ok && v != "" {
-			return oneLine(v)
+			return v
 		}
 	}
 	return ""

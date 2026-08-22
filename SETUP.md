@@ -212,7 +212,9 @@ With `"permission"` in `uses` it also triages approval prompts, so routine
 tool calls stop waking you. A prompt means the call is outside what the agent
 definition pre-approved, so the decider needs permission you wrote down
 yourself: `auto_allow` (same syntax as `allowed_tools` — `Read`,
-`Bash(go test:*)`, `Bash(*)`). A call outside that list goes straight to the
+`Read(/repo/*)`, `Bash(go test:*)`, `Bash(*)`). A command is matched the way a
+shell reads it, so `Bash(go test:*)` covers `go test ./... && go test ./cmd`
+but not `go test ./... && rm -rf .git`, and not `go test $(something)`. A call outside that list goes straight to the
 buttons without asking the decider anything; a call inside it may be approved,
 and the thread is told:
 
