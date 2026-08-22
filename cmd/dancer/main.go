@@ -134,6 +134,10 @@ func runServer(cfgPath string, forceTerminal bool) error {
 
 	c := coordinator.New(st, ex, transports, surfaces, log)
 	c.DefaultDefinition = cfg.Server.DefaultAgent
+	c.ChannelAgents = cfg.ChannelAgents()
+	c.SaveChannelAgent = func(_ context.Context, transportName, channel, agent string) error {
+		return config.AppendChannel(cfgPath, config.Channel{Transport: transportName, ID: channel, Agent: agent})
+	}
 	c.WorkdirRoot = cfg.Server.WorkdirRoot
 	c.DrainTimeout = cfg.Server.DrainTimeout.Duration
 	c.SaveDefinition = func(_ context.Context, d agent.Definition) error {

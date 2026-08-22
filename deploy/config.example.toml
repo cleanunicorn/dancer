@@ -8,7 +8,7 @@ idle_timeout = "10m"        # keep a finished turn's process alive this long for
 drain_timeout = "2m"        # on restart, let in-flight tool calls finish before stopping agents
 verbose = false             # true: post every tool call to the thread
 default_agent = "coder"     # used by `run <prompt>` without an agent name
-channels = ["slack"]        # "slack", "tui"
+transports = ["slack"]      # "slack", "terminal"
 
 [claude]
 binary = "claude"
@@ -17,6 +17,15 @@ binary = "claude"
 app_token = "xapp-..."      # App-level token with connections:write
 bot_token = "xoxb-..."      # Bot User OAuth token
 allowed_users = []          # Slack user IDs allowed to command dancer; empty = everyone
+
+# --- per-channel defaults ----------------------------------------------------
+# Plain messages in a channel run its default agent instead of
+# server.default_agent. `@dancer default <agent>` appends one of these; when a
+# channel appears more than once the last block wins.
+
+[[channels]]
+id = "C0123ABCDEF"          # Slack channel id (channel details → "Channel ID")
+agent = "sandbox"
 
 # --- agent definitions -------------------------------------------------------
 

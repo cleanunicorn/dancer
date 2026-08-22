@@ -32,8 +32,10 @@ func (s *Surface) Name() string      { return s.name }
 func (s *Surface) Transport() string { return s.transport }
 
 const help = "Commands:\n" +
-	"• `<prompt>` — start a task with the default agent\n" +
+	"• `<prompt>` — start a task with this channel's default agent\n" +
 	"• `run <agent> <prompt>` — start a task with a specific agent\n" +
+	"• `run` — pick the agent from a list, then type the prompt\n" +
+	"• `default <agent>` — set this channel's default agent (`default` shows it)\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
@@ -57,10 +59,13 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Say{Thread: in.Thread, Text: help}}, true
 	case "run":
 		name, prompt := splitWord(rest)
-		if prompt == "" && name == "" {
-			return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `run <agent> <prompt>`"}}, true
-		}
 		return []surface.Intent{surface.RunTask{Thread: in.Thread, Agent: name, Prompt: prompt}}, true
+	case "default":
+		name, extra := splitWord(rest)
+		if extra != "" {
+			return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `default <agent>` or `default`"}}, true
+		}
+		return []surface.Intent{surface.SetDefault{Thread: in.Thread, Agent: name}}, true
 	case "status":
 		return []surface.Intent{surface.Status{Thread: in.Thread}}, true
 	case "cancel", "stop":

@@ -20,8 +20,22 @@ type Config struct {
 	Claude      Claude       `toml:"claude"`
 	Slack       Slack        `toml:"slack"`
 	Surfaces    []Surface    `toml:"surfaces"`
+	Channels    []Channel    `toml:"channels"`
 	Definitions []Definition `toml:"definitions"`
 }
+
+// Channel sets per-channel defaults: messages in that channel without an
+// agent name run Agent instead of server.default_agent. Several entries for
+// one channel are allowed; the last one wins, so `default <agent>` in chat
+// can append rather than rewrite the file.
+type Channel struct {
+	Transport string `toml:"transport,omitempty"` // defaults to "slack"
+	ID        string `toml:"id"`                  // Slack channel id (C0123…)
+	Agent     string `toml:"agent"`
+}
+
+// Key identifies the channel across transports: "<transport>/<id>".
+func (ch Channel) Key() string { return ch.Transport + "/" + ch.ID }
 
 // Surface binds an interaction style to a transport. Several surfaces may
 // share one transport.
@@ -175,6 +189,21 @@ func (c *Config) applyDefaults(path string) {
 	if c.Server.DefaultAgent == "" && len(c.Definitions) > 0 {
 		c.Server.DefaultAgent = c.Definitions[0].Name
 	}
+	for i := range c.Channels {
+		if c.Channels[i].Transport == "" {
+			c.Channels[i].Transport = "slack"
+		}
+	}
+}
+
+// ChannelAgents returns the per-channel default agents keyed by
+// Channel.Key(); later entries override earlier ones.
+func (c *Config) ChannelAgents() map[string]string {
+	out := map[string]string{}
+	for _, ch := range c.Channels {
+		out[ch.Key()] = ch.Agent
+	}
+	return out
 }
 
 func (c *Config) validate() error {
@@ -199,6 +228,14 @@ func (c *Config) validate() error {
 			}
 		default:
 			return fmt.Errorf("config: definition %q: unknown environment kind %q", d.Name, d.Environment.Kind)
+		}
+	}
+	for _, ch := range c.Channels {
+		if ch.ID == "" {
+			return fmt.Errorf("config: channel without id")
+		}
+		if !seen[ch.Agent] {
+			return fmt.Errorf("config: channel %q: unknown agent %q", ch.ID, ch.Agent)
 		}
 	}
 	transports := map[string]bool{}
@@ -308,6 +345,36 @@ func AppendDefinition(path string, d Definition) error {
 		return err
 	}
 
+	return appendBlock(path, "# added from chat on "+time.Now().Format("2006-01-02"), snippet.Bytes())
+}
+
+// AppendChannel records a per-channel default agent by appending a
+// [[channels]] block to the config file at path (later blocks win, see
+// Channel). The result is validated before the file is touched.
+func AppendChannel(path string, ch Channel) error {
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	cfg.Channels = append(cfg.Channels, ch)
+	cfg.applyDefaults(path)
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	var snippet bytes.Buffer
+	enc := toml.NewEncoder(&snippet)
+	enc.Indent = ""
+	if err := enc.Encode(struct {
+		Channels []Channel `toml:"channels"`
+	}{[]Channel{ch}}); err != nil {
+		return err
+	}
+	return appendBlock(path, fmt.Sprintf("# default agent for channel %s set from chat on %s", ch.ID, time.Now().Format("2006-01-02")), snippet.Bytes())
+}
+
+// appendBlock adds a commented TOML snippet to the end of the file at path
+// and restores the original if the result does not load.
+func appendBlock(path, comment string, snippet []byte) error {
 	orig, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -317,8 +384,8 @@ func AppendDefinition(path string, d Definition) error {
 	if len(orig) > 0 && orig[len(orig)-1] != '\n' {
 		out.WriteByte('\n')
 	}
-	fmt.Fprintf(&out, "\n# added from chat on %s\n", time.Now().Format("2006-01-02"))
-	out.Write(snippet.Bytes())
+	fmt.Fprintf(&out, "\n%s\n", comment)
+	out.Write(snippet)
 	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
 		return err
 	}

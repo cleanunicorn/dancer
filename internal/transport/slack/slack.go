@@ -128,6 +128,9 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 			}
 			promptID := a.BlockID
 			choice := a.Value
+			if choice == "" {
+				choice = a.SelectedOption.Value // static_select
+			}
 			thread := threadID(cb.Channel.ID, cb.Message.ThreadTimestamp, cb.Message.Timestamp)
 			// Replace the buttons with the outcome so they cannot be clicked twice.
 			_, _, _, err := c.api.UpdateMessageContext(ctx, cb.Channel.ID, cb.Message.Timestamp,
@@ -170,22 +173,11 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	c.remember(msg.Thread)
 	opts := []slack.MsgOption{slack.MsgOptionTS(ts)}
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
-		var buttons []slack.BlockElement
-		for i, o := range promptOptions(msg.Prompt) {
-			btn := slack.NewButtonBlockElement(fmt.Sprintf("decision:%d", i), o.Value, slack.NewTextBlockObject(slack.PlainTextType, truncate(o.Label, 75), false, false))
-			switch o.Value {
-			case "allow":
-				btn.Style = slack.StylePrimary
-			case "deny":
-				btn.Style = slack.StyleDanger
-			}
-			buttons = append(buttons, btn)
-		}
 		opts = append(opts,
 			slack.MsgOptionText(msg.Text, false),
 			slack.MsgOptionBlocks(
 				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, msg.Text, false, false), nil, nil),
-				slack.NewActionBlock(msg.Prompt.ID, buttons...),
+				slack.NewActionBlock(msg.Prompt.ID, promptElements(msg.Prompt)...),
 			))
 		_, _, err := c.api.PostMessageContext(ctx, chID, opts...)
 		return err
@@ -211,6 +203,40 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		}
 	}
 	return nil
+}
+
+// selectThreshold is the option count from which a prompt is rendered as a
+// searchable select menu instead of a row of buttons.
+const selectThreshold = 5
+
+// promptElements renders a prompt's options as buttons, or as a single
+// static select (with Slack's type-to-filter) when there are many.
+func promptElements(p *transport.Prompt) []slack.BlockElement {
+	options := promptOptions(p)
+	if len(options) >= selectThreshold {
+		var items []*slack.OptionBlockObject
+		for _, o := range options {
+			var desc *slack.TextBlockObject
+			if o.Description != "" {
+				desc = slack.NewTextBlockObject(slack.PlainTextType, truncate(o.Description, 75), false, false)
+			}
+			items = append(items, slack.NewOptionBlockObject(o.Value, slack.NewTextBlockObject(slack.PlainTextType, truncate(o.Label, 75), false, false), desc))
+		}
+		placeholder := slack.NewTextBlockObject(slack.PlainTextType, "Choose…", false, false)
+		return []slack.BlockElement{slack.NewOptionsSelectBlockElement(slack.OptTypeStatic, placeholder, "decision:select", items...)}
+	}
+	var buttons []slack.BlockElement
+	for i, o := range options {
+		btn := slack.NewButtonBlockElement(fmt.Sprintf("decision:%d", i), o.Value, slack.NewTextBlockObject(slack.PlainTextType, truncate(o.Label, 75), false, false))
+		switch o.Value {
+		case "allow":
+			btn.Style = slack.StylePrimary
+		case "deny":
+			btn.Style = slack.StyleDanger
+		}
+		buttons = append(buttons, btn)
+	}
+	return buttons
 }
 
 // promptOptions normalizes a prompt into labelled options.

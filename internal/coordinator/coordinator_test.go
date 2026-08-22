@@ -338,3 +338,97 @@ func firstTask(t *testing.T, st store.Store) executor.TaskID {
 	}
 	return tasks[0].ID
 }
+
+func TestChannelDefaultsAndRunPicker(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, name := range []string{"coder", "reviewer"} {
+		if err := st.PutDefinition(ctx, agent.Definition{Name: name, Kind: "fake"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	c.DefaultDefinition = "coder"
+	c.ChannelAgents = map[string]string{"slack/C-review": "reviewer"}
+	var saved []string
+	var savedMu sync.Mutex
+	c.SaveChannelAgent = func(_ context.Context, tr, ch, a string) error {
+		savedMu.Lock()
+		saved = append(saved, tr+"/"+ch+"="+a)
+		savedMu.Unlock()
+		return nil
+	}
+	go c.Run(ctx)
+	<-tr.ready
+
+	// Plain text follows the channel default, else the global one.
+	tr.say("C-review/1.0", "look at this")
+	tr.waitFor(t, "C-review/1.0", "started with agent *reviewer*")
+	tr.say("C-dev/1.0", "build this")
+	tr.waitFor(t, "C-dev/1.0", "started with agent *coder*")
+
+	// An unknown agent name falls back to the channel default too.
+	tr.say("C-review/2.0", "run nosuch thing")
+	tr.waitFor(t, "C-review/2.0", "started with agent *reviewer*")
+
+	// `default` shows, `default <agent>` sets and persists.
+	tr.say("C-dev/2.0", "default")
+	tr.waitFor(t, "C-dev/2.0", "global default *coder*")
+	tr.say("C-dev/2.0", "default nosuch")
+	tr.waitFor(t, "C-dev/2.0", "unknown agent")
+	tr.say("C-dev/2.0", "default reviewer")
+	tr.waitFor(t, "C-dev/2.0", "now *reviewer*")
+	savedMu.Lock()
+	if len(saved) != 1 || saved[0] != "slack/C-dev=reviewer" {
+		t.Fatalf("saved = %v", saved)
+	}
+	savedMu.Unlock()
+	tr.say("C-dev/3.0", "next thing")
+	tr.waitFor(t, "C-dev/3.0", "started with agent *reviewer*")
+	tr.say("C-dev/4.0", "agents")
+	if o := tr.waitFor(t, "C-dev/4.0", "*reviewer*"); !strings.Contains(o.Text, "*reviewer* — fake/, env , mode  · _default here_") || strings.Count(o.Text, "default here") != 1 {
+		t.Fatalf("agents = %q", o.Text)
+	}
+
+	// Bare `run`: pick the agent from a list, then type the prompt.
+	th := transport.ThreadID("C-dev/5.0")
+	tr.say(th, "run")
+	q := tr.waitFor(t, th, "Which agent?")
+	if q.Prompt == nil || len(q.Prompt.Options) != 2 || !q.Prompt.FreeText || !strings.Contains(q.Prompt.Options[1].Description, "default here") {
+		t.Fatalf("picker prompt = %+v", q.Prompt)
+	}
+	tr.decide(th, q.Prompt.ID, "coder")
+	p := tr.waitFor(t, th, "What should *coder* do?")
+	if p.Prompt == nil || len(p.Prompt.Options) != 0 {
+		t.Fatalf("prompt question = %+v", p.Prompt)
+	}
+	tr.say(th, "do the thing")
+	tr.waitFor(t, th, "started with agent *coder*")
+	tr.waitFor(t, th, "wants to run")
+
+	// `run <agent>` without a prompt asks for the prompt; a typed agent
+	// name works for the picker too; `cancel` abandons it.
+	th2 := transport.ThreadID("C-dev/6.0")
+	tr.say(th2, "run reviewer")
+	tr.waitFor(t, th2, "What should *reviewer* do?")
+	tr.say(th2, "cancel")
+	tr.waitFor(t, th2, "run cancelled")
+	th3 := transport.ThreadID("C-dev/7.0")
+	tr.say(th3, "run")
+	tr.waitFor(t, th3, "Which agent?")
+	tr.say(th3, "nosuch")
+	tr.waitFor(t, th3, "no agent named")
+	tr.say(th3, "reviewer")
+	tr.waitFor(t, th3, "What should *reviewer* do?")
+	tr.say(th3, "review it")
+	tr.waitFor(t, th3, "started with agent *reviewer*")
+}

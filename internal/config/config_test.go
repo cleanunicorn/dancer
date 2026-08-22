@@ -64,3 +64,57 @@ kind = "local"
 		t.Fatalf("file changed by rejected appends:\n%s", after)
 	}
 }
+
+func TestAppendChannelLastWins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	orig := `[server]
+default_agent = "coder"
+
+[[channels]]
+id = "C1"
+agent = "coder"
+
+[[definitions]]
+name = "coder"
+[definitions.environment]
+kind = "local"
+
+[[definitions]]
+name = "reviewer"
+[definitions.environment]
+kind = "local"
+`
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendChannel(path, Channel{Transport: "slack", ID: "C1", Agent: "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendChannel(path, Channel{ID: "C2", Agent: "coder"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(b), orig) {
+		t.Fatalf("original content changed:\n%s", b)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.ChannelAgents()
+	if got["slack/C1"] != "reviewer" || got["slack/C2"] != "coder" || len(got) != 2 {
+		t.Fatalf("channel agents = %v", got)
+	}
+
+	before, _ := os.ReadFile(path)
+	if err := AppendChannel(path, Channel{ID: "C3", Agent: "nope"}); err == nil {
+		t.Fatal("unknown agent accepted")
+	}
+	if err := AppendChannel(path, Channel{Agent: "coder"}); err == nil {
+		t.Fatal("channel without id accepted")
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatalf("file changed by rejected appends:\n%s", after)
+	}
+}

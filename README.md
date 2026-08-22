@@ -36,8 +36,10 @@ Design, decisions and progress: [PLAN.md](PLAN.md).
 
 | message                      | effect                                      |
 |------------------------------|---------------------------------------------|
-| `@dancer <prompt>`           | start a task with the default agent (replies in a thread under your message) |
+| `@dancer <prompt>`           | start a task with the channel's default agent (replies in a thread under your message) |
 | `run <agent> <prompt>`       | start a task with a specific agent          |
+| `run`                        | pick the agent from a menu, then type the prompt in the thread |
+| `default <agent>`            | make `<agent>` the default for this channel (saved to config.toml); `default` shows it |
 | reply in the thread          | follow-up to that task (resumes if idle)    |
 | button / reply to a question | answers the agent's `AskUserQuestion`       |
 | `add agent`                  | define a new agent question by question; saved to config.toml, usable at once |
