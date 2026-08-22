@@ -43,7 +43,7 @@ type Outbound struct {
 	// message addresses: the transport renders it the way that notifies
 	// them (Slack: "<@U…> " in front of Text), so someone who muted the
 	// thread still hears that the agent finished or needs an answer. It
-	// is honoured on plain text only: a keyed message is edited in place
+	// is honoured on ordinary and prompt text: a keyed message is edited in place
 	// and must not re-notify, so transports ignore Mention there; and a
 	// transport that hands Markdown text to a separate renderer may not
 	// render the mention at all, so surfaces set it on their own lines,
