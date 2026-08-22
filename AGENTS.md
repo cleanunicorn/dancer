@@ -14,6 +14,51 @@ git worktree add .claude/worktrees/<short-topic> -b <short-topic>
 `.claude/worktrees/` is gitignored and is where existing worktrees live. In Claude Code, the
 `EnterWorktree` tool does the same thing and switches the session into it.
 
+## Stopping a dancer: gracefully, and never by pattern
+
+dancer runs agents that work on *this repo*, so an agent's cleanup command can stop the
+dancer that is running it. Two rules.
+
+**Shut it down, do not kill it.** SIGTERM is the contract: dancer notifies live threads,
+lets in-flight tool calls finish for `drain_timeout` (default 2m), persists final state and
+exits 0 — and interrupted tasks then resume themselves on the next start. `kill -9` skips
+all of that, cutting tool calls mid-write and leaving tasks that have to be picked up by
+hand. Always wait for the process to actually exit instead of assuming it is gone:
+
+```sh
+kill "$pid"                                   # SIGTERM: drain, persist, exit 0
+while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+```
+
+For the deployed service, let systemd do it — it sends SIGTERM and waits `TimeoutStopSec=150`:
+
+```sh
+sudo systemctl stop dancer        # or: restart
+```
+
+**Never find a dancer by command-line pattern.** `-f` matches anywhere in the command line, so
+`"bin/dancer run"` also matches the deployed `/usr/local/bin/dancer run`. This has taken the
+production instance down mid-task twice — the second time via `pgrep -f "bin/dancer run"`
+followed by `kill <pid>`, so killing "by pid" is no safer when the pid came from a pattern.
+`pgrep`, `pkill`, `ps | grep` and `killall` are all the same hazard.
+
+Keep the pid from the process you started, and use only that:
+
+```sh
+env DANCER_CONFIG=/tmp/dancer-test/config.toml bin/dancer run & pid=$!
+# ... test ...
+kill "$pid"; while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+```
+
+If you truly have no pid, anchor to the absolute path you launched and check what you matched
+before signalling anything:
+
+```sh
+pgrep -af "^/tmp/dancer-test/bin/dancer run"   # -a: read it first, confirm no /usr/local/bin
+```
+
+A `pgrep`/`pkill` pattern that could match `/usr/local/bin/dancer` is always a bug.
+
 ## Commands
 
 ```sh

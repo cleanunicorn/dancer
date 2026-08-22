@@ -18,7 +18,11 @@ Environment=DANCER_CONFIG=__HOME__/.config/dancer/config.toml
 # claude is usually installed under ~/.local/bin
 Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=__BIN__ run
-Restart=on-failure
+# always, not on-failure: dancer exits 0 on SIGTERM (it drains and shuts down
+# cleanly), so a stray `pkill -f "dancer run"` from an agent working on this repo
+# looks like a successful exit and on-failure would leave the box down. An
+# explicit `systemctl stop` is still honoured — systemd never restarts after one.
+Restart=always
 RestartSec=5
 KillSignal=SIGTERM
 # drain_timeout (default 2m) + margin: in-flight tool calls finish before stop

@@ -311,4 +311,14 @@ approvals = true
 - **Buttons do nothing** — Interactivity must be on (the manifest enables it) and Socket Mode must be enabled.
 - **Permission prompt never appears, task fails with `permission_denials`** — the definition's `permission_mode` is not `manual`/`acceptEdits`, or `claude` is older than 2.1; dancer needs the `--permission-prompt-tool stdio` handshake.
 - **Files in the docker workdir owned by root** — containers run as your uid:gid by default; this only happens if the docker factory `User` was overridden to `root`.
+- **dancer stopped and never came back** — check `systemctl is-active dancer` and look for a
+  `shutdown: notifying live task` line in `journalctl -u dancer` with no `Stopping
+  dancer.service` job line above it. That combination means something sent SIGTERM directly
+  rather than going through systemd; the usual culprit is an agent cleaning up a test instance
+  with a `pgrep -f` / `pkill -f` pattern like `bin/dancer run`, which also matches
+  `/usr/local/bin/dancer run`. If it dies again seconds after each start, the task that did it
+  is auto-resuming and repeating the kill: cancel that thread, or start once with
+  `auto_resume = false` to break the loop. `Restart=always`
+  and the updater's watchdog both bring it back now; `DANCER_UPDATE_WATCHDOG=0` turns the latter
+  off if you want to keep it stopped for maintenance.
 - Everything dancer saw is in the SQLite `log` table: `sqlite3 ~/.config/dancer/dancer.db 'select seq,kind,substr(payload,1,120) from log order by seq desc limit 20'`.
