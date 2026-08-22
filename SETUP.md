@@ -290,24 +290,80 @@ finishes a turn.
 **local** — the agent runs on the dancer host in `workdir` (or a fresh
 directory under `workdir_root` per task).
 
-**docker** — one container per task from `image`, with `workdir` mounted at
-`/work`, run as your uid so files stay yours. The image must contain `claude`
-and needs credentials, since the container has no `~/.claude` login:
+**docker** — the agent runs in a container from `image`, with `workdir`
+mounted at `/work` and the process running as your uid so files stay yours.
+
+Name any base image you like. Dancer makes it agent-ready the first time it
+is used and caches the result, so you do not have to build and maintain an
+image yourself:
 
 ```toml
 [definitions.environment]
 kind  = "docker"
-image = "my/claude-dev:latest"
+image = "ubuntu:24.04"
+reuse = "thread"
 [definitions.environment.env]
 CLAUDE_CODE_OAUTH_TOKEN = "…"     # from `claude setup-token` on a logged-in machine, or use ANTHROPIC_API_KEY
 ```
 
-A minimal image:
+### Provisioning
 
-```Dockerfile
-FROM node:22-slim
-RUN apt-get update && apt-get install -y git curl ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://claude.ai/install.sh | bash && ln -s /root/.local/bin/claude /usr/local/bin/claude
+With `provision = "auto"` (the default) dancer installs, as root, into a
+throwaway container started from `image`:
+
+- `ca-certificates`, `curl`, `git`, and `ripgrep` if the distro has it
+- Node 18+ if the image has none
+- the agent CLI for the definition's `kind` — `claude` or `codex`
+- a user with your uid/gid and a writable `$HOME` at `/home/dancer`, with
+  passwordless `sudo`, so the agent can install whatever it turns out to need
+  mid-task (what it may actually run is still gated by its permission mode)
+- `git config --system safe.directory '*'`, so git will touch the mounted
+  workdir even though it belongs to a different uid
+
+The result is committed as `dancer-env:<hash>` and reused from then on. The
+hash covers the base image, the agent, `packages`, `setup` and your uid, so
+changing any of them rebuilds and changing none of them costs nothing.
+apt, apk, dnf, yum, pacman and zypper images are all handled.
+
+Two escape hatches:
+
+```toml
+packages = ["postgresql-client", "jq"]   # extra OS packages
+setup    = ["pip install --break-system-packages ruff"]   # extra root commands, run last
+```
+
+An image that already carries the agent CLI and git is used **exactly as it
+is** — dancer checks before it builds anything, so a purpose-built image
+never gets rewritten. `provision = "none"` turns the whole thing off.
+
+The first task on a cold image spends about a minute building; every later
+task starts instantly. Watch for `docker: provisioning image` in the log.
+
+### Reusing a container
+
+`reuse` decides how long a container lives and who shares it:
+
+| value                 | behaviour                                                              |
+|-----------------------|------------------------------------------------------------------------|
+| `task` (default)      | a fresh container per task, removed when the task ends                  |
+| `thread`              | one container per conversation, kept warm between messages             |
+| `definition`          | one container shared by every conversation running that agent          |
+
+A reused container keeps `$HOME` on a named volume, so anything the agent
+installed mid-task, its `~/.claude` login and its session history survive
+between messages — which is what makes `claude --resume` work in docker at
+all. Reused containers and their workdirs are keyed to the scope, so two
+threads never share a filesystem.
+
+Containers nobody has touched for `docker.reuse_ttl` (default 24h) are
+removed at startup and hourly. Home volumes are kept: the login inside them
+is worth more than the disk.
+
+```toml
+[docker]
+binary    = "docker"
+run_args  = ["--network=host"]   # appended to every `docker run`
+reuse_ttl = "24h"
 ```
 
 **ssh** — the agent runs on `host` in `workdir`; `claude` must be installed and

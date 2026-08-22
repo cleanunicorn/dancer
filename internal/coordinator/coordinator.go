@@ -649,9 +649,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	if def.Environment.Kind == "" {
 		def.Environment.Kind = environment.KindLocal
 	}
-	if def.Environment.Workdir == "" && c.WorkdirRoot != "" {
-		def.Environment.Workdir = filepath.Join(c.WorkdirRoot, string(id))
-	}
+	def.Environment = c.resolveEnv(def.Environment, def.Name, string(it.Thread), string(id))
 	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Status: store.StatusQueued}
 	if err := c.Store.PutTask(ctx, st); err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "store: " + err.Error()}, s)
@@ -661,6 +659,53 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	c.broadcast(ctx, surface.Event{Kind: surface.EventStarted, Thread: it.Thread, TaskID: id, Task: &st})
 	c.drives.Add(1)
 	go c.drive(ctx, st, prompt)
+}
+
+// resolveEnv fills in the parts of a Spec that only the coordinator knows:
+// which environment a task shares, and where its working directory goes.
+//
+// A reused environment has to keep the same workdir as well as the same
+// container — the bind mount is fixed when the container is created — so the
+// scope decides the directory name too.
+func (c *Coordinator) resolveEnv(spec environment.Spec, agentName, thread, taskID string) environment.Spec {
+	switch spec.Reuse {
+	case environment.ReuseThread:
+		spec.ReuseKey = thread
+	case environment.ReuseDefinition:
+		spec.ReuseKey = agentName
+	default:
+		spec.ReuseKey = ""
+	}
+	if spec.Workdir == "" && c.WorkdirRoot != "" {
+		name := taskID
+		if spec.ReuseKey != "" {
+			name = dirName(spec.ReuseKey)
+		}
+		spec.Workdir = filepath.Join(c.WorkdirRoot, name)
+	}
+	return spec
+}
+
+// dirName turns a reuse key (a Slack "C123/1700.5" thread id, an agent name)
+// into one path-safe directory name.
+func dirName(key string) string {
+	var b strings.Builder
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		out = "shared"
+	}
+	if len(out) > 64 {
+		out = out[:64]
+	}
+	return out
 }
 
 // followUp routes a plain message to the thread's task, resuming if needed.

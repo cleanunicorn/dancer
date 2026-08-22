@@ -91,8 +91,11 @@ func runSetup(cfgPath string) error {
 	def.Environment.Kind = envKind
 	switch envKind {
 	case "docker":
-		def.Environment.Image = ask("Docker image with claude installed", "")
-		def.Environment.Workdir = ask("Host directory to mount at /work (empty = per-task dir)", "")
+		// Any base image works: dancer installs git, node and the agent
+		// CLI into it on first use and caches the result.
+		def.Environment.Image = ask("Base image (dancer installs the agent into it)", "ubuntu:24.04")
+		def.Environment.Reuse = ask("Container lifetime (thread/task/definition)", "thread")
+		def.Environment.Workdir = ask("Host directory to mount at /work (empty = dancer manages it)", "")
 		def.PermissionMode = ask("Permission mode", "acceptEdits")
 	case "ssh":
 		def.Environment.Host = ask("SSH host (user@host or ssh-config alias)", "")
