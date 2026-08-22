@@ -49,6 +49,7 @@ Milestone 5 — deploy-ready on Linux
 - [x] Wizard → `make run` → Slack message → task runs (2026-08-22)
 - [x] Questions (`AskUserQuestion`) relayed as buttons / typed replies (live-verified)
 - [x] Graceful restart: notify, drain in-flight tool calls, resume after start (unit + live drill)
+- [x] File attachments: paths mentioned by the agent are uploaded into the thread (live-verified, 3 screenshots)
 - [ ] `make service-install` and run as a systemd unit
 
 Deferred
@@ -139,3 +140,4 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | whole binary via terminal              | `scripts/e2e.py` (run→allow→done→status→follow-up) | pass |
 | Slack wire                             | real workspace, mention in channel              | pass   |
 | graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |
+| file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
