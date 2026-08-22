@@ -361,17 +361,5 @@ func TestEditAndDeleteAgent(t *testing.T) {
 // waitForNthOut waits for the nth outbound on th containing sub and returns it.
 func waitForNthOut(t *testing.T, tr *fakeTransport, th transport.ThreadID, sub string, n int) transport.Outbound {
 	t.Helper()
-	waitForNth(t, tr, th, sub, n)
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-	seen := 0
-	for _, o := range tr.out {
-		if o.Thread == th && strings.Contains(o.Text, sub) {
-			seen++
-			if seen == n {
-				return o
-			}
-		}
-	}
-	return transport.Outbound{}
+	return tr.waitForN(t, th, sub, n)
 }
