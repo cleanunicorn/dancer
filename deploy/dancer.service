@@ -1,0 +1,27 @@
+# systemd unit for dancer. Install with `make service-install` or:
+#   sudo cp deploy/dancer.service /etc/systemd/system/dancer.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dancer
+#
+# Runs as the user that owns the Claude Code login (~/.claude). Edit User=,
+# Group= and the paths below to match.
+[Unit]
+Description=dancer — agent orchestration over Slack
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+Environment=HOME=__HOME__
+Environment=DANCER_CONFIG=__HOME__/.config/dancer/config.toml
+# claude is usually installed under ~/.local/bin
+Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=__BIN__ run
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

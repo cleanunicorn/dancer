@@ -1,0 +1,51 @@
+# dancer configuration. Default location: ~/.config/dancer/config.toml
+# (override with -config or $DANCER_CONFIG). Create one with `dancer setup`.
+
+[server]
+db = "/home/me/.config/dancer/dancer.db"
+workdir_root = "/home/me/.config/dancer/work"   # per-task dirs for definitions without a fixed workdir
+idle_timeout = "10m"        # keep a finished turn's process alive this long for follow-ups
+verbose = false             # true: post every tool call to the thread
+default_agent = "coder"     # used by `run <prompt>` without an agent name
+channels = ["slack"]        # "slack", "tui"
+
+[claude]
+binary = "claude"
+
+[slack]
+app_token = "xapp-..."      # App-level token with connections:write
+bot_token = "xoxb-..."      # Bot User OAuth token
+allowed_users = []          # Slack user IDs allowed to command dancer; empty = everyone
+
+# --- agent definitions -------------------------------------------------------
+
+[[definitions]]
+name = "coder"
+model = "sonnet"
+permission_mode = "manual"                 # manual | acceptEdits | auto | bypassPermissions
+allowed_tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"]
+system_prompt = "You are working inside a git repository. Commit when done."
+[definitions.environment]
+kind = "local"
+workdir = "/home/me/projects/app"          # empty = fresh dir under workdir_root per task
+
+[[definitions]]
+name = "sandbox"
+model = "sonnet"
+permission_mode = "acceptEdits"
+[definitions.environment]
+kind = "docker"
+image = "ghcr.io/you/claude-dev:latest"    # must contain the `claude` binary
+workdir = ""                               # host dir mounted at /work; empty = per-task dir
+[definitions.environment.env]
+CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-..."   # or ANTHROPIC_API_KEY; the container has no ~/.claude login
+
+[[definitions]]
+name = "buildbox"
+model = "sonnet"
+permission_mode = "manual"
+[definitions.environment]
+kind = "ssh"
+host = "me@buildbox"                       # user@host or a ~/.ssh/config alias
+key_path = ""                              # empty = ssh agent / config
+workdir = "/srv/work/app"

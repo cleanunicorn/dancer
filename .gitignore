@@ -1,0 +1,6 @@
+/bin/
+/dancer
+*.db
+*.db-journal
+*.db-wal
+.env
