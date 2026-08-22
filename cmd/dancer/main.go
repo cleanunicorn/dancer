@@ -140,6 +140,10 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	}
 	c.WorkdirRoot = cfg.Server.WorkdirRoot
 	c.DrainTimeout = cfg.Server.DrainTimeout.Duration
+	c.AutoResume = cfg.Server.AutoResume == nil || *cfg.Server.AutoResume
+	c.ResumePrompt = cfg.Server.ResumePrompt
+	c.AutoResumeWithin = cfg.Server.AutoResumeWithin.Duration
+	c.MaxAutoResumes = cfg.Server.MaxAutoResumes
 	c.SaveDefinition = func(_ context.Context, d agent.Definition) error {
 		return config.AppendDefinition(cfgPath, config.DefinitionFromAgent(d))
 	}
@@ -154,7 +158,7 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		}
 		return nil
 	}
-	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions))
+	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions), "auto_resume", c.AutoResume)
 	err = c.Run(ctx)
 	if errors.Is(err, context.Canceled) {
 		log.Info("dancer stopped")

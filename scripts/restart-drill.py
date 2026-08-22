@@ -6,6 +6,9 @@
 Starts a task whose tool call sleeps 8s, sends SIGTERM while it runs, checks
 dancer drains the call and posts the restart notice, then restarts and checks
 the "back" notice and that the resumed session remembers the command.
+
+Auto-resume is off here on purpose; scripts/auto-resume-drill.py covers the
+default, where the restarted task carries on without a reply.
 """
 import os, select, signal, subprocess, sys, tempfile, time
 bin_ = os.path.abspath(sys.argv[1])
@@ -17,6 +20,7 @@ workdir_root = "{tmp}/work"
 idle_timeout = "60s"
 drain_timeout = "60s"
 transports = ["terminal"]
+auto_resume = false          # this drill checks the wait-for-a-reply path
 
 [[definitions]]
 name = "coder"

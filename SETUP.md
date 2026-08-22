@@ -153,15 +153,32 @@ created the app before it was added, add the scope and reinstall the app).
 `make service-restart` (or Ctrl-C / `systemctl restart dancer`) is safe while
 agents run:
 
-1. Every live thread gets "⏸️ dancer is restarting — reply in this thread to resume".
+1. Every live thread gets "⏸️ dancer is restarting".
 2. Agents that are in the middle of a tool call (a test run, a build) are given
    `drain_timeout` (default 2m) to finish that call; then their processes stop.
    Files in the workdir stay.
-3. On start, those threads get "▶️ dancer is back"; your next reply resumes the
-   Claude session (`--resume`) where it left off.
+3. On start, every task that was *mid-execution* is resumed (`--resume`) on its
+   own and told to carry on — you do not have to type anything in the threads. A
+   task that never got as far as a session is simply run again from its original
+   message.
+4. A task whose agent had already answered is left alone: its process was only
+   being kept alive for a follow-up (`idle_timeout`), so the stop cut nothing
+   short and the thread is still waiting for you, not for dancer.
 
-`status` shows such tasks as *interrupted* until resumed. `cancel` is still
-immediate. The systemd unit's `TimeoutStopSec` is set above `drain_timeout`.
+`status` shows such tasks as *interrupted* until they are picked up. `cancel` is
+still immediate. The systemd unit's `TimeoutStopSec` is set above `drain_timeout`.
+
+Auto-resume is on by default and tunable in `[server]`:
+
+| key                  | default | what it does                                         |
+|----------------------|---------|------------------------------------------------------|
+| `auto_resume`        | `true`  | `false` goes back to "▶️ dancer is back — reply in this thread to continue" |
+| `auto_resume_within` | `12h`   | tasks last touched longer ago than this wait for a reply instead |
+| `max_auto_resumes`   | `3`     | consecutive automatic resumes of one task before it waits for a human — a task that keeps taking dancer down cannot restart-loop |
+| `resume_prompt`      | built-in | the message an auto-resumed session is given          |
+
+The counter behind `max_auto_resumes` is cleared as soon as a resumed agent
+finishes a turn.
 
 ## Environments
 

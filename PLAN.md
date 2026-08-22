@@ -54,6 +54,8 @@ Milestone 5 — deploy-ready on Linux
 - [x] Wizard → `make run` → Slack message → task runs (2026-08-22)
 - [x] Questions (`AskUserQuestion`) relayed as buttons / typed replies (live-verified)
 - [x] Graceful restart: notify, drain in-flight tool calls, resume after start (unit + live drill)
+- [x] Automatic resume after a restart: sessions cut mid-execution continue by themselves, never-started tasks re-run, finished turns stay idle, with staleness and restart-loop guards (coordinator tests)
+- [ ] Live drill of automatic resume against Slack (restart mid-task, thread continues untouched)
 - [x] File attachments: paths mentioned by the agent are uploaded into the thread (live-verified, 3 screenshots)
 - [ ] `make service-install` and run as a systemd unit
 
@@ -116,8 +118,17 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
    follow-ups are instant; after that the session is resumed with `--resume`.
 10. **Graceful restart.** On SIGTERM the coordinator notifies live threads, executors
     drain in-flight tool calls for up to `drain_timeout`, final state is persisted with
-    a non-cancelled context as `interrupted`, and `recover()` posts "back" notices.
+    a non-cancelled context as `interrupted`, and `recover()` picks those tasks up.
     `cancel` stays immediate.
+11. **Restarts resume themselves.** `recover()` re-drives every task that was
+    mid-execution with `--resume` and a "carry on" prompt instead of waiting for a human
+    to type in the thread; a task that never reached a session is run again from its
+    stored prompt. "Mid-execution" is the point: a process kept alive only for a
+    follow-up ends the stop as `idle`, not `interrupted`, so a finished turn is never
+    continued for nothing.
+    Guards keep that safe: `auto_resume_within` (12h) ignores stale work, and
+    `max_auto_resumes` (3, cleared by any turn that completes) stops a task that keeps
+    taking dancer down from restart-looping.
 
 ## Claude stream-json mapping
 
@@ -145,5 +156,6 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | whole binary via terminal              | `scripts/e2e.py` (run→allow→done→status→follow-up) | pass |
 | Slack wire                             | real workspace, mention in channel              | pass   |
 | graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |
+| automatic resume after restart         | `go test ./internal/coordinator -run AutoResume` | pass   |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
 | agent edit / delete from chat          | `go test -race ./internal/config ./internal/coordinator`; terminal run against a temp config: edit rewrites the block in place, delete keeps neighbouring comments, default refused | pass |

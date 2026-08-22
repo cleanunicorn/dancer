@@ -66,6 +66,19 @@ type Server struct {
 	// Transports to start: "slack", "terminal". Defaults to slack when
 	// tokens are set, else terminal.
 	Transports []string `toml:"transports"`
+	// AutoResume continues tasks that a restart cut short as soon as dancer
+	// is back, instead of waiting for a message on their thread. Defaults
+	// to true; set `auto_resume = false` to go back to waiting.
+	AutoResume *bool `toml:"auto_resume,omitempty"`
+	// ResumePrompt is the turn given to an auto-resumed session. Empty uses
+	// the built-in one.
+	ResumePrompt string `toml:"resume_prompt,omitempty"`
+	// AutoResumeWithin skips tasks last touched longer ago than this, so a
+	// restart after a long stop does not relaunch stale work (default 12h).
+	AutoResumeWithin Duration `toml:"auto_resume_within,omitempty"`
+	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
+	// task that keeps taking dancer down cannot restart-loop (default 3).
+	MaxAutoResumes int `toml:"max_auto_resumes,omitempty"`
 }
 
 type Claude struct {
@@ -147,6 +160,16 @@ func (c *Config) applyDefaults(path string) {
 	}
 	if c.Server.DrainTimeout.Duration == 0 {
 		c.Server.DrainTimeout.Duration = 2 * time.Minute
+	}
+	if c.Server.AutoResume == nil {
+		on := true
+		c.Server.AutoResume = &on
+	}
+	if c.Server.AutoResumeWithin.Duration == 0 {
+		c.Server.AutoResumeWithin.Duration = 12 * time.Hour
+	}
+	if c.Server.MaxAutoResumes == 0 {
+		c.Server.MaxAutoResumes = 3
 	}
 	if c.Claude.Binary == "" {
 		c.Claude.Binary = "claude"

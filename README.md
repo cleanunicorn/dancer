@@ -4,7 +4,7 @@ Orchestrate coding agents from Slack. A single Go binary runs a coordinator
 that turns Slack messages into tasks, runs each task as a Claude Code session
 in a local folder, a Docker container or an SSH host, relays permission
 prompts back as buttons, and keeps every event in SQLite so sessions survive
-restarts.
+restarts — a restarted dancer resumes the tasks it cut short by itself.
 
 ```
 @dancer add retries to the HTTP client and run the tests
