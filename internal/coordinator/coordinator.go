@@ -57,6 +57,12 @@ type Coordinator struct {
 	// store (the config file), so it survives a re-seed on restart. Nil
 	// keeps it in the store only.
 	SaveDefinition func(ctx context.Context, d agent.Definition) error
+	// UpdateDefinition persists a definition changed from chat outside the
+	// store (the config file). Nil keeps the change in the store only.
+	UpdateDefinition func(ctx context.Context, d agent.Definition) error
+	// DeleteDefinition removes a definition deleted from chat outside the
+	// store (the config file). Nil removes it from the store only.
+	DeleteDefinition func(ctx context.Context, name string) error
 	// AutoResume continues tasks that a restart cut short as soon as dancer
 	// is back, instead of waiting for a message on their thread.
 	AutoResume bool
@@ -79,7 +85,7 @@ type Coordinator struct {
 	owner   map[executor.TaskID]string                // task -> surface that started it
 	pending map[string]chan transport.Decision        // prompt base id -> waiter
 	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
-	wizards map[transport.ThreadID]context.CancelFunc // open "add agent" flows
+	wizards map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
 }
 
 // New returns a Coordinator.
@@ -384,6 +390,10 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: strings.TrimRight(b.String(), "\n")}, s)
 	case surface.AddAgent:
 		c.addAgent(ctx, s, it)
+	case surface.EditAgent:
+		c.editAgent(ctx, s, it)
+	case surface.DeleteAgent:
+		c.deleteAgent(ctx, s, it)
 	case surface.SetDefault:
 		c.setDefault(ctx, s, it)
 	}

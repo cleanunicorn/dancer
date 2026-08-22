@@ -75,7 +75,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("defs = %d", len(defs))
 	}
 
-	flow := store.FlowState{Thread: "th9", Transport: "slack", Surface: "chat", Kind: "add_agent", Answers: []string{"reviewer"}}
+	flow := store.FlowState{Thread: "th9", Transport: "slack", Surface: "chat", Kind: "agent_add", Answers: []string{"reviewer"}}
 	if err := s.PutFlow(ctx, flow); err != nil {
 		t.Fatal(err)
 	}
