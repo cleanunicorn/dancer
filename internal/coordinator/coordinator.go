@@ -330,15 +330,14 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			case v.Action == actionAsk:
 				c.askAboutResume(ctx, tt, v)
 			case v.Action == actionAbandon:
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventNotice, Thread: t.Thread, TaskID: t.ID, Task: &tt,
-					Text: "⏹️ dancer is back — leaving this task: " + reasonOr(v.Reason, "it is no longer worth continuing") +
-						". " + capitalize(pickUpHint(tt))})
+				c.notice(ctx, tt, "⏹️ dancer is back — leaving this task: "+reasonOr(v.Reason, "it is no longer worth continuing")+
+					". "+capitalize(pickUpHint(tt)))
 			case tt.Status == store.StatusIdle:
 				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
 				if v.Reason != "" {
 					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
 				}
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventNotice, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
+				c.notice(ctx, tt, text)
 			}
 		}
 	}
@@ -1276,6 +1275,12 @@ func (c *Coordinator) broadcast(ctx context.Context, ev surface.Event) {
 	for _, s := range c.Surfaces {
 		c.emit(ctx, ev, s)
 	}
+}
+
+// notice tells t's thread that a restart left the task for its requester
+// to act on. Every notice carries its task, so surfaces can address them.
+func (c *Coordinator) notice(ctx context.Context, t store.TaskState, text string) {
+	c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventNotice, Thread: t.Thread, TaskID: t.ID, Task: &t, Text: text})
 }
 
 // append writes a record to the log. It must not be lost during shutdown,
