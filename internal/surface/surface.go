@@ -57,6 +57,10 @@ type Status struct{ Thread transport.ThreadID }
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
+// AddAgent starts the guided "add agent" flow on Thread: the coordinator
+// asks for each setting in turn and saves the new definition.
+type AddAgent struct{ Thread transport.ThreadID }
+
 // Decide answers a permission prompt.
 type Decide struct {
 	PromptID string
@@ -74,6 +78,7 @@ func (FollowUp) isIntent()   {}
 func (Cancel) isIntent()     {}
 func (Status) isIntent()     {}
 func (ListAgents) isIntent() {}
+func (AddAgent) isIntent()   {}
 func (Decide) isIntent()     {}
 func (Say) isIntent()        {}
 

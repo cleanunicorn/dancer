@@ -168,7 +168,7 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	}
 	c.remember(msg.Thread)
 	opts := []slack.MsgOption{slack.MsgOptionTS(ts)}
-	if msg.Prompt != nil {
+	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
 		var buttons []slack.BlockElement
 		for i, o := range promptOptions(msg.Prompt) {
 			btn := slack.NewButtonBlockElement(fmt.Sprintf("decision:%d", i), o.Value, slack.NewTextBlockObject(slack.PlainTextType, truncate(o.Label, 75), false, false))

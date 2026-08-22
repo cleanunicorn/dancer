@@ -77,10 +77,13 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	fmt.Fprintln(c.Out, msg.Text)
 	if msg.Prompt != nil {
 		c.prompt = msg.Prompt
-		if len(msg.Prompt.Options) > 0 {
+		switch {
+		case len(msg.Prompt.Options) > 0:
 			fmt.Fprintf(c.Out, "[1-%d or text] > ", len(msg.Prompt.Options))
-		} else {
+		case len(msg.Prompt.Choices) > 0:
 			fmt.Fprintf(c.Out, "[%s] > ", strings.Join(msg.Prompt.Choices, "/"))
+		default:
+			fmt.Fprint(c.Out, "> ")
 		}
 	}
 	return nil
@@ -94,6 +97,9 @@ func answer(p *transport.Prompt, line string) (string, bool) {
 		return "", false
 	}
 	if len(p.Options) == 0 {
+		if len(p.Choices) == 0 {
+			return line, p.FreeText
+		}
 		l := strings.ToLower(line)
 		for _, ch := range p.Choices {
 			if ch == l {

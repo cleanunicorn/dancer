@@ -46,16 +46,21 @@ type Coordinator struct {
 	// DrainTimeout bounds how long Run waits for live tasks to stop after
 	// its context is cancelled (executors drain in-flight tool calls).
 	DrainTimeout time.Duration
+	// SaveDefinition persists a definition created from chat outside the
+	// store (the config file), so it survives a re-seed on restart. Nil
+	// keeps it in the store only.
+	SaveDefinition func(ctx context.Context, d agent.Definition) error
 
 	drives sync.WaitGroup
 
 	transports map[string]transport.Transport
 
 	mu      sync.Mutex
-	threads map[transport.ThreadID]executor.TaskID // live task per thread
-	owner   map[executor.TaskID]string             // task -> surface that started it
-	pending map[string]chan transport.Decision     // prompt base id -> waiter
-	askText map[transport.ThreadID]string          // thread -> prompt base id accepting a typed answer
+	threads map[transport.ThreadID]executor.TaskID    // live task per thread
+	owner   map[executor.TaskID]string                // task -> surface that started it
+	pending map[string]chan transport.Decision        // prompt base id -> waiter
+	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
+	wizards map[transport.ThreadID]context.CancelFunc // open "add agent" flows
 }
 
 // New returns a Coordinator.
@@ -70,6 +75,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		owner:      map[executor.TaskID]string{},
 		pending:    map[string]chan transport.Decision{},
 		askText:    map[transport.ThreadID]string{},
+		wizards:    map[transport.ThreadID]context.CancelFunc{},
 	}
 	for _, t := range transports {
 		c.transports[t.Name()] = t
@@ -235,6 +241,9 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st,
 			Text: fmt.Sprintf("task `%s` — agent *%s* — status *%s* — session `%s`", st.ID, st.Definition.Name, st.Status, st.Session)}, s)
 	case surface.Cancel:
+		if c.cancelWizard(it.Thread) {
+			return
+		}
 		id, ok := c.lookup(it.Thread)
 		if !ok {
 			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "nothing running on this thread"}, s)
@@ -254,6 +263,8 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 			fmt.Fprintf(&b, "• *%s* — %s/%s, env %s, mode %s\n", d.Name, d.Kind, d.Model, d.Environment.Kind, d.PermissionMode)
 		}
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: strings.TrimRight(b.String(), "\n")}, s)
+	case surface.AddAgent:
+		c.addAgent(ctx, s, it)
 	}
 }
 
@@ -274,6 +285,10 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if _, busy := c.lookup(it.Thread); busy {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is already running on this thread — `cancel` it first or reply to it"}, s)
+		return
+	}
+	if c.wizardOpen(it.Thread) {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "finish or `cancel` the `add agent` questions on this thread first"}, s)
 		return
 	}
 	id := executor.TaskID(newID())
@@ -566,6 +581,13 @@ func (c *Coordinator) unbind(th transport.ThreadID, id executor.TaskID) {
 	}
 	delete(c.owner, id)
 	c.mu.Unlock()
+}
+
+func (c *Coordinator) wizardOpen(th transport.ThreadID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.wizards[th]
+	return ok
 }
 
 func (c *Coordinator) lookup(th transport.ThreadID) (executor.TaskID, bool) {

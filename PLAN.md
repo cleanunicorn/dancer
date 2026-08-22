@@ -38,7 +38,8 @@ Milestone 4 — definitions and instances
 - [x] Definitions seeded from config into the store; `agents` lists them
 - [x] Sub-agents passed through as `--agents` JSON (`sub_agents` in config; untested live)
 - [x] Multiple instances of one definition run concurrently (one task per thread)
-- [ ] Edit definitions from Slack (currently config-file only)
+- [x] Add definitions from chat: `add agent` asks name/model/environment/permissions/tools/prompt, appends to config.toml and the store (coordinator + config tests)
+- [ ] Edit or remove definitions from chat (still config-file only)
 
 Milestone 5 — deploy-ready on Linux
 - [x] `dancer setup` wizard: storage, claude check, Slack tokens, first definition, then runs doctor

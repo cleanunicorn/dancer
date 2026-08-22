@@ -136,6 +136,9 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	c.DefaultDefinition = cfg.Server.DefaultAgent
 	c.WorkdirRoot = cfg.Server.WorkdirRoot
 	c.DrainTimeout = cfg.Server.DrainTimeout.Duration
+	c.SaveDefinition = func(_ context.Context, d agent.Definition) error {
+		return config.AppendDefinition(cfgPath, config.DefinitionFromAgent(d))
+	}
 	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions))
 	err = c.Run(ctx)
 	if errors.Is(err, context.Canceled) {

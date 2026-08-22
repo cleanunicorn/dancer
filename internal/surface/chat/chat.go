@@ -37,7 +37,8 @@ const help = "Commands:\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
-	"• `agents` — list agent definitions"
+	"• `agents` — list agent definitions\n" +
+	"• `add agent` — define a new agent, question by question"
 
 func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.Intent, bool) {
 	if in.Decision != nil {
@@ -66,6 +67,10 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Cancel{Thread: in.Thread}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
+	case "add", "new", "create", "define":
+		if w, _ := splitWord(rest); strings.EqualFold(w, "agent") || strings.EqualFold(w, "definition") {
+			return []surface.Intent{surface.AddAgent{Thread: in.Thread}}, true
+		}
 	}
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text}}, true
 }

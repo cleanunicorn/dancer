@@ -49,6 +49,9 @@ runs `dancer doctor`. Fix anything marked ✘ and re-run `bin/dancer doctor`.
 You can edit the file by hand afterwards — `deploy/config.example.toml` shows
 every option, including docker and ssh environments and a second surface.
 
+More agents can be added later from Slack (or the terminal) without a
+restart: see [Adding agents from chat](#adding-agents-from-chat).
+
 ## 5. Try it
 
 Terminal first (no Slack needed):
@@ -80,6 +83,25 @@ answer. Multi-select questions are answered one option at a time for now. When t
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
 thread to continue the conversation; `status`, `cancel`, `agents`, `help` work
 anywhere. DMs to the bot work the same way without the mention.
+
+## Adding agents from chat
+
+```
+@dancer add agent
+```
+
+dancer asks, one question per message in the thread: name, model, where it
+runs (local / docker / ssh and the image, host or directory that goes with
+it), permission mode, pre-approved tools (presets or a comma-separated list)
+and an optional system prompt, then shows a summary with **Save / Cancel**.
+Click a button or type the answer; `cancel` at any point abandons the flow.
+
+Saving appends a `[[definitions]]` block to `config.toml` (the rest of the
+file is left untouched) and registers the agent immediately — `agents` lists
+it and `run <name> <prompt>` works without a restart. Settings the flow does
+not ask for (`sub_agents`, `mcp_config`, `key_path`, container `env`) can be
+added to that block by hand afterwards. Editing or removing an agent is still
+done in the file.
 
 ## 6. Install as a service
 
