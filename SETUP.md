@@ -196,6 +196,17 @@ timeout = "15s"
 max_per_task = 20
 ```
 
+On a restart it judges each cut-short task from the tail of its own thread —
+the last thing you asked, the agent's last words, its recent tool calls, the
+files it changed, the tool call that was in flight — and picks one of four:
+
+| verdict | what you see |
+|---------|--------------|
+| continue | `⏯️ resuming session`, with a prompt naming what the agent was in the middle of |
+| ask | a question with **continue** / **drop** buttons; replying with your own words resumes it instead |
+| wait | `▶️ dancer is back — <reason>; reply in this thread to continue` |
+| abandon | `⏹️ leaving this task: <reason>` — no restart offers it again, a reply still can |
+
 It can only ever narrow what the rules already allow: `auto_resume_within`,
 `max_auto_resumes` and a definition's `allowed_tools` are applied before it is
 asked, and an answer outside the offered options is discarded. If it fails,

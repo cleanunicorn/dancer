@@ -247,23 +247,23 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			return err
 		}
 		for _, t := range tasks {
-			auto := c.autoResumable(t)
-			prompt, why := "", ""
-			if auto {
-				// The rules say this may continue; the decider may still
-				// leave it for a human, and may word the resume itself.
-				v := c.decide(ctx, decider.Question{
+			v := decider.Verdict{Action: actionWait}
+			if c.autoResumable(t) {
+				// The rules say this one may continue; the decider chooses
+				// what actually happens to it, and may word the resume.
+				v = c.decide(ctx, decider.Question{
 					Kind: kindResume, Task: string(t.ID), Thread: string(t.Thread),
-					Options: []string{"continue", "wait"},
-					Facts:   factsForResume(t),
-					Static:  decider.Verdict{Action: "continue", Prompt: c.resumePrompt()},
+					Options: []string{actionContinue, actionWait, actionAsk, actionAbandon},
+					Facts:   c.factsForResume(ctx, t),
+					Static:  decider.Verdict{Action: actionContinue, Prompt: c.resumePrompt()},
 				})
-				auto, prompt, why = v.Action == "continue", v.Prompt, v.Reason
 			}
 			switch {
-			case auto:
+			case v.Action == actionContinue:
 				t.Status = store.StatusIdle
 				t.Resumes++
+			case v.Action == actionAbandon:
+				t.Status = store.StatusCancelled
 			case t.Session == "":
 				t.Status = store.StatusFailed
 			default:
@@ -272,15 +272,21 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			if err := c.Store.PutTask(ctx, t); err != nil {
 				return err
 			}
-			c.Log.Info("recovered task", "task", t.ID, "status", t.Status, "auto_resume", auto, "resumes", t.Resumes)
+			c.Log.Info("recovered task", "task", t.ID, "status", t.Status, "action", v.Action, "resumes", t.Resumes)
 			tt := t
 			switch {
-			case auto:
-				resume = append(resume, resumable{task: tt, prompt: prompt})
+			case v.Action == actionContinue:
+				resume = append(resume, resumable{task: tt, prompt: v.Prompt})
+			case v.Action == actionAsk:
+				c.askAboutResume(ctx, tt, v)
+			case v.Action == actionAbandon:
+				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
+					Text: "⏹️ dancer is back — leaving this task: " + reasonOr(v.Reason, "it is no longer worth continuing") +
+						". Reply in this thread if you want it picked up anyway."})
 			case tt.Status == store.StatusIdle:
 				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
-				if why != "" {
-					text = "▶️ dancer is back — " + why + "; reply in this thread to continue"
+				if v.Reason != "" {
+					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
 				}
 				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
 			}

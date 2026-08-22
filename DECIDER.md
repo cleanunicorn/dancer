@@ -1,7 +1,7 @@
 # Decider — a small LLM that makes dancer's judgement calls
 
-Milestone 1 is built and off by default (`[decider] kind = "off"`). Companion to
-[PLAN.md](PLAN.md).
+Milestones 1 and 2 are built and off by default (`[decider] kind = "off"`).
+Companion to [PLAN.md](PLAN.md).
 
 Dancer's mechanics are deterministic and should stay that way: what a task is,
 where its process runs, what is persisted, who may press a button. What keeps
@@ -30,11 +30,12 @@ Milestone 1 — the seam ✅
 - [x] Config `[decider]` (default `kind = "off"`), `dancer doctor` reports it
 - [x] Tests: package unit tests, five coordinator seam tests, two live tests (`DANCER_LIVE=1`) including one prompt-injection attempt through the facts
 
-Milestone 2 — better facts and more verdicts
-- [ ] Facts from the event log: last human message, last 20 events as tool names, agent's closing text, files touched
-      (today's facts are only what the task projection holds: agent, environment, status at the stop, age, last prompt)
-- [ ] Verdicts `ask` and `abandon` on top of `continue | wait`
-- [ ] Live drill: three interrupted tasks of different shapes, three different verdicts
+Milestone 2 — better facts and more verdicts ✅
+- [x] `store.ThreadRecords`: the tail of a thread's log without replaying all of it (index on `log(thread, seq)`)
+- [x] Facts read back from the log: last human message, the agent's last words, the last 20 events as one line each, files it changed, and the tool call that was in flight when it stopped
+- [x] Every fact capped — 60 records read, 20 events, 10 files, 160 chars a line, 400 a paragraph — so a chatty or hostile agent cannot flood the question
+- [x] Verdicts `ask` and `abandon` on top of `continue | wait`; `ask` renders the decider's question with buttons, a plain reply still resumes with the human's own words
+- [x] Live test: three interrupted tasks of different shapes, three verdicts (`DANCER_LIVE=1 go test ./internal/coordinator -run TestLiveResumeVerdicts`)
 
 Milestone 3 — permission triage
 - [ ] Verdict `allow | ask` for a tool call, bounded by the definition's allowlist (it may only narrow, never widen)
@@ -49,7 +50,7 @@ Deferred
 
 | # | call site | today | with a decider |
 |---|-----------|-------|----------------|
-| 1 | `recover()` after a restart | resume everything cut mid-execution, with one canned "carry on" prompt | per task: continue with a prompt that names what it was doing, ask the thread, wait, or drop it |
+| 1 | `recover()` after a restart ✅ | resume everything cut mid-execution, with one canned "carry on" prompt | per task: continue with a prompt that names what it was doing, ask the thread, wait, or drop it |
 | 2 | `taskSink.AwaitDecision` | every tool call outside the allowlist wakes a human | auto-allow the boring ones inside the allowlist, escalate the rest |
 | 3 | idle tasks | sit until someone replies | notice "the agent asked a question and stopped" vs "the agent is done" |
 | 4 | `followUp` / `runTask` on a bare message | the channel's default agent | pick the definition and environment the message actually calls for |
@@ -96,11 +97,44 @@ anything unexpected. With the decider off it is a pure passthrough of `Static`:
 ```go
 v := c.decide(ctx, decider.Question{
     Kind: kindResume, Task: string(t.ID), Thread: string(t.Thread),
-    Options: []string{"continue", "wait"},
-    Facts:   factsForResume(t),
+    Options: []string{"continue", "wait", "ask", "abandon"},
+    Facts:   c.factsForResume(ctx, t),   // read back from the event log
     Static:  decider.Verdict{Action: "continue", Prompt: c.resumePrompt()},
 })
 ```
+
+What each resume verdict does:
+
+| action | effect |
+|--------|--------|
+| `continue` | resume the session now; `Prompt` is the turn the agent is given |
+| `ask` | post `Prompt` as a question with **continue** / **drop** buttons and wait (6h) — a plain reply resumes with the human's own words instead |
+| `wait` | leave the task idle with the reason; the next reply resumes it |
+| `abandon` | mark it cancelled and say why; no restart offers it again, a reply still can |
+
+## What the decider is told
+
+`factsForResume` reads the tail of the thread out of the log — that is what
+milestone 2 added, and it is the difference between a decision made on
+metadata and one made on what actually happened:
+
+```json
+{
+  "agent": "coder", "environment": "local", "status_at_stop": "interrupted",
+  "has_session": true, "minutes_ago": 2, "previous_resumes": 0,
+  "last_human_message": "add retries to the HTTP client and run the tests",
+  "agent_last_words": "Adding backoff to client.go, then I'll run the suite.",
+  "recent_events": ["text Adding backoff to client.go, then I'll run the suite.",
+                    "tool_use Edit /repo/client.go", "tool_use Bash go test ./..."],
+  "files_touched": ["/repo/client.go"],
+  "tool_in_flight": "tool_use Bash go test ./..."
+}
+```
+
+Everything in it is capped: 60 records read, 20 events, 10 files, 160 characters
+a line, 400 a paragraph. Streaming deltas and raw tool inputs never make it in —
+one summarized field per tool call. That keeps the question small and bounds what
+a chatty (or hostile) agent can put in front of the decider.
 
 ## Rules that keep it safe
 
@@ -160,25 +194,46 @@ The second one is the whole safety argument in miniature: text aimed at the
 decider arrived through the facts, the verdict stayed inside the options, and
 the injected action never existed as far as dancer is concerned.
 
+Three interrupted tasks of different shapes, judged from their real logs
+(`DANCER_LIVE=1 go test ./internal/coordinator -run TestLiveResumeVerdicts`):
+
+```
+edited client.go, `go test ./...` in flight, 2 min ago
+→ continue · "Restart interrupted. You were adding retries to client.go and running tests.
+              Check if the go test run completed — if not, run it again. Report results."
+
+`docker build .` three times, "no space left on device" each time, 2 previous resumes
+→ abandon · Failed the same error three times across two previous resumes: "no space left
+            on device" is an environment issue, not a code iteration.
+
+edited ci.yml, last words "committed and pushed. Nothing left to do."
+→ abandon · Task completed: Go version bumped to 1.24 in ci.yml and pushed.
+```
+
+Without the log, all three look identical: an interrupted task with a session.
+
 ## Cost and latency
 
 One decision is a few hundred tokens of facts and a two-line answer on haiku:
-well under a cent, ~1-2s. They happen at call sites, not per event — a restart
-with five interrupted tasks is five calls. The expensive part of dancer stays
-the agents themselves.
+well under a cent, and 12-18s in practice for the calls above. They happen at
+call sites, not per event — a restart with five interrupted tasks is five calls,
+made while the transports are still connecting. The expensive part of dancer
+stays the agents themselves.
 
 ## What this buys, concretely
 
 With the decider off, every resumed task gets the same canned sentence. With it
-on, the thread gets the task's own words — or is left alone with a reason:
+on, the thread gets the task's own words — or a question, or a reason to stop:
 
 ```
 ▶️ dancer is back — picking up this task where the agent left off
 ⏯️ resuming session
    (agent receives: "You were three files into the retry refactor; finish it and run the tests.")
 
-▶️ dancer is back — the same build failed twice already; reply in this thread to continue
-```
+❓ dancer is back — The tests were still running when dancer stopped. Finish the run?
+   1. continue — resume where the agent left off
+   2. drop — leave it; you can still reply to pick it up
 
-Milestone 2 makes those judgements better by giving the decider the event log
-to read, instead of only the task projection.
+⏹️ dancer is back — leaving this task: the branch was merged an hour ago.
+   Reply in this thread if you want it picked up anyway.
+```

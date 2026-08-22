@@ -51,6 +51,10 @@ type Store interface {
 	Append(ctx context.Context, r Record) (seq int64, err error)
 	// Replay streams records with Seq > after, in order.
 	Replay(ctx context.Context, after int64, fn func(Record) error) error
+	// ThreadRecords returns the last limit records of a thread, oldest
+	// first. It is how the coordinator reconstructs what was going on in a
+	// thread without replaying the whole log.
+	ThreadRecords(ctx context.Context, thread transport.ThreadID, limit int) ([]Record, error)
 
 	PutTask(ctx context.Context, t TaskState) error
 	GetTask(ctx context.Context, id executor.TaskID) (TaskState, error)

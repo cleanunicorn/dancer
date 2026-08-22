@@ -61,7 +61,7 @@ Milestone 5 — deploy-ready on Linux
 
 Milestone 6 — the decider (see [DECIDER.md](DECIDER.md))
 - [x] M1: `internal/decider` seam, `Static` + `Claude`, coordinator `decide()` with rules-fallback, wired at resume triage, `[decider]` config off by default, doctor check (unit + seam + live tests)
-- [ ] M2: facts from the event log, `ask`/`abandon` verdicts, live drill
+- [x] M2: facts read back from the event log (`store.ThreadRecords`), `ask`/`abandon` verdicts, three-shape live test
 - [ ] M3: permission triage bounded by the definition's allowlist
 
 Deferred
@@ -164,5 +164,6 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | automatic resume after restart         | `go test ./internal/coordinator -run AutoResume` | pass   |
 | decider seam + fallbacks               | `go test ./internal/decider ./internal/coordinator -run Decider` | pass |
 | decider against the real CLI (haiku)   | `DANCER_LIVE=1 go test ./internal/decider -run Live` | pass (23s, incl. an injection attempt) |
+| resume verdicts from real thread logs  | `DANCER_LIVE=1 go test ./internal/coordinator -run TestLiveResumeVerdicts` | pass (48s, continue/abandon/abandon) |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
 | agent edit / delete from chat          | `go test -race ./internal/config ./internal/coordinator`; terminal run against a temp config: edit rewrites the block in place, delete keeps neighbouring comments, default refused | pass |
