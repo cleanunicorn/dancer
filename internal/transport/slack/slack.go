@@ -155,9 +155,18 @@ func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound,
 	}
 	th := threadID(ch, threadTS, ts)
 	if !direct && !c.known(th) {
-		return // unrelated chatter in a channel we are in
+		// Unrelated chatter in a channel we are in. Logged because it is
+		// also what a second dancer instance sees for every thread the
+		// other instance owns — a silent drop that looks like the bot
+		// going deaf mid-conversation.
+		c.log.Debug("slack message in an unknown thread ignored", "thread", th)
+		return
 	}
-	c.remember(th)
+	if direct {
+		c.follow(th) // a direct message reopens a thread that was closed
+	} else {
+		c.remember(th)
+	}
 	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, Text: stripMention(text, c.botUserID)}
 	select {
 	case inbox <- in:
@@ -266,13 +275,46 @@ func (c *Transport) allowed(user string) bool {
 // there are forwarded. Implements transport.ThreadTracker.
 func (c *Transport) Remember(th transport.ThreadID) { c.remember(th) }
 
+// Forget stops following a thread. Implements transport.ThreadCloser.
+//
+// It leaves a tombstone rather than deleting the entry, because posting
+// into a thread remembers it again and a closed task still emits its last
+// events ("cancelled", a final result) after the close notice. Only
+// follow, i.e. a human addressing the bot in the thread, lifts it.
+func (c *Transport) Forget(th transport.ThreadID) {
+	c.mu.Lock()
+	c.threads[th] = false
+	c.mu.Unlock()
+}
+
+// React adds an emoji reaction to the thread's root message.
+// Implements transport.Reactor.
+func (c *Transport) React(ctx context.Context, th transport.ThreadID, emoji string) error {
+	ch, ts, ok := strings.Cut(string(th), "/")
+	if !ok || ts == "" {
+		return fmt.Errorf("slack: cannot react on thread %q", th)
+	}
+	return c.api.AddReactionContext(ctx, emoji, slack.ItemRef{Channel: ch, Timestamp: ts})
+}
+
 func (c *Transport) known(th transport.ThreadID) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.threads[th]
 }
 
+// remember starts following a thread, unless Forget tombstoned it.
 func (c *Transport) remember(th transport.ThreadID) {
+	c.mu.Lock()
+	if _, seen := c.threads[th]; !seen {
+		c.threads[th] = true
+	}
+	c.mu.Unlock()
+}
+
+// follow starts following a thread even after Forget: a human talking to
+// the bot in a closed thread reopens it.
+func (c *Transport) follow(th transport.ThreadID) {
 	c.mu.Lock()
 	c.threads[th] = true
 	c.mu.Unlock()

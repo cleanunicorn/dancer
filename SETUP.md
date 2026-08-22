@@ -92,8 +92,24 @@ When the agent asks a question (Claude Code's `AskUserQuestion`), the thread
 shows the options as buttons; click one, or reply in the thread with your own
 answer. Multi-select questions are answered one option at a time for now. When the agent wants to run
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
-thread to continue the conversation; `status`, `cancel`, `agent list` (or `agents`), `help` work
-anywhere. DMs to the bot work the same way without the mention.
+thread to continue the conversation; `status`, `cancel`, `close`, `agent list`
+(or `agents`), `help` work anywhere. DMs to the bot work the same way without
+the mention.
+
+## Closing a thread
+
+`close` in a thread ends the conversation there: the task running on it is
+cancelled, the thread's first message gets a ✅, and dancer stops following
+the thread — later replies in it are ignored instead of resuming the agent,
+and a restart leaves it alone. Mention the bot in the thread again (or type
+in it on the terminal transport) to reopen it and continue where you left
+off; the agent session is still there.
+
+The ✅ needs the `reactions:write` bot scope (in the manifest; if you created
+the app before it was added, add the scope and reinstall — without it closing
+still works, dancer just logs a warning instead of reacting). dancer never
+deletes messages: closing tidies the channel by ending threads, Slack's own
+history stays intact.
 
 ## Managing agents from chat
 
@@ -138,6 +154,95 @@ user so it finds your Claude Code login and ssh/docker config. Edit
 `/etc/systemd/system/dancer.service` if the binary or config live elsewhere.
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
+
+## 7. Keep it up to date automatically
+
+```sh
+make update-install    # poll origin/main every 5 minutes; rebuild and restart on a new commit
+make update-status     # when it last ran, when it fires next
+make update-logs
+```
+
+This installs two more system units and a copy of `scripts/dancer-update.sh`:
+
+- `dancer-update.timer` — fires 2 minutes after boot, then every `INTERVAL`
+  (default `5min`). The `OnBootSec` tick is what covers downtime: the machine
+  comes back and picks up whatever landed on the branch meanwhile.
+- `dancer-update.service` — a oneshot that does the work, as root.
+
+Each run: `git fetch` into a **deploy checkout** at `SRC` (default
+`/opt/dancer/src`, cloned on the first run) and hard-reset it to `origin/main`.
+Then two things are brought into line with the branch.
+
+**The glue** — this script and the three unit files. A release that changes
+`deploy/` is as much "the new version" as one that changes the Go code, and
+deploying only the binary silently leaves the box on the old units. Each unit is
+re-rendered from the checkout using the settings recorded at install time in
+`/etc/dancer/deploy.env`, compared with what is installed, and written only if it
+differs, followed by `daemon-reload`. If the updater script itself changed, it is
+installed and re-executed on the spot, so a release lands on the tick that brings
+it in rather than the one after.
+
+**The binary** — if the deployed sha already matches `origin/main` there is
+nothing to build. Otherwise: build into a scratch directory, smoke-test the new
+binary, replace `/usr/local/bin/dancer` with an atomic rename, and
+`systemctl restart dancer`.
+
+The deploy checkout is root-owned and separate from any checkout you edit in —
+it is reset on every run, so never work in it.
+
+Three things can go wrong, and each has a defined outcome:
+
+| failure | what happens |
+|---|---|
+| `main` does not compile | old binary keeps running, nothing restarts, exit 1 in the journal; retried every tick and deploys itself once `main` compiles again |
+| new binary fails `dancer -h` | same — it never reaches `/usr/local/bin/dancer` |
+| new binary installs but the service will not stay up | the previous binary is restored from `$BIN.prev`, the service is restarted, and that sha is recorded in `deployed.sha.failed` and skipped until the branch moves |
+| a unit file systemd cannot parse | detected via its `LoadState` after `daemon-reload`, restored from `$UNIT.prev`, reloaded again; the binary deploy carries on |
+| a unit that parses but the service will not start on it | restored from `$UNIT.prev` — and if the same tick also deployed a binary, both are put back, since either could be the reason |
+
+That last case is why the deployed sha lives in `/var/lib/dancer/deployed.sha`
+and is written *after* the restart is confirmed healthy, not before: a deploy
+that never came up is not a deploy. `DANCER_UPDATE_GRACE` (default 10s) is how
+long the service must stay up to count, and `DANCER_UPDATE_FORCE=1` retries a
+sha that was skipped, and `DANCER_UPDATE_SYNC_GLUE=0` goes back to binary-only
+deploys.
+
+`/etc/dancer/deploy.env` is what makes unit re-rendering possible — it records the
+`USER_`/`GROUP_`/`HOME_`/`BIN`/`INTERVAL` values the installers were given. It is
+written by `make service-install` and `make update-install`; change a setting by
+re-running those with the new value rather than editing the file. Without it the
+updater logs a warning and leaves the units alone.
+
+**Upgrading an existing box to this**: the updater already on the box does not know
+how to deploy glue, so it cannot install the version that does. Run
+`make service-install && make update-install` by hand once; every release after
+that lands on its own.
+
+Restarts go through the same drain path as everything else (see *Restarting
+dancer* below): live threads are notified, in-flight tool calls get
+`drain_timeout` to finish, and interrupted tasks resume themselves after the
+new binary starts. A deploy that lands mid-task is not a lost task.
+
+Overridable on install:
+
+| variable   | default                    | what it is                          |
+|------------|----------------------------|-------------------------------------|
+| `REPO`     | this clone's `origin` URL  | what to pull from                   |
+| `BRANCH`   | `main`                     | branch to track                     |
+| `INTERVAL` | `5min`                     | poll period                         |
+| `SRC`      | `/opt/dancer/src`          | the deploy checkout                 |
+| `BIN`      | `/usr/local/bin/dancer`    | where the binary is installed       |
+
+```sh
+make update-install BRANCH=release INTERVAL=15min SRC=/opt/dancer/src
+make update-now          # deploy right now instead of waiting for the tick
+make update-uninstall    # stop and remove the timer; the binary stays
+```
+
+A private repo needs credentials root can use non-interactively — a deploy key
+plus `REPO=git@github.com:you/dancer.git` and a `/root/.ssh/config` entry, or a
+token in the URL.
 
 ## Files from the agent
 
@@ -237,24 +342,80 @@ Every verdict, with its reason, is in the event log and in `status`.
 **local** — the agent runs on the dancer host in `workdir` (or a fresh
 directory under `workdir_root` per task).
 
-**docker** — one container per task from `image`, with `workdir` mounted at
-`/work`, run as your uid so files stay yours. The image must contain `claude`
-and needs credentials, since the container has no `~/.claude` login:
+**docker** — the agent runs in a container from `image`, with `workdir`
+mounted at `/work` and the process running as your uid so files stay yours.
+
+Name any base image you like. Dancer makes it agent-ready the first time it
+is used and caches the result, so you do not have to build and maintain an
+image yourself:
 
 ```toml
 [definitions.environment]
 kind  = "docker"
-image = "my/claude-dev:latest"
+image = "ubuntu:24.04"
+reuse = "thread"
 [definitions.environment.env]
 CLAUDE_CODE_OAUTH_TOKEN = "…"     # from `claude setup-token` on a logged-in machine, or use ANTHROPIC_API_KEY
 ```
 
-A minimal image:
+### Provisioning
 
-```Dockerfile
-FROM node:22-slim
-RUN apt-get update && apt-get install -y git curl ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://claude.ai/install.sh | bash && ln -s /root/.local/bin/claude /usr/local/bin/claude
+With `provision = "auto"` (the default) dancer installs, as root, into a
+throwaway container started from `image`:
+
+- `ca-certificates`, `curl`, `git`, and `ripgrep` if the distro has it
+- Node 18+ if the image has none
+- the agent CLI for the definition's `kind` — `claude` or `codex`
+- a user with your uid/gid and a writable `$HOME` at `/home/dancer`, with
+  passwordless `sudo`, so the agent can install whatever it turns out to need
+  mid-task (what it may actually run is still gated by its permission mode)
+- `git config --system safe.directory '*'`, so git will touch the mounted
+  workdir even though it belongs to a different uid
+
+The result is committed as `dancer-env:<hash>` and reused from then on. The
+hash covers the base image, the agent, `packages`, `setup` and your uid, so
+changing any of them rebuilds and changing none of them costs nothing.
+apt, apk, dnf, yum, pacman and zypper images are all handled.
+
+Two escape hatches:
+
+```toml
+packages = ["postgresql-client", "jq"]   # extra OS packages
+setup    = ["pip install --break-system-packages ruff"]   # extra root commands, run last
+```
+
+An image that already carries the agent CLI and git is used **exactly as it
+is** — dancer checks before it builds anything, so a purpose-built image
+never gets rewritten. `provision = "none"` turns the whole thing off.
+
+The first task on a cold image spends about a minute building; every later
+task starts instantly. Watch for `docker: provisioning image` in the log.
+
+### Reusing a container
+
+`reuse` decides how long a container lives and who shares it:
+
+| value                 | behaviour                                                              |
+|-----------------------|------------------------------------------------------------------------|
+| `task` (default)      | a fresh container per task, removed when the task ends                  |
+| `thread`              | one container per conversation, kept warm between messages             |
+| `definition`          | one container shared by every conversation running that agent          |
+
+A reused container keeps `$HOME` on a named volume, so anything the agent
+installed mid-task, its `~/.claude` login and its session history survive
+between messages — which is what makes `claude --resume` work in docker at
+all. Reused containers and their workdirs are keyed to the scope, so two
+threads never share a filesystem.
+
+Containers nobody has touched for `docker.reuse_ttl` (default 24h) are
+removed at startup and hourly. Home volumes are kept: the login inside them
+is worth more than the disk.
+
+```toml
+[docker]
+binary    = "docker"
+run_args  = ["--network=host"]   # appended to every `docker run`
+reuse_ttl = "24h"
 ```
 
 **ssh** — the agent runs on `host` in `workdir`; `claude` must be installed and
@@ -299,4 +460,14 @@ approvals = true
 - **Buttons do nothing** — Interactivity must be on (the manifest enables it) and Socket Mode must be enabled.
 - **Permission prompt never appears, task fails with `permission_denials`** — the definition's `permission_mode` is not `manual`/`acceptEdits`, or `claude` is older than 2.1; dancer needs the `--permission-prompt-tool stdio` handshake.
 - **Files in the docker workdir owned by root** — containers run as your uid:gid by default; this only happens if the docker factory `User` was overridden to `root`.
+- **dancer stopped and never came back** — check `systemctl is-active dancer` and look for a
+  `shutdown: notifying live task` line in `journalctl -u dancer` with no `Stopping
+  dancer.service` job line above it. That combination means something sent SIGTERM directly
+  rather than going through systemd; the usual culprit is an agent cleaning up a test instance
+  with a `pgrep -f` / `pkill -f` pattern like `bin/dancer run`, which also matches
+  `/usr/local/bin/dancer run`. If it dies again seconds after each start, the task that did it
+  is auto-resuming and repeating the kill: cancel that thread, or start once with
+  `auto_resume = false` to break the loop. `Restart=always`
+  and the updater's watchdog both bring it back now; `DANCER_UPDATE_WATCHDOG=0` turns the latter
+  off if you want to keep it stopped for maintenance.
 - Everything dancer saw is in the SQLite `log` table: `sqlite3 ~/.config/dancer/dancer.db 'select seq,kind,substr(payload,1,120) from log order by seq desc limit 20'`.

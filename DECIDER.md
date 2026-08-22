@@ -1,7 +1,7 @@
 # Decider — a small LLM that makes dancer's judgement calls
 
 Milestones 1, 2 and 3 are built and off by default (`[decider] kind = "off"`).
-Companion to [PLAN.md](PLAN.md).
+Companion to [CLAUDE.md](CLAUDE.md).
 
 Dancer's mechanics are deterministic and should stay that way: what a task is,
 where its process runs, what is persisted, who may press a button. What keeps

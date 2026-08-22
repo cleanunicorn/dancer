@@ -85,14 +85,17 @@ func runSetup(cfgPath string) error {
 
 	fmt.Println("\n4/4  First agent definition")
 	name := ask("Agent name", "coder")
-	model := ask("Model (haiku/sonnet/opus or full id)", "sonnet")
+	model := ask("Model (haiku/sonnet/opus/fable or full id)", "sonnet")
 	envKind := strings.ToLower(ask("Environment kind (local/docker/ssh)", "local"))
 	def := config.Definition{Name: name, Kind: "claude", Model: model}
 	def.Environment.Kind = envKind
 	switch envKind {
 	case "docker":
-		def.Environment.Image = ask("Docker image with claude installed", "")
-		def.Environment.Workdir = ask("Host directory to mount at /work (empty = per-task dir)", "")
+		// Any base image works: dancer installs git, node and the agent
+		// CLI into it on first use and caches the result.
+		def.Environment.Image = ask("Base image (dancer installs the agent into it)", "ubuntu:24.04")
+		def.Environment.Reuse = ask("Container lifetime (thread/task/definition)", "thread")
+		def.Environment.Workdir = ask("Host directory to mount at /work (empty = dancer manages it)", "")
 		def.PermissionMode = ask("Permission mode", "acceptEdits")
 	case "ssh":
 		def.Environment.Host = ask("SSH host (user@host or ssh-config alias)", "")

@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS flows (
 	body       BLOB NOT NULL,
 	updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS closed_threads (
+	thread    TEXT PRIMARY KEY,
+	closed_at TEXT NOT NULL
+);
 `
 
 // Store is a SQLite-backed store.Store.
@@ -346,4 +351,39 @@ func (s *Store) ListFlows(ctx context.Context) ([]store.FlowState, error) {
 func (s *Store) DeleteFlow(ctx context.Context, thread transport.ThreadID) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM flows WHERE thread = ?`, string(thread))
 	return err
+}
+
+// SetThreadClosed records (or clears) that a human ended the conversation
+// on thread. It is deliberately not part of the task row: several tasks
+// can share a thread, and a task's own status keeps changing after it.
+func (s *Store) SetThreadClosed(ctx context.Context, thread transport.ThreadID, closed bool) error {
+	if thread == "" {
+		return fmt.Errorf("sqlite: thread is required")
+	}
+	if !closed {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM closed_threads WHERE thread = ?`, string(thread))
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO closed_threads(thread, closed_at) VALUES(?,?) ON CONFLICT(thread) DO UPDATE SET closed_at=excluded.closed_at`,
+		string(thread), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// ClosedThreads lists the closed threads, oldest first.
+func (s *Store) ClosedThreads(ctx context.Context) ([]transport.ThreadID, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT thread FROM closed_threads ORDER BY closed_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []transport.ThreadID
+	for rows.Next() {
+		var th string
+		if err := rows.Scan(&th); err != nil {
+			return nil, err
+		}
+		out = append(out, transport.ThreadID(th))
+	}
+	return out, rows.Err()
 }

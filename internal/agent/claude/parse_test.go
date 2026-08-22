@@ -29,8 +29,17 @@ func TestTranslateFixture(t *testing.T) {
 			types = append(types, ev.Type)
 			if ev.Type == agent.EventInit {
 				session = ev.Session
-				if ev.Text == "" {
-					t.Error("init: model empty")
+				if ev.Model != "claude-haiku-4-5-20251001" {
+					t.Errorf("init: model = %q", ev.Model)
+				}
+				if ev.Mode != agent.PermissionManual {
+					t.Errorf("init: mode = %q, want manual (permissionMode default)", ev.Mode)
+				}
+				if ev.Version != "2.1.239" {
+					t.Errorf("init: version = %q", ev.Version)
+				}
+				if ev.Workdir != "/work" {
+					t.Errorf("init: workdir = %q", ev.Workdir)
 				}
 				if ev.Billing != agent.BillingSubscription {
 					t.Errorf("init: billing = %q, want subscription (apiKeySource none)", ev.Billing)

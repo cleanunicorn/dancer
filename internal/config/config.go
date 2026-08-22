@@ -23,6 +23,7 @@ type Config struct {
 	Claude      Claude       `toml:"claude"`
 	Decider     Decider      `toml:"decider"`
 	Slack       Slack        `toml:"slack"`
+	Docker      Docker       `toml:"docker"`
 	Surfaces    []Surface    `toml:"surfaces"`
 	Channels    []Channel    `toml:"channels"`
 	Definitions []Definition `toml:"definitions"`
@@ -108,6 +109,18 @@ type Decider struct {
 // Enabled reports whether a decider other than the built-in rules is set.
 func (d Decider) Enabled() bool { return d.Kind != "" && d.Kind != "off" }
 
+// Docker is host-wide container behaviour; per-agent settings live on the
+// definition's [definitions.environment].
+type Docker struct {
+	// Binary is the docker CLI (default "docker").
+	Binary string `toml:"binary,omitempty"`
+	// RunArgs are appended to every `docker run` (e.g. "--network=host").
+	RunArgs []string `toml:"run_args,omitempty"`
+	// ReuseTTL is how long a reused container may sit unused before dancer
+	// removes it (default 24h).
+	ReuseTTL Duration `toml:"reuse_ttl,omitempty"`
+}
+
 type Slack struct {
 	AppToken string `toml:"app_token"`
 	BotToken string `toml:"bot_token"`
@@ -134,6 +147,38 @@ type EnvironmentConfig struct {
 	Host    string            `toml:"host,omitempty"`
 	KeyPath string            `toml:"key_path,omitempty"`
 	Env     map[string]string `toml:"env,omitempty"`
+
+	// Provision (docker) is "auto" (default) or "none". With "auto" dancer
+	// makes the image agent-ready before first use: a plain `ubuntu:24.04`
+	// gets git, node and the agent CLI. An image that already has the CLI
+	// is used unchanged.
+	Provision string `toml:"provision,omitempty"`
+	// Packages (docker) are extra OS packages provisioning installs.
+	Packages []string `toml:"packages,omitempty"`
+	// Setup (docker) are extra shell commands provisioning runs as root.
+	Setup []string `toml:"setup,omitempty"`
+	// Reuse (docker) is the container lifetime: "task" (default),
+	// "thread" (one container per conversation) or "definition".
+	Reuse string `toml:"reuse,omitempty"`
+}
+
+// provisionSpec turns the config form into an environment.Provision. It is
+// nil when provisioning is off or the environment is not a container.
+func (e EnvironmentConfig) provisionSpec(agentKind string) *environment.Provision {
+	if environment.Kind(e.Kind) != environment.KindDocker {
+		return nil
+	}
+	if strings.EqualFold(e.Provision, "none") {
+		return nil
+	}
+	if agentKind == "" {
+		agentKind = string(agent.KindClaude)
+	}
+	return &environment.Provision{
+		Agents:   []string{agentKind},
+		Packages: e.Packages,
+		Setup:    e.Setup,
+	}
 }
 
 // Duration is a TOML-friendly time.Duration ("10m").
@@ -293,6 +338,16 @@ func (c *Config) validate() error {
 			if d.Environment.Image == "" {
 				return fmt.Errorf("config: definition %q: docker environment needs image", d.Name)
 			}
+			switch strings.ToLower(d.Environment.Provision) {
+			case "", "auto", "none":
+			default:
+				return fmt.Errorf("config: definition %q: provision must be auto or none, got %q", d.Name, d.Environment.Provision)
+			}
+			switch environment.Reuse(strings.ToLower(d.Environment.Reuse)) {
+			case "", environment.ReuseTask, environment.ReuseThread, environment.ReuseDefinition:
+			default:
+				return fmt.Errorf("config: definition %q: reuse must be task, thread or definition, got %q", d.Name, d.Environment.Reuse)
+			}
 		case environment.KindSSH:
 			if d.Environment.Host == "" {
 				return fmt.Errorf("config: definition %q: ssh environment needs host", d.Name)
@@ -362,12 +417,14 @@ func (c *Config) AgentDefinitions() []agent.Definition {
 			SubAgents:      d.SubAgents,
 			MCPConfig:      d.MCPConfig,
 			Environment: environment.Spec{
-				Kind:    environment.Kind(d.Environment.Kind),
-				Workdir: d.Environment.Workdir,
-				Image:   d.Environment.Image,
-				Host:    d.Environment.Host,
-				KeyPath: d.Environment.KeyPath,
-				Env:     d.Environment.Env,
+				Kind:      environment.Kind(d.Environment.Kind),
+				Workdir:   d.Environment.Workdir,
+				Image:     d.Environment.Image,
+				Host:      d.Environment.Host,
+				KeyPath:   d.Environment.KeyPath,
+				Env:       d.Environment.Env,
+				Provision: d.Environment.provisionSpec(d.Kind),
+				Reuse:     environment.Reuse(d.Environment.Reuse),
 			},
 		})
 	}
@@ -386,14 +443,41 @@ func DefinitionFromAgent(d agent.Definition) Definition {
 		MCPConfig:      d.MCPConfig,
 		SubAgents:      d.SubAgents,
 		Environment: EnvironmentConfig{
-			Kind:    string(d.Environment.Kind),
-			Workdir: d.Environment.Workdir,
-			Image:   d.Environment.Image,
-			Host:    d.Environment.Host,
-			KeyPath: d.Environment.KeyPath,
-			Env:     d.Environment.Env,
+			Kind:      string(d.Environment.Kind),
+			Workdir:   d.Environment.Workdir,
+			Image:     d.Environment.Image,
+			Host:      d.Environment.Host,
+			KeyPath:   d.Environment.KeyPath,
+			Env:       d.Environment.Env,
+			Provision: provisionMode(d.Environment),
+			Packages:  provisionPackages(d.Environment.Provision),
+			Setup:     provisionSetup(d.Environment.Provision),
+			Reuse:     string(d.Environment.Reuse),
 		},
 	}
+}
+
+// provisionMode is the config spelling of a *environment.Provision. The
+// agent list is not written back: it is derived from the definition's kind.
+func provisionMode(spec environment.Spec) string {
+	if spec.Kind != environment.KindDocker || spec.Provision != nil {
+		return ""
+	}
+	return "none"
+}
+
+func provisionPackages(p *environment.Provision) []string {
+	if p == nil {
+		return nil
+	}
+	return p.Packages
+}
+
+func provisionSetup(p *environment.Provision) []string {
+	if p == nil {
+		return nil
+	}
+	return p.Setup
 }
 
 // AppendDefinition adds a definition to the config file at path without

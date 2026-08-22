@@ -59,6 +59,11 @@ type FollowUp struct {
 // Cancel stops the task on Thread.
 type Cancel struct{ Thread transport.ThreadID }
 
+// CloseThread ends the conversation on Thread: the task running there is
+// cancelled and the transport stops following the thread, so later chatter
+// in it is ignored. Addressing the bot in the thread again reopens it.
+type CloseThread struct{ Thread transport.ThreadID }
+
 // Status asks for the state of the task on Thread.
 type Status struct{ Thread transport.ThreadID }
 
@@ -98,6 +103,7 @@ type Say struct {
 func (RunTask) isIntent()     {}
 func (FollowUp) isIntent()    {}
 func (Cancel) isIntent()      {}
+func (CloseThread) isIntent() {}
 func (Status) isIntent()      {}
 func (ListAgents) isIntent()  {}
 func (AddAgent) isIntent()    {}
@@ -117,6 +123,7 @@ const (
 	EventPermission EventKind = "permission" // Agent is a needs_permission; PromptID set
 	EventQuestion   EventKind = "question"   // Agent is a question; Question + PromptID set
 	EventFinished   EventKind = "finished"   // process exited; Task.Status is final
+	EventClosed     EventKind = "closed"     // the conversation on Thread was closed
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
 	EventError      EventKind = "error"      // Text explains a failure
 )

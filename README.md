@@ -9,6 +9,7 @@ restarts — a restarted dancer resumes the tasks it cut short by itself.
 ```
 @dancer add retries to the HTTP client and run the tests
   ▶️ task `a1b2c3d4` started with agent *coder* (local)
+  🤖 *coder* · `claude-sonnet-4-5` · acceptEdits · claude 2.1.239 · subscription · local /srv/work/a1b2c3d4
   🔐 Bash wants to run: go test ./...        [Allow] [Deny]
   Added exponential backoff in client.go; 12 tests pass.
   ✅ done · $0.31
@@ -45,6 +46,7 @@ Design, decisions and progress: [PLAN.md](PLAN.md).
 | `agent add`                  | define a new agent question by question; saved to config.toml, usable at once |
 | `agent edit <name>`          | change an agent's model, environment, permissions, tools or system prompt; `agent edit` picks from a list |
 | `agent delete <name>`        | remove an agent after a confirmation (refused while it is a default) |
+| `close`                      | stop the task and end the thread: dancer goes quiet there and marks it ✅ (mention it in the thread to pick it up again) |
 | `status` / `cancel` / `agent list` / `help` | what they say                 |
 
 ## Layout

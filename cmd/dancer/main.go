@@ -13,7 +13,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	agentclaude "github.com/cleanunicorn/dancer/internal/agent/claude"
@@ -74,6 +76,12 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	if err := os.MkdirAll(cfg.Server.WorkdirRoot, 0o755); err != nil {
 		return err
 	}
+	unlock, err := lockInstance(cfg.Server.DB)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	st, err := sqlite.Open(cfg.Server.DB)
 	if err != nil {
 		return err
@@ -89,11 +97,17 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		}
 	}
 
+	dockerFactory := envdocker.Factory{
+		Binary:       cfg.Docker.Binary,
+		ExtraRunArgs: cfg.Docker.RunArgs,
+		StateDir:     filepath.Join(filepath.Dir(cfg.Server.DB), "docker"),
+	}
+
 	ex := execlocal.New(
 		map[agent.Kind]agent.Agent{agent.KindClaude: &agentclaude.Agent{Binary: cfg.Claude.Binary}},
 		map[environment.Kind]environment.Factory{
 			environment.KindLocal:  envlocal.Factory{},
-			environment.KindDocker: envdocker.Factory{},
+			environment.KindDocker: dockerFactory,
 			environment.KindSSH:    envssh.Factory{},
 		},
 		cfg.Server.IdleTimeout.Duration,
@@ -166,6 +180,8 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		}
 		return nil
 	}
+	go reapContainers(ctx, dockerFactory, cfg.Docker.ReuseTTL.Duration, log)
+
 	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions), "auto_resume", c.AutoResume, "decider", cfg.Decider.Kind)
 	err = c.Run(ctx)
 	if errors.Is(err, context.Canceled) {
@@ -173,4 +189,25 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		return nil
 	}
 	return err
+}
+
+// reapContainers retires reused containers nobody has touched for a while.
+// It runs once at startup — containers outlive the process, so a restart is
+// the first chance to notice one has gone cold — and hourly after that.
+func reapContainers(ctx context.Context, f envdocker.Factory, ttl time.Duration, log *slog.Logger) {
+	if ttl <= 0 {
+		ttl = envdocker.DefaultReuseTTL
+	}
+	tick := time.NewTicker(time.Hour)
+	defer tick.Stop()
+	for {
+		if err := f.Reap(ctx, ttl); err != nil && ctx.Err() == nil {
+			log.Debug("docker reap", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }

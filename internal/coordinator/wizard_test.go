@@ -85,7 +85,7 @@ func TestAddAgentFlow(t *testing.T) {
 	tr.waitFor(t, th, "already exists")
 	tr.say(th, "reviewer")
 	model := tr.waitFor(t, th, "Which model")
-	if model.Prompt == nil || !strings.HasPrefix(model.Prompt.ID, "chat:") || len(model.Prompt.Options) != 3 {
+	if model.Prompt == nil || !strings.HasPrefix(model.Prompt.ID, "chat:") || len(model.Prompt.Options) != 4 {
 		t.Fatalf("model prompt = %+v", model.Prompt)
 	}
 	// A button click answers too.
@@ -305,10 +305,12 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	tr.say(th2, "docker")
 	tr.waitFor(t, th2, "Docker image?")
 	tr.say(th2, "ghcr.io/x/claude")
+	tr.waitFor(t, th2, "How long should the container live?")
+	tr.say(th2, "thread")
 	tr.waitFor(t, th2, "Host directory to mount")
 	tr.say(th2, "none")
 	m := waitForNthOut(t, tr, th2, "What do you want to change?", 2)
-	if !strings.Contains(m.Text, "docker · image `ghcr.io/x/claude` · fresh directory per task") || strings.Contains(m.Text, "env FOO") {
+	if !strings.Contains(m.Text, "docker · image `ghcr.io/x/claude` · provisioned · container per thread · directory dancer manages") || strings.Contains(m.Text, "env FOO") {
 		t.Fatalf("menu after environment change (env must not carry over to another kind):\n%s", m.Text)
 	}
 	tr.say(th2, "Cancel")

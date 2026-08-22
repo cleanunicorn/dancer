@@ -49,7 +49,7 @@ type Definition struct {
 type EventType string
 
 const (
-	EventInit            EventType = "init"             // session started; Session set
+	EventInit            EventType = "init"             // session started; Session, Model, Mode, Version, Workdir set
 	EventText            EventType = "text"             // assistant text (full or delta)
 	EventToolUse         EventType = "tool_use"         // agent invoked a tool
 	EventToolResult      EventType = "tool_result"      // tool finished
@@ -67,14 +67,18 @@ type Event struct {
 	Text      string // EventText, EventError, EventResult summary
 	Tool      string // EventToolUse / EventToolResult / EventNeedsPermission
 	ToolInput map[string]any
-	ToolID    string     // correlates ToolUse, ToolResult, NeedsPermission
-	ParentID  string     // non-empty when emitted by a sub-agent
-	Partial   bool       // EventText: true for streaming deltas
-	Questions []Question // EventQuestion
-	Files     []File     // files the agent referred to, fetched from its environment
-	Cost      float64    // EventResult: USD at API list prices (see Billing)
-	Billing   Billing    // EventInit, EventResult: how this session is paid for
-	Raw       []byte     // vendor message, kept for the event log
+	ToolID    string         // correlates ToolUse, ToolResult, NeedsPermission
+	ParentID  string         // non-empty when emitted by a sub-agent
+	Partial   bool           // EventText: true for streaming deltas
+	Questions []Question     // EventQuestion
+	Files     []File         // files the agent referred to, fetched from its environment
+	Cost      float64        // EventResult: USD at API list prices (see Billing)
+	Model     string         // EventInit: model the session resolved to
+	Mode      PermissionMode // EventInit: permission mode the agent runs with
+	Version   string         // EventInit: agent CLI version
+	Workdir   string         // EventInit: working directory the agent reports
+	Billing   Billing        // EventInit, EventResult: how this session is paid for
+	Raw       []byte         // vendor message, kept for the event log
 }
 
 // Billing says whether Cost is a real charge or an API-equivalent estimate.

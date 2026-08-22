@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dancer/internal/environment"
 )
 
 func TestAppendDefinitionKeepsFile(t *testing.T) {
@@ -264,5 +267,138 @@ func TestSpliceDefinition(t *testing.T) {
 	}
 	if _, ok := spliceDefinition([]byte("definitions = [{name = \"inline\"}]\n"), "inline", nil); ok {
 		t.Fatal("matched an inline table")
+	}
+}
+
+// TestDockerProvisionDefaults: a docker definition provisions its own image
+// unless it says otherwise, and the agent to install comes from the
+// definition's kind rather than being spelled out in the file.
+func TestDockerProvisionDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	src := `[server]
+db = "/tmp/x.db"
+
+[[definitions]]
+name = "sandbox"
+kind = "claude"
+[definitions.environment]
+kind = "docker"
+image = "ubuntu:24.04"
+reuse = "thread"
+packages = ["jq"]
+setup = ["echo hi"]
+
+[[definitions]]
+name = "prebuilt"
+kind = "codex"
+[definitions.environment]
+kind = "docker"
+image = "ghcr.io/x/agent:latest"
+provision = "none"
+
+[[definitions]]
+name = "here"
+kind = "claude"
+[definitions.environment]
+kind = "local"
+`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs := map[string]agent.Definition{}
+	for _, d := range cfg.AgentDefinitions() {
+		defs[d.Name] = d
+	}
+
+	sandbox := defs["sandbox"].Environment
+	if sandbox.Provision == nil {
+		t.Fatal("docker without an explicit provision should provision")
+	}
+	if got := sandbox.Provision.Agents; len(got) != 1 || got[0] != "claude" {
+		t.Errorf("agents = %v, want [claude]", got)
+	}
+	if got := sandbox.Provision.Packages; len(got) != 1 || got[0] != "jq" {
+		t.Errorf("packages = %v", got)
+	}
+	if got := sandbox.Provision.Setup; len(got) != 1 || got[0] != "echo hi" {
+		t.Errorf("setup = %v", got)
+	}
+	if sandbox.Reuse != environment.ReuseThread {
+		t.Errorf("reuse = %q, want thread", sandbox.Reuse)
+	}
+
+	if p := defs["prebuilt"].Environment.Provision; p != nil {
+		t.Errorf(`provision = "none" still provisions: %+v`, p)
+	}
+	if p := defs["here"].Environment.Provision; p != nil {
+		t.Errorf("a local environment has nothing to provision: %+v", p)
+	}
+	if r := defs["here"].Environment.Reuse; r != "" {
+		t.Errorf("reuse = %q on a local environment", r)
+	}
+}
+
+func TestDockerProvisionRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[server]\ndb = \"/tmp/x.db\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := agent.Definition{Name: "sandbox", Kind: agent.KindClaude, Environment: environment.Spec{
+		Kind:      environment.KindDocker,
+		Image:     "ubuntu:24.04",
+		Reuse:     environment.ReuseThread,
+		Provision: &environment.Provision{Agents: []string{"claude"}, Packages: []string{"jq"}, Setup: []string{"echo hi"}},
+	}}
+	if err := AppendDefinition(path, DefinitionFromAgent(d)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.AgentDefinitions()[0].Environment
+	if got.Reuse != environment.ReuseThread {
+		t.Errorf("reuse = %q", got.Reuse)
+	}
+	if got.Provision == nil || len(got.Provision.Packages) != 1 || got.Provision.Packages[0] != "jq" {
+		t.Fatalf("packages did not survive the round trip: %+v", got.Provision)
+	}
+	if len(got.Provision.Setup) != 1 || got.Provision.Setup[0] != "echo hi" {
+		t.Fatalf("setup did not survive the round trip: %+v", got.Provision)
+	}
+
+	// A definition that opted out must still be opted out after a rewrite.
+	d.Environment.Provision = nil
+	if err := ReplaceDefinition(path, DefinitionFromAgent(d)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.AgentDefinitions()[0].Environment.Provision; p != nil {
+		t.Fatalf(`provision = "none" was lost on rewrite: %+v`, p)
+	}
+}
+
+func TestDockerConfigValidation(t *testing.T) {
+	for name, env := range map[string]string{
+		"bad provision": "kind = \"docker\"\nimage = \"x\"\nprovision = \"yes-please\"\n",
+		"bad reuse":     "kind = \"docker\"\nimage = \"x\"\nreuse = \"forever\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			src := "[server]\ndb = \"/tmp/x.db\"\n\n[[definitions]]\nname = \"a\"\nkind = \"claude\"\n[definitions.environment]\n" + env
+			if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("bad value was accepted")
+			}
+		})
 	}
 }

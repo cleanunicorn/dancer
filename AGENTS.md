@@ -14,6 +14,51 @@ git worktree add .claude/worktrees/<short-topic> -b <short-topic>
 `.claude/worktrees/` is gitignored and is where existing worktrees live. In Claude Code, the
 `EnterWorktree` tool does the same thing and switches the session into it.
 
+## Stopping a dancer: gracefully, and never by pattern
+
+dancer runs agents that work on *this repo*, so an agent's cleanup command can stop the
+dancer that is running it. Two rules.
+
+**Shut it down, do not kill it.** SIGTERM is the contract: dancer notifies live threads,
+lets in-flight tool calls finish for `drain_timeout` (default 2m), persists final state and
+exits 0 — and interrupted tasks then resume themselves on the next start. `kill -9` skips
+all of that, cutting tool calls mid-write and leaving tasks that have to be picked up by
+hand. Always wait for the process to actually exit instead of assuming it is gone:
+
+```sh
+kill "$pid"                                   # SIGTERM: drain, persist, exit 0
+while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+```
+
+For the deployed service, let systemd do it — it sends SIGTERM and waits `TimeoutStopSec=150`:
+
+```sh
+sudo systemctl stop dancer        # or: restart
+```
+
+**Never find a dancer by command-line pattern.** `-f` matches anywhere in the command line, so
+`"bin/dancer run"` also matches the deployed `/usr/local/bin/dancer run`. This has taken the
+production instance down mid-task twice — the second time via `pgrep -f "bin/dancer run"`
+followed by `kill <pid>`, so killing "by pid" is no safer when the pid came from a pattern.
+`pgrep`, `pkill`, `ps | grep` and `killall` are all the same hazard.
+
+Keep the pid from the process you started, and use only that:
+
+```sh
+env DANCER_CONFIG=/tmp/dancer-test/config.toml bin/dancer run & pid=$!
+# ... test ...
+kill "$pid"; while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+```
+
+If you truly have no pid, anchor to the absolute path you launched and check what you matched
+before signalling anything:
+
+```sh
+pgrep -af "^/tmp/dancer-test/bin/dancer run"   # -a: read it first, confirm no /usr/local/bin
+```
+
+A `pgrep`/`pkill` pattern that could match `/usr/local/bin/dancer` is always a bug.
+
 ## Commands
 
 ```sh
@@ -37,6 +82,9 @@ DANCER_LIVE=1 go test -count=1 ./internal/agent/claude   # drives the real claud
 make e2e              # scripts/e2e.py: whole binary through the terminal transport
 make restart-drill    # scripts/restart-drill.py: SIGTERM mid-tool-call → drain → resume
 ```
+
+`DANCER_DOCKER_PROVISION=1 go test ./internal/environment/docker` builds a real image from
+`ubuntu:24.04` (~60s, downloads packages); it is skipped otherwise.
 
 Tests that need real infrastructure skip themselves rather than fail: docker tests need a live
 daemon, ssh tests spin up a throwaway `sshd`, live claude tests need `DANCER_LIVE=1` plus a
@@ -75,7 +123,10 @@ files first — they carry the contract, the concrete packages under them are im
   sees stream-json.
 - **`environment`** (local, docker, ssh) — "I can exec a command and stream its stdio", nothing more.
   Docker and SSH shell out to the `docker` and `ssh` CLIs deliberately (no SDKs; the user's ssh
-  config/agent and docker context just work).
+  config/agent and docker context just work). Docker also *provisions*: `Spec.Provision` turns a
+  plain base image into an agent-ready one (git, Node, the agent CLI, a user with the host uid and
+  a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
+  `Spec.Reuse`/`ReuseKey` keep one container per thread or definition with `$HOME` on a volume.
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
   next message resumes the agent session.
@@ -100,6 +151,11 @@ files first — they carry the contract, the concrete packages under them are im
   `RemoveDefinition` / `AppendChannel` edit `config.toml` textually so comments and formatting
   survive, validate the whole result, and restore the original if it fails to load. Use those helpers
   rather than `config.Save` for chat-driven changes.
+- **Closing a thread is thread state, not task state.** `close` writes the `closed_threads`
+  table (`store.SetThreadClosed`), which the coordinator mirrors in memory. A closed thread is
+  skipped by `seedThreads` and `recover`, and `transport.ThreadCloser.Forget` tombstones it on
+  Slack so a late "cancelled" notice cannot resurrect it. Any message a human addresses to the
+  bot there reopens it. Nothing is ever deleted.
 - **Graceful restart is a tested contract.** On SIGTERM: notify live threads, drain in-flight tool
   calls for `drain_timeout`, persist final state with a *non-cancelled* context, post "back" notices
   in `recover()`. `cancel` stays immediate. `make restart-drill` guards this.

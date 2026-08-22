@@ -81,6 +81,21 @@ type ThreadTracker interface {
 	Remember(thread ThreadID)
 }
 
+// ThreadCloser is implemented by transports that can stop following a
+// thread again (Slack). Forget is the inverse of ThreadTracker.Remember:
+// plain replies in the thread are ignored afterwards, until a human
+// addresses the bot there directly.
+type ThreadCloser interface {
+	Forget(thread ThreadID)
+}
+
+// Reactor is implemented by transports that can mark a conversation with
+// an emoji (Slack). It is best-effort: a transport lacking the permission
+// returns an error the caller only logs.
+type Reactor interface {
+	React(ctx context.Context, thread ThreadID, emoji string) error
+}
+
 // Transport is the interface every communication channel implements.
 type Transport interface {
 	// Name returns the transport name reported in Inbound.Transport.

@@ -31,6 +31,8 @@ type fakeTransport struct {
 	mu         sync.Mutex
 	out        []transport.Outbound
 	remembered []transport.ThreadID
+	forgotten  []transport.ThreadID
+	reacted    map[transport.ThreadID][]string
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -39,6 +41,67 @@ func (f *fakeTransport) Remember(th transport.ThreadID) {
 	f.remembered = append(f.remembered, th)
 	f.mu.Unlock()
 }
+
+// Forget implements transport.ThreadCloser.
+func (f *fakeTransport) Forget(th transport.ThreadID) {
+	f.mu.Lock()
+	f.forgotten = append(f.forgotten, th)
+	f.mu.Unlock()
+}
+
+// React implements transport.Reactor.
+func (f *fakeTransport) React(ctx context.Context, th transport.ThreadID, emoji string) error {
+	f.mu.Lock()
+	if f.reacted == nil {
+		f.reacted = map[transport.ThreadID][]string{}
+	}
+	f.reacted[th] = append(f.reacted[th], emoji)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeTransport) forgot(th transport.ThreadID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, t := range f.forgotten {
+		if t == th {
+			return true
+		}
+	}
+	return false
+}
+
+// forgetCount is how many times the coordinator told the transport to
+// forget th; a mention in a closed thread must re-tombstone it.
+func (f *fakeTransport) forgetCount(th transport.ThreadID) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, t := range f.forgotten {
+		if t == th {
+			n++
+		}
+	}
+	return n
+}
+
+func (f *fakeTransport) wasRemembered(th transport.ThreadID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, t := range f.remembered {
+		if t == th {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fakeTransport) reactions(th transport.ThreadID) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reacted[th]...)
+}
+
 func (f *fakeTransport) Run(ctx context.Context, inbox chan<- transport.Inbound) error {
 	f.inbox = inbox
 	close(f.ready)
