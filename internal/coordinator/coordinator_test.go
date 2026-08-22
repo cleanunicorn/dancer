@@ -129,21 +129,34 @@ func (f *fakeTransport) Send(ctx context.Context, msg transport.Outbound) error 
 	f.mu.Unlock()
 	return nil
 }
-func (f *fakeTransport) say(th transport.ThreadID, text string) {
-	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: "u1", Text: text}
+func (f *fakeTransport) say(th transport.ThreadID, text string) { f.sayAs(th, "u1", text) }
+func (f *fakeTransport) sayAs(th transport.ThreadID, user, text string) {
+	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: user, Text: text}
 }
 func (f *fakeTransport) decide(th transport.ThreadID, id, choice string) {
-	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: "u1", Decision: &transport.Decision{PromptID: id, Choice: choice}}
+	f.decideAs(th, "u1", id, choice)
+}
+func (f *fakeTransport) decideAs(th transport.ThreadID, user, id, choice string) {
+	f.inbox <- transport.Inbound{Transport: f.name, Thread: th, UserID: user, Decision: &transport.Decision{PromptID: id, Choice: choice}}
 }
 func (f *fakeTransport) waitFor(t *testing.T, th transport.ThreadID, sub string) transport.Outbound {
+	t.Helper()
+	return f.waitForN(t, th, sub, 1)
+}
+
+// waitForN returns the n-th message on th containing sub.
+func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string, n int) transport.Outbound {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		f.mu.Lock()
+		seen := 0
 		for _, o := range f.out {
 			if o.Thread == th && strings.Contains(o.Text, sub) {
-				f.mu.Unlock()
-				return o
+				if seen++; seen == n {
+					f.mu.Unlock()
+					return o
+				}
 			}
 		}
 		f.mu.Unlock()
@@ -344,6 +357,54 @@ func TestTwoSurfacesOneTransport(t *testing.T) {
 	tr.waitFor(t, th3, "Big or small?")
 	tr.say(th3, "medium, actually")
 	tr.waitFor(t, th3, "answers=Banana|medium, actually")
+}
+
+// TestMentionStaysWithRequester: the lines that need a human address the
+// one who started the task, even when someone else answers its prompt or
+// follows it up after idle.
+func TestMentionStaysWithRequester(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/1.0")
+	tr.sayAs(th, "u1", "run coder do the thing")
+	p := tr.waitFor(t, th, "wants to run")
+	if p.Mention != "u1" {
+		t.Errorf("prompt addressed to %q, want u1", p.Mention)
+	}
+	tr.decideAs(th, "u2", p.Prompt.ID, "allow")
+	if o := tr.waitFor(t, th, "✅ done"); o.Mention != "u1" {
+		t.Errorf("done line addressed to %q after u2 allowed, want u1", o.Mention)
+	}
+
+	// u2 follows up after the idle timeout: the resumed turn still reports to u1.
+	id := firstTask(t, st)
+	deadline := time.Now().Add(3 * time.Second)
+	for ex.IsRunning(id) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	tr.sayAs(th, "u2", "again")
+	tr.waitFor(t, th, "echo:again")
+	if o := tr.waitForN(t, th, "✅ done", 2); o.Mention != "u1" {
+		t.Errorf("resumed done line addressed to %q after u2 followed up, want u1", o.Mention)
+	}
+	if ts, err := st.GetTask(ctx, id); err != nil || ts.Requester != "u1" {
+		t.Errorf("requester = %q err=%v, want u1", ts.Requester, err)
+	}
 }
 
 func TestGracefulRestart(t *testing.T) {
