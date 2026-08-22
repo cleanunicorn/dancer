@@ -43,6 +43,32 @@ const shareFilesHint = "You are operated through a chat channel (e.g. Slack). Th
 	"To show them a file you produced (screenshot, report, diagram), write its absolute path on its own in your reply, e.g. `/tmp/settings-top.png`; " +
 	"dancer uploads every mentioned path that exists. Images and PDFs render inline in the chat."
 
+// cliModes maps the one permission mode the CLI names differently: dancer's
+// ask-for-everything "manual" is the CLI's "default". Every other mode shares
+// its name on both sides.
+var cliModes = map[agent.PermissionMode]string{agent.PermissionManual: "default"}
+
+// cliMode is the --permission-mode value for a definition's mode.
+func cliMode(m agent.PermissionMode) string {
+	if m == "" {
+		m = agent.PermissionManual
+	}
+	if s, ok := cliModes[m]; ok {
+		return s
+	}
+	return string(m)
+}
+
+// fromCLIMode maps the mode the CLI reports on init back to agent.PermissionMode.
+func fromCLIMode(s string) agent.PermissionMode {
+	for m, c := range cliModes {
+		if c == s {
+			return m
+		}
+	}
+	return agent.PermissionMode(s)
+}
+
 // args builds the CLI argument list for a definition.
 func args(def agent.Definition, session string) ([]string, error) {
 	out := []string{
@@ -52,11 +78,7 @@ func args(def agent.Definition, session string) ([]string, error) {
 		"--verbose",
 		"--permission-prompt-tool", "stdio",
 	}
-	mode := def.PermissionMode
-	if mode == "" {
-		mode = agent.PermissionManual
-	}
-	out = append(out, "--permission-mode", string(mode))
+	out = append(out, "--permission-mode", cliMode(def.PermissionMode))
 	if def.Model != "" {
 		out = append(out, "--model", def.Model)
 	}

@@ -744,10 +744,8 @@ func parseTools(a string) []string {
 // describeEnvironment renders the environment on one line.
 func describeEnvironment(d agent.Definition) string {
 	var b strings.Builder
-	b.WriteString(string(d.Environment.Kind))
-	switch d.Environment.Kind {
-	case environment.KindDocker:
-		fmt.Fprintf(&b, " · image `%s`", d.Environment.Image)
+	b.WriteString(d.Environment.String())
+	if d.Environment.Kind == environment.KindDocker {
 		if d.Environment.Provision != nil {
 			b.WriteString(" · provisioned")
 		}
@@ -757,12 +755,9 @@ func describeEnvironment(d agent.Definition) string {
 		case environment.ReuseDefinition:
 			b.WriteString(" · one shared container")
 		}
-	case environment.KindSSH:
-		fmt.Fprintf(&b, " · host `%s`", d.Environment.Host)
 	}
 	switch {
 	case d.Environment.Workdir != "":
-		fmt.Fprintf(&b, " · workdir `%s`", d.Environment.Workdir)
 	case d.Environment.ReuseKey != "" || d.Environment.Reuse == environment.ReuseThread || d.Environment.Reuse == environment.ReuseDefinition:
 		b.WriteString(" · directory dancer manages")
 	default:

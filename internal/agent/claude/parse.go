@@ -39,7 +39,7 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			ev := base
 			ev.Type = agent.EventInit
 			ev.Model = l.Model
-			ev.Mode = permissionMode(l.PermissionMode)
+			ev.Mode = fromCLIMode(l.PermissionMode)
 			ev.Version = l.Version
 			ev.Workdir = l.Cwd
 			switch l.APIKeySource {
@@ -149,13 +149,4 @@ func parseQuestions(input map[string]any) []agent.Question {
 		out = append(out, aq)
 	}
 	return out
-}
-
-// permissionMode maps the CLI's reported mode onto agent.PermissionMode.
-// The CLI calls the ask-for-everything mode "default"; the rest share a name.
-func permissionMode(s string) agent.PermissionMode {
-	if s == "default" {
-		return agent.PermissionManual
-	}
-	return agent.PermissionMode(s)
 }

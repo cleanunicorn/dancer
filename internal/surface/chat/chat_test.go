@@ -74,30 +74,59 @@ func TestHandleCommands(t *testing.T) {
 }
 
 func TestRenderInit(t *testing.T) {
-	s := New("chat", "slack", true)
-	task := &store.TaskState{Definition: agent.Definition{Name: "coder", Environment: environment.Spec{Kind: environment.KindDocker, Image: "dancer/dev", Workdir: "/cfg"}}}
-	ev := surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Task: task, Agent: &agent.Event{
-		Type: agent.EventInit, Model: "claude-haiku-4-5-20251001", Mode: agent.PermissionAcceptEdits,
-		Version: "2.1.239", Billing: agent.BillingSubscription, Workdir: "/work",
-	}}
-	out := s.Render(ev)
-	if len(out) != 1 {
-		t.Fatalf("got %d messages, want 1", len(out))
+	task := &store.TaskState{Definition: agent.Definition{Name: "coder", Kind: agent.KindClaude, Environment: environment.Spec{Kind: environment.KindDocker, Image: "dancer/dev", Workdir: "/cfg"}}}
+	full := &agent.Event{Type: agent.EventInit, Model: "claude-haiku-4-5-20251001", Mode: agent.PermissionAcceptEdits,
+		Version: "2.1.239", Billing: agent.BillingSubscription, Workdir: "/work"}
+	const fullLine = "🤖 `claude-haiku-4-5-20251001` · acceptEdits · claude 2.1.239 · subscription · docker dancer/dev /work"
+	cases := []struct {
+		name    string
+		verbose bool
+		agent   *agent.Event
+		want    string // "" = nothing posted
+	}{
+		{"full", true, full, fullLine},
+		// A quiet surface posts it too: it is the answer to "what am I talking to".
+		{"quiet", false, full, fullLine},
+		// Older CLIs report less; the configured workdir stands in.
+		{"sparse", true, &agent.Event{Type: agent.EventInit, Model: "m", Mode: agent.PermissionManual}, "🤖 `m` · manual · docker dancer/dev /cfg"},
+		// An agent that reports nothing beyond a session id has nothing to say.
+		{"bare", true, &agent.Event{Type: agent.EventInit, Session: "s"}, ""},
+		// A sub-agent's init is not the session the human talks to.
+		{"sub-agent", true, &agent.Event{Type: agent.EventInit, Model: "m", ParentID: "toolu_1"}, ""},
 	}
-	want := "🤖 *coder* · `claude-haiku-4-5-20251001` · acceptEdits · claude 2.1.239 · subscription · docker dancer/dev /work"
-	if out[0].Text != want {
-		t.Errorf("got  %q\nwant %q", out[0].Text, want)
+	for _, c := range cases {
+		s := New("chat", "slack", c.verbose)
+		out := s.Render(surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Task: task, Agent: c.agent})
+		got := ""
+		if len(out) > 1 {
+			t.Fatalf("%s: got %d messages", c.name, len(out))
+		} else if len(out) == 1 {
+			got = out[0].Text
+		}
+		if got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
 	}
+}
 
-	// The line shows on a quiet surface too: it is the answer to "what am I talking to".
-	s.Verbose = false
-	if got := s.Render(ev); len(got) != 1 {
-		t.Fatalf("non-verbose: got %d messages, want 1", len(got))
+func TestRenderInitOncePerThread(t *testing.T) {
+	s := New("chat", "slack", false)
+	task := &store.TaskState{Definition: agent.Definition{Name: "coder", Kind: agent.KindClaude, Environment: environment.Spec{Kind: environment.KindLocal}}}
+	init := func(thread transport.ThreadID, model string) surface.Event {
+		return surface.Event{Kind: surface.EventAgent, Thread: thread, Task: task, Agent: &agent.Event{Type: agent.EventInit, Model: model, Mode: agent.PermissionManual}}
 	}
-
-	// Sparse init (no task, no version) still reads.
-	bare := surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Agent: &agent.Event{Type: agent.EventInit, Model: "m", Mode: agent.PermissionManual}}
-	if got := s.Render(bare)[0].Text; got != "🤖 `m` · manual" {
-		t.Errorf("bare: got %q", got)
+	if got := s.Render(init("C1/1.0", "m1")); len(got) != 1 {
+		t.Fatalf("first init: %d messages", len(got))
+	}
+	// An idle resume reports the same details: nothing new to say.
+	if got := s.Render(init("C1/1.0", "m1")); got != nil {
+		t.Errorf("repeat init posted again: %q", got[0].Text)
+	}
+	// A change is news; another thread has not seen it at all.
+	if got := s.Render(init("C1/1.0", "m2")); len(got) != 1 {
+		t.Errorf("changed init not posted")
+	}
+	if got := s.Render(init("C2/1.0", "m1")); len(got) != 1 {
+		t.Errorf("other thread not posted")
 	}
 }

@@ -9,7 +9,7 @@ restarts — a restarted dancer resumes the tasks it cut short by itself.
 ```
 @dancer add retries to the HTTP client and run the tests
   ▶️ task `a1b2c3d4` started with agent *coder* (local)
-  🤖 *coder* · `claude-sonnet-4-5` · acceptEdits · claude 2.1.239 · subscription · local /srv/work/a1b2c3d4
+  🤖 `claude-sonnet-4-5` · acceptEdits · claude 2.1.239 · subscription · local /srv/work/a1b2c3d4
   🔐 Bash wants to run: go test ./...        [Allow] [Deny]
   Added exponential backoff in client.go; 12 tests pass.
   ✅ done · $0.31
@@ -31,7 +31,7 @@ make service          # systemd unit for the current user
 ```
 
 Full instructions, Slack app manifest, docker/ssh notes: [SETUP.md](SETUP.md).
-Design, decisions and progress: [PLAN.md](PLAN.md).
+Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 
 ## Commands in Slack
 
