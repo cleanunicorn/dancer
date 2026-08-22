@@ -1,6 +1,15 @@
 // Package chat is the conversational surface: commands in a thread start
 // tasks, plain messages in a task thread are follow-ups, permission
 // requests become prompts, results are posted back.
+//
+// While a turn runs the thread carries one live status line — what the
+// agent is doing, for how long, how many tools it used — kept current by
+// the coordinator's heartbeats and by tool events, and always the last
+// message in the thread. It is a keyed message (transport.Outbound.Key),
+// so Slack edits it in place and the terminal redraws it. The line goes
+// away when the agent asks the human something (the prompt says it all)
+// and when the turn ends, replaced by a closing line with the outcome,
+// duration, tool count and cost.
 package chat
 
 import (
@@ -9,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/store"
@@ -23,13 +33,17 @@ type Surface struct {
 	// Verbose also posts tool calls and tool errors.
 	Verbose bool
 
+	// now is the clock the status line reads; tests replace it.
+	now func() time.Time
+
 	mu       sync.Mutex
 	lastInit map[transport.ThreadID]string // last session-details line posted per thread
+	turns    map[transport.ThreadID]*turn  // running turn per thread, for the status line
 }
 
 // New binds a chat surface to a transport.
 func New(name, transportName string, verbose bool) *Surface {
-	return &Surface{name: name, transport: transportName, Verbose: verbose}
+	return &Surface{name: name, transport: transportName, Verbose: verbose, now: time.Now}
 }
 
 func (s *Surface) Name() string      { return s.name }
@@ -95,95 +109,322 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text}}, true
 }
 
+// Render turns a coordinator event into messages. Besides the lines a
+// human reads, it keeps one live status line per thread while a turn is
+// running (see status): posted under statusKey so the transport edits it
+// in place, moved below every ordinary message so it stays the last thing
+// in the thread, and taken down when the turn ends or waits for a human.
 func (s *Surface) Render(ev surface.Event) []transport.Outbound {
-	out := func(text string) []transport.Outbound {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	say := func(text string) []transport.Outbound {
 		return []transport.Outbound{{Thread: ev.Thread, Text: text}}
 	}
+	var msgs []transport.Outbound
 	switch ev.Kind {
 	case surface.EventStarted:
-		return out(fmt.Sprintf("▶️ task `%s` started with agent *%s* (%s)", ev.TaskID, ev.Task.Definition.Name, ev.Task.Definition.Environment.Kind))
+		s.begin(ev.Thread, now)
+		msgs = say(fmt.Sprintf("▶️ task `%s` started with agent *%s* (%s)", ev.TaskID, ev.Task.Definition.Name, ev.Task.Definition.Environment.Kind))
 	case surface.EventResumed:
-		return out(fmt.Sprintf("⏯️ resuming session with agent *%s*", ev.Task.Definition.Name))
+		s.begin(ev.Thread, now)
+		msgs = say(fmt.Sprintf("⏯️ resuming session with agent *%s*", ev.Task.Definition.Name))
+	case surface.EventHeartbeat:
+		return s.heartbeat(ev, now)
 	case surface.EventPermission:
+		if t := s.turns[ev.Thread]; t != nil {
+			t.activity = describeTool(ev.Agent)
+		}
 		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, describeInput(ev.Agent))
-		return []transport.Outbound{{Thread: ev.Thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
+		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}})
 	case surface.EventQuestion:
-		return []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}}
+		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}})
 	case surface.EventAgent:
-		return s.renderAgent(ev)
+		return s.renderAgent(ev, now)
 	case surface.EventFinished:
+		t := s.turns[ev.Thread]
+		var closing []transport.Outbound
 		switch ev.Task.Status {
 		case store.StatusCancelled:
-			return out("⏹️ cancelled")
+			closing = say("⏹️ cancelled")
 		case store.StatusFailed:
-			return out("❌ task failed")
+			if t == nil || !t.errored { // else the error line said it already
+				closing = say("❌ task failed")
+			}
 		}
-		return nil
+		return s.endWith(ev.Thread, closing)
 	case surface.EventClosed:
-		return out("✅ thread closed — mention me here to pick it up again")
+		return s.endWith(ev.Thread, say("✅ thread closed — mention me here to pick it up again"))
 	case surface.EventReply, surface.EventAllowed:
-		return out(ev.Text)
+		msgs = say(ev.Text)
 	case surface.EventError:
-		return out("❌ " + ev.Text)
+		if t := s.turns[ev.Thread]; t != nil {
+			t.errored = true
+		}
+		msgs = say("❌ " + ev.Text)
+	default:
+		return nil
 	}
-	return nil
+	return s.withStatus(ev.Thread, msgs, now)
 }
 
-func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
+func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbound {
 	a := ev.Agent
 	if a == nil {
 		return nil
 	}
+	t := s.turns[ev.Thread]
+	if t == nil && a.Type != agent.EventResult && a.Type != agent.EventError {
+		// A follow-up handed to a live process starts a turn without a
+		// started/resumed event; the first thing the agent says is it.
+		t = s.begin(ev.Thread, now)
+	}
 	var text string
+	markdown := false
 	switch a.Type {
 	case agent.EventInit:
+		t.phase = phaseWorking
 		if a.ParentID != "" {
 			return nil // a sub-agent's session, not the one the human talks to
 		}
 		text = s.initLine(ev)
 	case agent.EventText:
+		t.phase = phaseWorking
+		t.activity = ""
 		if a.ParentID != "" && !s.Verbose {
 			return nil
 		}
-		text = a.Text
+		text, markdown = a.Text, true
 	case agent.EventToolUse:
+		t.phase = phaseWorking
+		t.tools++
+		t.activity = describeTool(a)
 		if !s.Verbose {
-			return nil
+			return s.refresh(ev.Thread, now)
 		}
 		text = fmt.Sprintf("🔧 %s `%s`", a.Tool, truncate(describeInput(a), 200))
 	case agent.EventToolResult:
+		t.activity = ""
 		if !s.Verbose || a.Tool != "error" {
-			return nil
+			return s.refresh(ev.Thread, now)
 		}
 		text = "⚠️ tool error: " + truncate(a.Text, 300)
 	case agent.EventResult:
-		text = "✅ done · " + FormatCost(a)
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Files: files(a)}})
 	case agent.EventError:
-		text = "❌ " + a.Text
+		if t != nil {
+			t.errored = true
+		}
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: "❌ " + a.Text, Files: files(a)}})
 	default:
 		return nil
 	}
-	var files []transport.File
-	for _, f := range a.Files {
-		files = append(files, transport.File{Name: f.Name, Data: f.Data})
+	fs := files(a)
+	if text == "" && len(fs) == 0 {
+		return s.refresh(ev.Thread, now)
 	}
-	if text == "" && len(files) == 0 {
+	return s.withStatus(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: text, Files: fs, Markdown: markdown}}, now)
+}
+
+func files(a *agent.Event) []transport.File {
+	var out []transport.File
+	for _, f := range a.Files {
+		out = append(out, transport.File{Name: f.Name, Data: f.Data})
+	}
+	return out
+}
+
+// statusKey is the Outbound.Key of a thread's live status line. One per
+// thread is enough: the line is removed before a turn ends, and a removal
+// that was lost (a restart, a failed delete) is healed by the next turn
+// editing the leftover instead of adding to it.
+const statusKey = "status"
+
+// refreshEvery bounds how often tool activity alone redraws the status
+// line; a heartbeat redraws it regardless, so a skipped redraw is at most
+// one heartbeat late. Slack's edit budget is modest and a busy agent can
+// fire several tool calls a second.
+const refreshEvery = 3 * time.Second
+
+type phase int
+
+const (
+	phaseStarting phase = iota // environment and process coming up, nothing heard yet
+	phaseWorking               // the agent is doing something
+	phaseWaiting               // a prompt is open; the status line is down
+)
+
+// turn is what the status line knows about the running turn on a thread.
+type turn struct {
+	started  time.Time
+	phase    phase
+	tools    int       // tool calls so far
+	activity string    // current tool call, "" when thinking
+	visible  bool      // a status line is posted right now
+	shown    time.Time // when it was last posted
+	errored  bool      // an error line went out this turn
+}
+
+// begin starts tracking a turn on th.
+func (s *Surface) begin(th transport.ThreadID, now time.Time) *turn {
+	if s.turns == nil {
+		s.turns = map[transport.ThreadID]*turn{}
+	}
+	t := &turn{started: now}
+	s.turns[th] = t
+	return t
+}
+
+// endWith takes down th's status line, posts the closing msgs and stops
+// tracking the turn.
+func (s *Surface) endWith(th transport.ThreadID, msgs []transport.Outbound) []transport.Outbound {
+	out := s.hideThen(th, msgs)
+	delete(s.turns, th)
+	return out
+}
+
+// heartbeat redraws the status line of a running task, or takes it down
+// when the task is no longer running.
+func (s *Surface) heartbeat(ev surface.Event, now time.Time) []transport.Outbound {
+	if ev.Task == nil || ev.Task.Status != store.StatusRunning {
+		return s.hideThen(ev.Thread, nil)
+	}
+	t := s.turns[ev.Thread]
+	if t == nil {
+		t = s.begin(ev.Thread, now)
+	}
+	t.phase = phaseWorking
+	return s.show(ev.Thread, now)
+}
+
+// refresh redraws the status line if it has not been redrawn lately.
+func (s *Surface) refresh(th transport.ThreadID, now time.Time) []transport.Outbound {
+	t := s.turns[th]
+	if t == nil || (t.visible && now.Sub(t.shown) < refreshEvery) {
 		return nil
 	}
-	return []transport.Outbound{{Thread: ev.Thread, Text: text, Files: files}}
+	return s.show(th, now)
+}
+
+// show posts or redraws th's status line.
+func (s *Surface) show(th transport.ThreadID, now time.Time) []transport.Outbound {
+	t := s.turns[th]
+	if t == nil || t.phase == phaseWaiting {
+		return nil
+	}
+	t.visible, t.shown = true, now
+	return []transport.Outbound{{Thread: th, Key: statusKey, Text: statusLine(t, now)}}
+}
+
+// hideThen removes th's status line if one is up, then posts msgs. Used
+// when a turn ends or hands over to a human prompt.
+func (s *Surface) hideThen(th transport.ThreadID, msgs []transport.Outbound) []transport.Outbound {
+	t := s.turns[th]
+	if t == nil {
+		return msgs
+	}
+	t.phase = phaseWaiting
+	if !t.visible {
+		return msgs
+	}
+	t.visible = false
+	return append([]transport.Outbound{{Thread: th, Key: statusKey}}, msgs...)
+}
+
+// withStatus posts msgs and keeps the status line below them: when one is
+// up it is removed first and posted again after, so the live line stays
+// the last message in the thread.
+func (s *Surface) withStatus(th transport.ThreadID, msgs []transport.Outbound, now time.Time) []transport.Outbound {
+	t := s.turns[th]
+	if t == nil || t.phase == phaseWaiting {
+		return msgs
+	}
+	var out []transport.Outbound
+	if t.visible {
+		out = append(out, transport.Outbound{Thread: th, Key: statusKey})
+		t.visible = false
+	}
+	out = append(out, msgs...)
+	return append(out, s.show(th, now)...)
+}
+
+// statusLine is what the live line says: the phase or the current tool,
+// how long the turn has been going and how many tools it used.
+func statusLine(t *turn, now time.Time) string {
+	var b strings.Builder
+	switch {
+	case t.phase == phaseStarting:
+		b.WriteString("⏳ starting")
+	case t.activity != "":
+		b.WriteString(t.activity)
+	default:
+		b.WriteString("⏳ thinking")
+	}
+	fmt.Fprintf(&b, " · %s", formatDuration(now.Sub(t.started)))
+	if t.tools > 0 {
+		fmt.Fprintf(&b, " · %s", plural(t.tools, "tool call"))
+	}
+	return b.String()
+}
+
+// doneLine is the turn's closing line: outcome, how long it took, how
+// many tools it used and what it cost. Without a tracked turn (a restart
+// in between) it is just outcome and cost.
+func doneLine(t *turn, a *agent.Event, now time.Time) string {
+	if t == nil {
+		return "✅ done · " + FormatCost(a)
+	}
+	parts := []string{"✅ done", formatDuration(now.Sub(t.started))}
+	if t.tools > 0 {
+		parts = append(parts, plural(t.tools, "tool call"))
+	}
+	return strings.Join(append(parts, FormatCost(a)), " · ")
+}
+
+// describeTool names a tool call for the status line: the tool and the
+// gist of its input, kept short enough for one line.
+func describeTool(a *agent.Event) string {
+	in := strings.TrimSpace(describeInput(a))
+	if i := strings.IndexByte(in, '\n'); i >= 0 {
+		in = in[:i] + "…"
+	}
+	in = strings.ReplaceAll(in, "`", "'")
+	if in == "" || in == "{}" || in == "null" {
+		return "🔧 " + a.Tool
+	}
+	return fmt.Sprintf("🔧 %s `%s`", a.Tool, truncate(in, 80))
+}
+
+// formatDuration renders an elapsed time the way a human glances at it:
+// 12s, 1m05s, 1h02m.
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // initLine is the session-details line for an init event, or "" when the
 // thread already saw the same one from this dancer process. A follow-up
 // after idle_timeout resumes the CLI and reports the same details again;
 // a restart clears the memory, so the line comes back when dancer does.
+// Called with s.mu held.
 func (s *Surface) initLine(ev surface.Event) string {
 	text := describeInit(ev)
 	if text == "" {
 		return ""
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.lastInit[ev.Thread] == text {
 		return ""
 	}

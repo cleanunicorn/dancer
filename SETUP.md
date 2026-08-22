@@ -96,6 +96,24 @@ thread to continue the conversation; `status`, `cancel`, `close`, `agent list`
 (or `agents`), `help` work anywhere. DMs to the bot work the same way without
 the mention.
 
+## While the agent works
+
+The last message in a task thread is a live status line — `⏳ thinking · 4s`,
+`🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls` — edited in place every
+few seconds and moved below each new message, and your message carries ⏳
+(✋ while the agent waits for your answer). Both go when the turn ends, and the
+closing line says how long it took, how many tools it used and what it cost.
+
+The same text also shows above the composer ("dancer ⏳ thinking · 4s") when
+the app has Slack's *Agents & AI Apps* feature: the manifest enables it
+(`assistant_view`, the `assistant:write` scope, the `assistant_thread_*`
+events). It also turns the app's DM into Slack's assistant split view. If you
+created the app before it was added, either add those to the app and
+reinstall, or leave it out — dancer notices the first failure, logs one line
+and keeps the in-thread status line.
+
+The ⏳/✋ marks need the `reactions:write` bot scope.
+
 ## Closing a thread
 
 `close` in a thread ends the conversation there: the task running on it is
@@ -107,9 +125,9 @@ off; the agent session is still there.
 
 The ✅ needs the `reactions:write` bot scope (in the manifest; if you created
 the app before it was added, add the scope and reinstall — without it closing
-still works, dancer just logs a warning instead of reacting). dancer never
-deletes messages: closing tidies the channel by ending threads, Slack's own
-history stays intact.
+still works, dancer just logs a warning instead of reacting). The only
+message dancer ever deletes is its own live status line: closing tidies the
+channel by ending threads, Slack's own history stays intact.
 
 ## Managing agents from chat
 

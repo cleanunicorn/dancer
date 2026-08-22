@@ -11,6 +11,13 @@ features:
   app_home:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
+  # Agents & AI Apps: lets dancer show "dancer ⏳ thinking · 4s" above the
+  # composer while a task runs (assistant.threads.setStatus). Optional —
+  # remove this block, the assistant:write scope and the two
+  # assistant_thread_* events to do without it; the status line posted in
+  # the thread does not depend on it.
+  assistant_view:
+    assistant_description: Orchestrates coding agents from Slack
 oauth_config:
   scopes:
     bot:
@@ -18,6 +25,7 @@ oauth_config:
       - chat:write
       - files:write
       - reactions:write
+      - assistant:write
       - channels:history
       - groups:history
       - im:history
@@ -30,6 +38,8 @@ settings:
       - message.channels
       - message.groups
       - message.im
+      - assistant_thread_started
+      - assistant_thread_context_changed
   interactivity:
     is_enabled: true
   socket_mode_enabled: true

@@ -60,6 +60,20 @@ func (f *fakeTransport) React(ctx context.Context, th transport.ThreadID, emoji 
 	return nil
 }
 
+// Unreact implements transport.Reactor.
+func (f *fakeTransport) Unreact(ctx context.Context, th transport.ThreadID, emoji string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cur := f.reacted[th]
+	for i, e := range cur {
+		if e == emoji {
+			f.reacted[th] = append(cur[:i:i], cur[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
 func (f *fakeTransport) forgot(th transport.ThreadID) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -96,6 +110,7 @@ func (f *fakeTransport) wasRemembered(th transport.ThreadID) bool {
 	return false
 }
 
+// reactions is what is on the thread's root message right now.
 func (f *fakeTransport) reactions(th transport.ThreadID) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

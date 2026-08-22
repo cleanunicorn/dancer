@@ -4,6 +4,17 @@
 // starts a thread under that message; replies in a thread the bot is
 // active in are forwarded as follow-ups. Permission prompts are rendered
 // as Block Kit buttons.
+//
+// Keyed messages (Outbound.Key) are edited in place with chat.update and
+// removed with chat.delete, so a surface can keep one live status line per
+// task instead of posting a new message for every change. The same text is
+// mirrored into the thread's assistant status ("dancer ⏳ thinking · 4s"
+// above the composer) with assistant.threads.setStatus, which works once
+// the app has the Agents & AI Apps feature and the assistant:write scope;
+// without them the first failure turns the mirror off for the process.
+// Agent text (Outbound.Markdown) goes out as a Block Kit "markdown" block,
+// which renders standard Markdown; Slack's own mrkdwn would show **bold**
+// and # headings literally.
 package slack
 
 import (
@@ -33,6 +44,11 @@ type Transport struct {
 
 	mu      sync.Mutex
 	threads map[transport.ThreadID]bool // threads the bot has posted in
+	keyed   map[string]string           // "<thread>\x00<key>" -> ts of the message posted under that key
+	// noAssistant is set after assistant.threads.setStatus failed: the
+	// app lacks the feature or the scope, and every keyed update would
+	// fail the same way.
+	noAssistant bool
 }
 
 // New builds a Socket Mode Slack transport. allowedUsers may be empty.
@@ -52,6 +68,7 @@ func New(appToken, botToken string, allowedUsers []string, log *slog.Logger) (*T
 		botUserID:    auth.UserID,
 		allowedUsers: map[string]bool{},
 		threads:      map[transport.ThreadID]bool{},
+		keyed:        map[string]string{},
 	}
 	for _, u := range allowedUsers {
 		c.allowedUsers[u] = true
@@ -181,6 +198,9 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	}
 	c.remember(msg.Thread)
 	opts := []slack.MsgOption{slack.MsgOptionTS(ts)}
+	if msg.Key != "" {
+		return c.sendKeyed(ctx, chID, opts, msg)
+	}
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
 		opts = append(opts,
 			slack.MsgOptionText(msg.Text, false),
@@ -195,8 +215,16 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		if chunk == "" {
 			continue
 		}
-		if _, _, err := c.api.PostMessageContext(ctx, chID, append(opts, slack.MsgOptionText(chunk, false))...); err != nil {
-			return err
+		if _, _, err := c.api.PostMessageContext(ctx, chID, append(opts, textOptions(chunk, msg.Markdown)...)...); err != nil {
+			if !msg.Markdown {
+				return err
+			}
+			// A workspace or client that rejects the markdown block still
+			// gets the text, just with Markdown syntax showing through.
+			c.log.Warn("slack markdown block rejected, posting plain text", "err", err)
+			if _, _, err := c.api.PostMessageContext(ctx, chID, append(opts, slack.MsgOptionText(chunk, false))...); err != nil {
+				return err
+			}
 		}
 	}
 	for _, f := range msg.Files {
@@ -212,6 +240,95 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		}
 	}
 	return nil
+}
+
+// sendKeyed posts, edits or removes the message filed under msg.Key on
+// the thread. The status line it carries is short by construction, so it
+// is never chunked; an over-long text is cut to Slack's limit instead.
+func (c *Transport) sendKeyed(ctx context.Context, chID string, opts []slack.MsgOption, msg transport.Outbound) error {
+	k := string(msg.Thread) + "\x00" + msg.Key
+	c.mu.Lock()
+	ts, have := c.keyed[k]
+	c.mu.Unlock()
+	text := truncate(msg.Text, 3900)
+	switch {
+	case text == "" && !have:
+		return nil
+	case text == "":
+		c.mu.Lock()
+		delete(c.keyed, k)
+		c.mu.Unlock()
+		c.setStatus(ctx, chID, threadTS(msg.Thread), "")
+		if _, _, err := c.api.DeleteMessageContext(ctx, chID, ts); err != nil {
+			// Already gone (deleted by hand, or a restart in between) is
+			// the outcome we wanted anyway.
+			if !strings.Contains(err.Error(), "message_not_found") {
+				return err
+			}
+		}
+		return nil
+	case have:
+		_, _, _, err := c.api.UpdateMessageContext(ctx, chID, ts, textOptions(text, msg.Markdown)...)
+		if err == nil {
+			c.setStatus(ctx, chID, threadTS(msg.Thread), text)
+			return nil
+		}
+		if !strings.Contains(err.Error(), "message_not_found") {
+			return err
+		}
+		// Someone deleted it: post a fresh one below.
+	}
+	_, newTS, err := c.api.PostMessageContext(ctx, chID, append(opts, textOptions(text, msg.Markdown)...)...)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.keyed[k] = newTS
+	c.mu.Unlock()
+	// After the post: Slack clears the status whenever the app posts in
+	// the thread, so it has to be set again each time.
+	c.setStatus(ctx, chID, threadTS(msg.Thread), text)
+	return nil
+}
+
+// setStatus mirrors the live line into the thread's assistant status, or
+// clears it with an empty text. Best effort: the first failure (no Agents
+// & AI Apps feature, no assistant:write scope, a thread Slack will not
+// show a status in) switches the mirror off instead of failing every
+// update the same way.
+func (c *Transport) setStatus(ctx context.Context, chID, ts, text string) {
+	c.mu.Lock()
+	off := c.noAssistant
+	c.mu.Unlock()
+	if off || ts == "" {
+		return
+	}
+	err := c.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{ChannelID: chID, ThreadTS: ts, Status: text})
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	c.noAssistant = true
+	c.mu.Unlock()
+	c.log.Info("slack assistant status unavailable; the status line in the thread still works (enable Agents & AI Apps and the assistant:write scope to get it)", "err", err)
+}
+
+// threadTS is the root message ts of a thread id, "" at top level.
+func threadTS(th transport.ThreadID) string {
+	_, ts, _ := strings.Cut(string(th), "/")
+	return ts
+}
+
+// textOptions renders text either as Slack mrkdwn (our own lines) or as a
+// markdown block (agent text), with the raw text as notification fallback.
+func textOptions(text string, markdown bool) []slack.MsgOption {
+	if !markdown {
+		return []slack.MsgOption{slack.MsgOptionText(text, false)}
+	}
+	return []slack.MsgOption{
+		slack.MsgOptionText(text, false),
+		slack.MsgOptionBlocks(slack.NewMarkdownBlock("", text)),
+	}
 }
 
 // selectThreshold is the option count from which a prompt is rendered as a
@@ -294,7 +411,27 @@ func (c *Transport) React(ctx context.Context, th transport.ThreadID, emoji stri
 	if !ok || ts == "" {
 		return fmt.Errorf("slack: cannot react on thread %q", th)
 	}
-	return c.api.AddReactionContext(ctx, emoji, slack.ItemRef{Channel: ch, Timestamp: ts})
+	err := c.api.AddReactionContext(ctx, emoji, slack.ItemRef{Channel: ch, Timestamp: ts})
+	if err != nil && strings.Contains(err.Error(), "already_reacted") {
+		return nil
+	}
+	return err
+}
+
+// Unreact removes one of the bot's reactions from the thread's root
+// message. Implements transport.Reactor. A reaction that is not there
+// (removed by hand, or added before a restart by a previous process) is
+// not an error.
+func (c *Transport) Unreact(ctx context.Context, th transport.ThreadID, emoji string) error {
+	ch, ts, ok := strings.Cut(string(th), "/")
+	if !ok || ts == "" {
+		return fmt.Errorf("slack: cannot unreact on thread %q", th)
+	}
+	err := c.api.RemoveReactionContext(ctx, emoji, slack.ItemRef{Channel: ch, Timestamp: ts})
+	if err != nil && strings.Contains(err.Error(), "no_reaction") {
+		return nil
+	}
+	return err
 }
 
 func (c *Transport) known(th transport.ThreadID) bool {

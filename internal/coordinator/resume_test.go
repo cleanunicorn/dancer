@@ -113,7 +113,7 @@ func TestFinishedTurnIsNotResumed(t *testing.T) {
 	tr.say(th, "run coder do it")
 	p := tr.waitFor(t, th, "wants to run")
 	tr.decide(th, p.Prompt.ID, "allow")
-	tr.waitFor(t, th, "allowed=true") // the turn is done; the process idles
+	tr.waitFor(t, th, "✅ done") // the turn is done (and stored idle); the process idles
 
 	// The restart notice says so, and the task is not marked interrupted.
 	cancel()

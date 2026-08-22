@@ -1,5 +1,10 @@
 // Package terminal is a stdin/stdout transport. One constant thread. Used
 // for local testing without Slack.
+//
+// Keyed messages (Outbound.Key, the live status line of a running task)
+// are redrawn in place on the last line when Out is a terminal, and
+// printed as ordinary lines when it is a pipe, so logs and the e2e script
+// still see every update.
 package terminal
 
 import (
@@ -22,13 +27,23 @@ const Thread transport.ThreadID = "terminal"
 type Transport struct {
 	In  io.Reader
 	Out io.Writer
+	// Redraw: keyed messages overwrite their own line instead of adding
+	// one per update. New sets it when Out is a terminal.
+	Redraw bool
 
 	mu     sync.Mutex
 	prompt *transport.Prompt // last open prompt, answered by typing a choice
+	open   string            // key of the status line drawn on the current line, "" when the line is closed
 }
 
 // New returns a terminal transport on os.Stdin/os.Stdout.
-func New() *Transport { return &Transport{In: os.Stdin, Out: os.Stdout} }
+func New() *Transport {
+	t := &Transport{In: os.Stdin, Out: os.Stdout}
+	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		t.Redraw = true
+	}
+	return t
+}
 
 func (c *Transport) Name() string { return "terminal" }
 
@@ -74,6 +89,11 @@ func (c *Transport) Run(ctx context.Context, inbox chan<- transport.Inbound) err
 func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if msg.Key != "" {
+		c.status(msg)
+		return nil
+	}
+	c.closeLine()
 	if msg.Text != "" {
 		fmt.Fprintln(c.Out, msg.Text)
 	}
@@ -92,6 +112,37 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		}
 	}
 	return nil
+}
+
+// status draws a keyed message. With Redraw it replaces whatever status
+// line is on the current line (there is one thread, so one status at a
+// time); without it, every non-empty update is its own line and a
+// removal prints nothing.
+func (c *Transport) status(msg transport.Outbound) {
+	if !c.Redraw {
+		if msg.Text != "" {
+			fmt.Fprintln(c.Out, msg.Text)
+		}
+		return
+	}
+	if c.open != "" {
+		fmt.Fprint(c.Out, "\r\033[K")
+		c.open = ""
+	}
+	if msg.Text == "" {
+		return
+	}
+	fmt.Fprint(c.Out, msg.Text)
+	c.open = msg.Key
+}
+
+// closeLine ends a status line drawn in place so ordinary output starts
+// on a fresh line.
+func (c *Transport) closeLine() {
+	if c.open != "" {
+		fmt.Fprintln(c.Out)
+		c.open = ""
+	}
 }
 
 // answer maps a typed line to a decision value: a choice name, an option

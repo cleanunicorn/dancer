@@ -124,12 +124,21 @@ const (
 	EventQuestion   EventKind = "question"   // Agent is a question; Question + PromptID set
 	EventAllowed    EventKind = "allowed"    // Agent is a needs_permission a decider approved; Text says what ran and why
 	EventFinished   EventKind = "finished"   // process exited; Task.Status is final
+	EventHeartbeat  EventKind = "heartbeat"  // the task is still at it (or just stopped being); Task.Status says which
 	EventClosed     EventKind = "closed"     // the conversation on Thread was closed
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
 	EventError      EventKind = "error"      // Text explains a failure
 )
 
 // Event is what the coordinator tells surfaces about.
+//
+// EventHeartbeat is the coordinator's periodic word on a live task: it
+// is sent every few seconds while an agent turn is running, once more
+// when the turn leaves that state (a decision is pending, the turn ended,
+// dancer is shutting down), and right after a follow-up was handed to a
+// live process. Surfaces use it to show that something is happening —
+// the chat surface keeps a status line alive with it — and to take that
+// display down when Task.Status is no longer running.
 type Event struct {
 	Kind     EventKind
 	Thread   transport.ThreadID

@@ -34,6 +34,18 @@ type Outbound struct {
 	Text   string
 	Prompt *Prompt // non-nil: render as a question with buttons/choices
 	Files  []File  // attachments uploaded after the text
+	// Markdown says Text is Markdown as an agent writes it (CommonMark:
+	// **bold**, # headings, [links](url), fenced code), not the
+	// transport's own markup. A transport with a different dialect
+	// converts or hands it to a renderer that understands it.
+	Markdown bool
+	// Key names a message the surface will post again. A transport that
+	// can edit what it posted (Slack, a terminal) replaces the earlier
+	// message with this Key on the same Thread instead of adding a new
+	// one; an empty Text removes it. Surfaces use this for the live
+	// status line of a running task. Transports that cannot edit post
+	// every update as a new message and ignore removals.
+	Key string
 }
 
 // File is an attachment.
@@ -91,9 +103,12 @@ type ThreadCloser interface {
 
 // Reactor is implemented by transports that can mark a conversation with
 // an emoji (Slack). It is best-effort: a transport lacking the permission
-// returns an error the caller only logs.
+// returns an error the caller only logs. Unreact takes a mark back; the
+// coordinator uses the pair to show a task's state on the thread's root
+// message (working, waiting for a decision).
 type Reactor interface {
 	React(ctx context.Context, thread ThreadID, emoji string) error
+	Unreact(ctx context.Context, thread ThreadID, emoji string) error
 }
 
 // Transport is the interface every communication channel implements.
