@@ -220,6 +220,10 @@ func (c *Transport) allowed(user string) bool {
 	return len(c.allowedUsers) == 0 || c.allowedUsers[user]
 }
 
+// Remember marks a thread as one the bot takes part in, so plain replies
+// there are forwarded. Implements transport.ThreadTracker.
+func (c *Transport) Remember(th transport.ThreadID) { c.remember(th) }
+
 func (c *Transport) known(th transport.ThreadID) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

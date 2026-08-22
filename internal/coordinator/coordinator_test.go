@@ -28,11 +28,17 @@ type fakeTransport struct {
 	inbox chan<- transport.Inbound
 	ready chan struct{}
 
-	mu  sync.Mutex
-	out []transport.Outbound
+	mu         sync.Mutex
+	out        []transport.Outbound
+	remembered []transport.ThreadID
 }
 
 func (f *fakeTransport) Name() string { return f.name }
+func (f *fakeTransport) Remember(th transport.ThreadID) {
+	f.mu.Lock()
+	f.remembered = append(f.remembered, th)
+	f.mu.Unlock()
+}
 func (f *fakeTransport) Run(ctx context.Context, inbox chan<- transport.Inbound) error {
 	f.inbox = inbox
 	close(f.ready)
@@ -314,6 +320,12 @@ func TestGracefulRestart(t *testing.T) {
 	go c2.Run(ctx2)
 	<-tr2.ready
 	tr2.waitFor(t, th, "dancer is back")
+	tr2.mu.Lock()
+	seeded := len(tr2.remembered) == 1 && tr2.remembered[0] == th
+	tr2.mu.Unlock()
+	if !seeded {
+		t.Fatalf("transport not re-seeded with task thread: %v", tr2.remembered)
+	}
 	tr2.say(th, "carry on")
 	tr2.waitFor(t, th, "resuming session")
 	tr2.waitFor(t, th, "echo:carry on")

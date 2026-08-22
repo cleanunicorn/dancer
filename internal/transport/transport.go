@@ -67,6 +67,13 @@ func (p *Prompt) Values() []string {
 	return out
 }
 
+// ThreadTracker is implemented by transports that only forward replies
+// from threads they know about (Slack). The coordinator re-seeds them with
+// every stored task thread at startup so conversations survive restarts.
+type ThreadTracker interface {
+	Remember(thread ThreadID)
+}
+
 // Transport is the interface every communication channel implements.
 type Transport interface {
 	// Name returns the transport name reported in Inbound.Transport.

@@ -87,6 +87,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	if err := c.recover(ctx); err != nil {
 		return err
 	}
+	c.seedThreads(ctx)
 	inbox := make(chan transport.Inbound, 64)
 	var wg sync.WaitGroup
 	for _, t := range c.Transports {
@@ -143,6 +144,29 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 	case <-time.After(timeout + 10*time.Second):
 		c.Log.Warn("shutdown: tasks still running after drain timeout")
 	}
+}
+
+// seedThreads tells thread-tracking transports about every stored task
+// thread, so replies in old threads are still forwarded after a restart.
+func (c *Coordinator) seedThreads(ctx context.Context) {
+	tasks, err := c.Store.ListTasks(ctx, "")
+	if err != nil {
+		c.Log.Error("seed threads", "err", err)
+		return
+	}
+	n := 0
+	for _, t := range tasks {
+		for name, tr := range c.transports {
+			if t.Transport != "" && t.Transport != name {
+				continue
+			}
+			if tt, ok := tr.(transport.ThreadTracker); ok {
+				tt.Remember(t.Thread)
+				n++
+			}
+		}
+	}
+	c.Log.Info("seeded transport threads", "threads", n)
 }
 
 // recover marks tasks that were live before a restart as idle; their
