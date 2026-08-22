@@ -31,6 +31,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -217,11 +218,12 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	}
 	text := address(msg.Text, msg.Mention)
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
-		// A section block holds 3000 characters; a longer prompt (a tool
-		// input nobody capped) is cut rather than rejected with the
-		// buttons, which would leave the agent waiting on nobody.
+		// A section block holds 3000 characters and a message 4000; a
+		// longer prompt (a tool input nobody capped) is cut — with the
+		// same headroom sendKeyed leaves — rather than rejected together
+		// with its buttons, which would leave the agent waiting on nobody.
 		opts = append(opts,
-			slack.MsgOptionText(text, false),
+			slack.MsgOptionText(truncate(text, 3900), false),
 			slack.MsgOptionBlocks(
 				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, truncate(text, 2900), false, false), nil, nil),
 				slack.NewActionBlock(msg.Prompt.ID, promptElements(msg.Prompt)...),
@@ -415,11 +417,17 @@ func promptOptions(p *transport.Prompt) []transport.Option {
 	return out
 }
 
+// truncate cuts s to under n bytes on a rune boundary, marking the cut.
+// Slack's limits count characters, so bytes is the safe side to count.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	i := n - 1
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + "…"
 }
 
 func (c *Transport) allowed(user string) bool {

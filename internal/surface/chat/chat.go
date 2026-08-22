@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/store"
@@ -147,7 +148,9 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		if t := s.turns[ev.Thread]; t != nil {
 			t.activity = describeTool(ev.Agent)
 		}
-		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, describeInput(ev.Agent))
+		// Cut a huge input here, where the code fence can still be closed;
+		// Slack's section block holds 3000 characters.
+		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, truncate(describeInput(ev.Agent), 2500))
 		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: text, Mention: requester(ev), Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}})
 	case surface.EventQuestion:
 		return s.hideThen(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Mention: requester(ev), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}})
@@ -583,9 +586,13 @@ func splitWord(s string) (string, string) {
 	return s[:i], strings.TrimSpace(s[i:])
 }
 
+// truncate cuts s to n bytes on a rune boundary, marking the cut.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "…"
 }
