@@ -19,6 +19,41 @@ const (
 	KindSSH    Kind = "ssh"
 )
 
+// Reuse says how long an environment lives and who shares it. It is only
+// meaningful for environments that are expensive to create (docker).
+type Reuse string
+
+const (
+	// ReuseTask is the default: a fresh environment per task, destroyed
+	// when the task ends.
+	ReuseTask Reuse = "task"
+	// ReuseThread keeps one environment per conversation thread, so
+	// follow-ups land in the same box with the same installed tools and
+	// the same agent session history.
+	ReuseThread Reuse = "thread"
+	// ReuseDefinition keeps one environment per agent definition, shared
+	// by every thread that runs it.
+	ReuseDefinition Reuse = "definition"
+)
+
+// Provision describes how to turn a plain base image into one an agent can
+// run in. A nil *Provision means "the image is already ready, change
+// nothing".
+type Provision struct {
+	// Agents are the agent CLIs to make available ("claude", "codex").
+	Agents []string
+	// Packages are extra OS packages to install with the image's package
+	// manager.
+	Packages []string
+	// Setup are extra shell commands run as root after everything else.
+	Setup []string
+}
+
+// Empty reports whether the provision asks for nothing at all.
+func (p *Provision) Empty() bool {
+	return p == nil || (len(p.Agents) == 0 && len(p.Packages) == 0 && len(p.Setup) == 0)
+}
+
 // Spec describes an environment to create. Only the fields relevant to Kind
 // are used.
 type Spec struct {
@@ -28,6 +63,14 @@ type Spec struct {
 	Image   string            // docker: image to run
 	Host    string            // ssh: user@host[:port]
 	KeyPath string            // ssh: private key path
+
+	// Provision (docker) makes the image agent-ready before first use.
+	Provision *Provision
+	// Reuse (docker) is the lifetime of the environment; empty = ReuseTask.
+	Reuse Reuse
+	// ReuseKey identifies the environment to share for the chosen Reuse
+	// scope (the thread id, the definition name). Empty = not shared.
+	ReuseKey string
 }
 
 // Process is a running command inside an environment.

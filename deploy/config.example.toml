@@ -17,6 +17,11 @@ max_auto_resumes = 3        # consecutive automatic resumes of one task before i
 [claude]
 binary = "claude"
 
+[docker]
+binary = "docker"
+run_args = []               # appended to every `docker run`, e.g. ["--network=host"]
+reuse_ttl = "24h"           # a reused container idle this long is removed
+
 [slack]
 app_token = "xapp-..."      # App-level token with connections:write
 bot_token = "xoxb-..."      # Bot User OAuth token
@@ -49,8 +54,17 @@ model = "sonnet"
 permission_mode = "acceptEdits"
 [definitions.environment]
 kind = "docker"
-image = "ghcr.io/you/claude-dev:latest"    # must contain the `claude` binary
-workdir = ""                               # host dir mounted at /work; empty = per-task dir
+image = "ubuntu:24.04"                     # any base image; dancer makes it agent-ready
+provision = "auto"                         # auto (default) installs git, node and the agent CLI
+                                           # and caches the result as a derived image.
+                                           # "none" = use the image exactly as it is.
+packages = []                              # extra OS packages, e.g. ["postgresql-client"]
+setup = []                                 # extra root shell commands, run last
+reuse = "thread"                           # task (default) | thread | definition
+                                           # thread: one container per conversation, kept warm
+                                           # between messages, with a persistent $HOME so
+                                           # `claude --resume` and any login survive.
+workdir = ""                               # host dir mounted at /work; empty = dancer manages it
 [definitions.environment.env]
 CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-..."   # or ANTHROPIC_API_KEY; the container has no ~/.claude login
 

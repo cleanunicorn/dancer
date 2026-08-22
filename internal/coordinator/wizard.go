@@ -579,18 +579,30 @@ func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) erro
 	// Settings the questions do not cover (ssh key, container env) only
 	// make sense for the kind they were written for.
 	env := environment.Spec{Kind: environment.Kind(kind)}
-	if env.Kind == def.Environment.Kind {
+	sameKind := env.Kind == def.Environment.Kind
+	if sameKind {
 		env.KeyPath, env.Env = def.Environment.KeyPath, def.Environment.Env
+		env.Provision = def.Environment.Provision
 	}
 	switch env.Kind {
 	case environment.KindLocal:
 		env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task." + pathHint,
 			Options: options("none", "fresh directory per task")}, validateLocalDir)
 	case environment.KindDocker:
-		env.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? It must contain the `claude` binary."}, nonEmpty("image"))
+		env.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? A plain base image is fine — dancer installs git, node and the agent CLI into it the first time.",
+			Options: options("ubuntu:24.04", "plain ubuntu", "debian:bookworm", "plain debian", "alpine:3.20", "small")}, nonEmpty("image"))
+		if !sameKind {
+			// A container dancer creates is provisioned by default: the
+			// wizard offers plain base images, so something has to put
+			// the agent CLI in them.
+			env.Provision = &environment.Provision{Agents: []string{agentKind(def.Kind)}}
+		}
 		if err == nil {
-			env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a fresh directory per task." + pathHint,
-				Options: options("none", "fresh directory per task")}, validateLocalDir)
+			env.Reuse, err = w.askReuse(ctx)
+		}
+		if err == nil {
+			env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a directory dancer manages." + pathHint,
+				Options: options("none", "dancer manages it")}, validateLocalDir)
 		}
 	case environment.KindSSH:
 		env.Host, err = w.askUntil(ctx, agent.Question{Header: "Host", Text: "SSH host? `user@host` or an alias from `~/.ssh/config`."}, nonEmpty("host"))
@@ -609,6 +621,33 @@ func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) erro
 	}
 	def.Environment = env
 	return nil
+}
+
+// agentKind is the CLI provisioning must install for a definition.
+func agentKind(k agent.Kind) string {
+	if k == "" {
+		return string(agent.KindClaude)
+	}
+	return string(k)
+}
+
+// askReuse decides how long the container lives. Reuse is what makes a
+// container feel like a machine: the same box, the same installed tools and
+// the same agent session across every message in a thread.
+func (w *wizard) askReuse(ctx context.Context) (environment.Reuse, error) {
+	a, err := w.askUntil(ctx, agent.Question{Header: "Container", Text: "How long should the container live?",
+		Options: options(
+			string(environment.ReuseThread), "one per conversation, kept warm between messages",
+			string(environment.ReuseTask), "a fresh container per task",
+			string(environment.ReuseDefinition), "one shared by every conversation",
+		)}, func(a string) (string, error) {
+		switch r := environment.Reuse(strings.ToLower(a)); r {
+		case environment.ReuseTask, environment.ReuseThread, environment.ReuseDefinition:
+			return string(r), nil
+		}
+		return "", fmt.Errorf("pick task, thread or definition")
+	})
+	return environment.Reuse(a), err
 }
 
 func (w *wizard) askPermissions(ctx context.Context, def *agent.Definition) error {
@@ -709,12 +748,24 @@ func describeEnvironment(d agent.Definition) string {
 	switch d.Environment.Kind {
 	case environment.KindDocker:
 		fmt.Fprintf(&b, " · image `%s`", d.Environment.Image)
+		if d.Environment.Provision != nil {
+			b.WriteString(" · provisioned")
+		}
+		switch d.Environment.Reuse {
+		case environment.ReuseThread:
+			b.WriteString(" · container per thread")
+		case environment.ReuseDefinition:
+			b.WriteString(" · one shared container")
+		}
 	case environment.KindSSH:
 		fmt.Fprintf(&b, " · host `%s`", d.Environment.Host)
 	}
-	if d.Environment.Workdir != "" {
+	switch {
+	case d.Environment.Workdir != "":
 		fmt.Fprintf(&b, " · workdir `%s`", d.Environment.Workdir)
-	} else {
+	case d.Environment.ReuseKey != "" || d.Environment.Reuse == environment.ReuseThread || d.Environment.Reuse == environment.ReuseDefinition:
+		b.WriteString(" · directory dancer manages")
+	default:
 		b.WriteString(" · fresh directory per task")
 	}
 	if d.Environment.KeyPath != "" {

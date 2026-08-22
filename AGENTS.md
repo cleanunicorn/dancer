@@ -83,6 +83,9 @@ make e2e              # scripts/e2e.py: whole binary through the terminal transp
 make restart-drill    # scripts/restart-drill.py: SIGTERM mid-tool-call → drain → resume
 ```
 
+`DANCER_DOCKER_PROVISION=1 go test ./internal/environment/docker` builds a real image from
+`ubuntu:24.04` (~60s, downloads packages); it is skipped otherwise.
+
 Tests that need real infrastructure skip themselves rather than fail: docker tests need a live
 daemon, ssh tests spin up a throwaway `sshd`, live claude tests need `DANCER_LIVE=1` plus a
 logged-in `claude`. Keep that pattern for new integration tests.
@@ -120,7 +123,10 @@ files first — they carry the contract, the concrete packages under them are im
   sees stream-json.
 - **`environment`** (local, docker, ssh) — "I can exec a command and stream its stdio", nothing more.
   Docker and SSH shell out to the `docker` and `ssh` CLIs deliberately (no SDKs; the user's ssh
-  config/agent and docker context just work).
+  config/agent and docker context just work). Docker also *provisions*: `Spec.Provision` turns a
+  plain base image into an agent-ready one (git, Node, the agent CLI, a user with the host uid and
+  a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
+  `Spec.Reuse`/`ReuseKey` keep one container per thread or definition with `$HOME` on a volume.
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
   next message resumes the agent session.
