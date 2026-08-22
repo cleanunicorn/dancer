@@ -21,6 +21,7 @@ import (
 	agentclaude "github.com/cleanunicorn/dancer/internal/agent/claude"
 	"github.com/cleanunicorn/dancer/internal/config"
 	"github.com/cleanunicorn/dancer/internal/coordinator"
+	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
 	envdocker "github.com/cleanunicorn/dancer/internal/environment/docker"
 	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
@@ -154,6 +155,21 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	}
 	c.WorkdirRoot = cfg.Server.WorkdirRoot
 	c.DrainTimeout = cfg.Server.DrainTimeout.Duration
+	if cfg.Decider.Enabled() {
+		switch cfg.Decider.Kind {
+		case "claude":
+			c.Decider = decider.Claude{Binary: cfg.Claude.Binary, Model: cfg.Decider.Model, Timeout: cfg.Decider.Timeout.Duration}
+		case "openai":
+			c.Decider = decider.OpenAI{BaseURL: cfg.Decider.OpenAI.BaseURL, APIKey: cfg.Decider.OpenAI.APIKey,
+				Model: cfg.Decider.Model, Timeout: cfg.Decider.Timeout.Duration}
+		default:
+			return fmt.Errorf("unknown decider kind %q", cfg.Decider.Kind)
+		}
+		c.DeciderUses = cfg.Decider.Uses
+		c.DeciderTimeout = cfg.Decider.Timeout.Duration
+		c.MaxDecisionsPerTask = cfg.Decider.MaxPerTask
+		c.AutoAllow = cfg.Decider.AutoAllow
+	}
 	c.AutoResume = cfg.Server.AutoResume == nil || *cfg.Server.AutoResume
 	c.ResumePrompt = cfg.Server.ResumePrompt
 	c.AutoResumeWithin = cfg.Server.AutoResumeWithin.Duration
@@ -174,7 +190,7 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	}
 	go reapContainers(ctx, dockerFactory, cfg.Docker.ReuseTTL.Duration, log)
 
-	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions), "auto_resume", c.AutoResume)
+	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions), "auto_resume", c.AutoResume, "decider", cfg.Decider.Kind)
 	err = c.Run(ctx)
 	if errors.Is(err, context.Canceled) {
 		log.Info("dancer stopped")

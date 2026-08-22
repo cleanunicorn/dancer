@@ -79,6 +79,7 @@ Single test / package:
 go test ./internal/coordinator -run TestName -v
 go test -race -count=1 ./internal/coordinator     # coordinator is concurrent; use -race
 DANCER_LIVE=1 go test -count=1 ./internal/agent/claude   # drives the real claude CLI (~cents, haiku)
+DANCER_LIVE=1 go test -count=1 ./internal/decider ./internal/coordinator -run Live   # real decider verdicts
 make e2e              # scripts/e2e.py: whole binary through the terminal transport
 make restart-drill    # scripts/restart-drill.py: SIGTERM mid-tool-call → drain → resume
 ```
@@ -138,6 +139,12 @@ files first — they carry the contract, the concrete packages under them are im
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
   next message resumes the agent session.
+- **`decider`** (static, claude, openai) — answers the coordinator's two policy questions, "resume
+  this cut-short task?" and "allow this tool call without asking?", from facts read out of the log.
+  A verdict can only narrow: the rules' answer is the floor and every failure falls back to it;
+  `auto_allow` is the operator's ceiling and is matched before a decider is asked. Off by default.
+  `DECIDER.md` is the design and the plan; `decider.ParseAllow` is the one parser of `auto_allow`
+  patterns, shared by config validation and the coordinator's matcher.
 
 ### Invariants worth knowing before editing
 

@@ -122,6 +122,7 @@ const (
 	EventAgent      EventKind = "agent"      // Agent carries the agent event
 	EventPermission EventKind = "permission" // Agent is a needs_permission; PromptID set
 	EventQuestion   EventKind = "question"   // Agent is a question; Question + PromptID set
+	EventAllowed    EventKind = "allowed"    // Agent is a needs_permission a decider approved; Text says what ran and why
 	EventFinished   EventKind = "finished"   // process exited; Task.Status is final
 	EventHeartbeat  EventKind = "heartbeat"  // the task is still at it (or just stopped being); Task.Status says which
 	EventClosed     EventKind = "closed"     // the conversation on Thread was closed

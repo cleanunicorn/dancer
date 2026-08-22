@@ -22,7 +22,7 @@ type Record struct {
 	At      time.Time
 	Task    executor.TaskID
 	Thread  transport.ThreadID
-	Kind    string // "inbound", "outbound", "agent", "decision"
+	Kind    string // "inbound", "outbound", "agent", "decision" (a button click), "verdict" (a decider's answer), "closed"
 	Payload []byte // JSON of the original message
 }
 
@@ -51,6 +51,19 @@ type Store interface {
 	Append(ctx context.Context, r Record) (seq int64, err error)
 	// Replay streams records with Seq > after, in order.
 	Replay(ctx context.Context, after int64, fn func(Record) error) error
+	// ThreadRecords returns the last limit records of a thread, oldest
+	// first. It is how the coordinator reconstructs what was going on in a
+	// thread without replaying the whole log.
+	ThreadRecords(ctx context.Context, thread transport.ThreadID, limit int) ([]Record, error)
+	// ThreadRecordsOfKind is ThreadRecords for one kind: the last human
+	// message of a thread is one "inbound" record, however much the agent
+	// and dancer posted after it.
+	ThreadRecordsOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]Record, error)
+	// TaskRecords returns the last limit records of one kind about a task,
+	// oldest first. Counting and reading back a task's verdicts goes
+	// through here, so that state is a projection of the log rather than
+	// a counter that forgets on restart.
+	TaskRecords(ctx context.Context, task executor.TaskID, kind string, limit int) ([]Record, error)
 
 	PutTask(ctx context.Context, t TaskState) error
 	GetTask(ctx context.Context, id executor.TaskID) (TaskState, error)

@@ -1,6 +1,8 @@
 // Package coordinator is the long-running brain. It owns tasks: it turns
 // surface intents into executor work, fans executor/agent events back out
-// to every surface, relays permission decisions, and persists everything
+// to every surface, relays permission decisions (or lets a decider answer
+// the ones inside the operator's auto_allow ceiling — see decide.go), and
+// persists everything
 // in the store so a restart can resume sessions.
 //
 //	transports --Inbound--> surfaces --Intent--> Coordinator --Task--> Executor
@@ -31,6 +33,7 @@ import (
 	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
 	"github.com/cleanunicorn/dancer/internal/executor"
 	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
@@ -88,6 +91,25 @@ type Coordinator struct {
 	// Heartbeat is how often surfaces hear that a running turn is still
 	// going (default 10s). Negative turns heartbeats off.
 	Heartbeat time.Duration
+	// Decider answers policy questions the rules alone answer bluntly (see
+	// internal/decider). Nil is decider.Static: dancer's own rules, which
+	// is also what every failure falls back to.
+	Decider decider.Decider
+	// DeciderUses lists the question kinds Decider may answer; other kinds
+	// are answered statically. Empty allows none, so turning a decider on
+	// is always a deliberate, per-kind step.
+	DeciderUses []string
+	// DeciderTimeout bounds one question (default 15s). A decision never
+	// blocks dancer: on timeout the static answer wins.
+	DeciderTimeout time.Duration
+	// MaxDecisionsPerTask caps how many questions one task may cost before
+	// it falls back to the rules for good (default 20).
+	MaxDecisionsPerTask int
+	// AutoAllow is the ceiling for permission decisions: tool patterns
+	// ("Read", "Bash(go test:*)") a decider may approve without a human.
+	// Empty — the default — means every prompt reaches a person, whatever
+	// the decider thinks.
+	AutoAllow []string
 
 	drives sync.WaitGroup
 
@@ -248,7 +270,14 @@ const defaultResumePrompt = "dancer restarted and cut your last turn short. Cont
 // again when they never got one — so nobody has to type in the thread; the
 // rest are marked idle and resume with the next message.
 func (c *Coordinator) recover(ctx context.Context) error {
-	var resume []store.TaskState
+	// Deciding happens before the transports are up, so it is dead time on
+	// every start. One question is seconds; a crash that left twenty tasks
+	// behind would be minutes of a silent bot. The whole of recovery gets
+	// one budget, and the tasks past it are answered by the rules.
+	dctx, cancelDecisions := context.WithTimeout(ctx, c.recoveryBudget())
+	defer cancelDecisions()
+
+	var resume []resumable
 	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued, store.StatusInterrupted} {
 		tasks, err := c.Store.ListTasks(ctx, status)
 		if err != nil {
@@ -266,11 +295,25 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				continue
 			}
 			c.unmark(ctx, t.Transport, t.Thread) // a mark the previous process left
-			auto := c.autoResumable(t)
+			v := decider.Verdict{Action: actionWait}
+			if c.autoResumable(t) {
+				// The rules say this one may continue; the decider chooses
+				// what actually happens to it, and may word the resume.
+				v = c.decide(dctx, decider.Question{
+					Kind: kindResume, Task: string(t.ID), Thread: string(t.Thread),
+					Options: []string{actionContinue, actionWait, actionAsk, actionAbandon},
+					Facts:   c.factsForResume(ctx, t),
+					Static:  decider.Verdict{Action: actionContinue, Prompt: c.resumePrompt()},
+				})
+			}
 			switch {
-			case auto:
+			case v.Action == actionContinue:
 				t.Status = store.StatusIdle
 				t.Resumes++
+			case v.Action == actionAbandon:
+				t.Status = store.StatusCancelled
+			case v.Action == actionAsk:
+				t.Status = store.StatusIdle // the question needs it pick-up-able
 			case t.Session == "":
 				t.Status = store.StatusFailed
 			default:
@@ -279,21 +322,55 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			if err := c.Store.PutTask(ctx, t); err != nil {
 				return err
 			}
-			c.Log.Info("recovered task", "task", t.ID, "status", t.Status, "auto_resume", auto, "resumes", t.Resumes)
+			c.Log.Info("recovered task", "task", t.ID, "status", t.Status, "action", v.Action, "resumes", t.Resumes)
 			tt := t
 			switch {
-			case auto:
-				resume = append(resume, tt)
-			case tt.Status == store.StatusIdle:
+			case v.Action == actionContinue:
+				resume = append(resume, resumable{task: tt, prompt: v.Prompt})
+			case v.Action == actionAsk:
+				c.askAboutResume(ctx, tt, v)
+			case v.Action == actionAbandon:
 				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
-					Text: "▶️ dancer is back — reply in this thread to continue where the agent left off"})
+					Text: "⏹️ dancer is back — leaving this task: " + reasonOr(v.Reason, "it is no longer worth continuing") +
+						". " + capitalize(pickUpHint(tt))})
+			case tt.Status == store.StatusIdle:
+				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
+				if v.Reason != "" {
+					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
+				}
+				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
 			}
 		}
 	}
-	for _, t := range resume {
-		c.autoResume(ctx, t)
+	for _, r := range resume {
+		c.autoResume(ctx, r.task, r.prompt)
 	}
 	return nil
+}
+
+// recoveryBudget bounds the time all of recovery may spend on decisions:
+// four questions' worth, so a handful of tasks each get their answer and a
+// wedged CLI cannot hold the bot offline.
+func (c *Coordinator) recoveryBudget() time.Duration {
+	per := c.DeciderTimeout
+	if per <= 0 {
+		per = 15 * time.Second
+	}
+	return 4 * per
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// resumable is a task recover() decided to pick up, with the turn it is to
+// be given (empty = the configured resume prompt).
+type resumable struct {
+	task   store.TaskState
+	prompt string
 }
 
 // autoResumable reports whether a task cut short by a restart may continue
@@ -327,8 +404,11 @@ func (c *Coordinator) autoResumable(t store.TaskState) bool {
 }
 
 // autoResume drives one recovered task without waiting for a message.
-func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState) {
+func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState, decided string) {
 	prompt, note := c.resumePrompt(), "▶️ dancer is back — picking up this task where the agent left off"
+	if decided != "" {
+		prompt = decided
+	}
 	if t.Session == "" {
 		// The task never reached a session: run the original request again.
 		prompt, note = t.Prompt, "▶️ dancer is back — this task never started, running it again"
@@ -408,8 +488,14 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no task on this thread"}, s)
 			return
 		}
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st,
-			Text: fmt.Sprintf("task `%s` — agent *%s* — status *%s* — session `%s`", st.ID, st.Definition.Name, st.Status, st.Session)}, s)
+		text := fmt.Sprintf("task `%s` — agent *%s* — status *%s* — session `%s`", st.ID, st.Definition.Name, st.Status, st.Session)
+		if v, ok := c.lastVerdict(ctx, st); ok && v.By != "" {
+			text += fmt.Sprintf("\n· last decision: *%s* by %s", v.Action, v.By)
+			if v.Reason != "" {
+				text += " — " + v.Reason
+			}
+		}
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text}, s)
 	case surface.Cancel:
 		if c.cancelWizard(it.Thread) {
 			return
@@ -1036,6 +1122,11 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {
 	if ev.Type == agent.EventQuestion {
 		return s.awaitAnswers(ctx, id, ev)
+	}
+	st0 := s.snapshot()
+	if v, ok := s.c.decidePermission(ctx, st0, ev); ok {
+		s.c.noteAutoAllowed(ctx, st0, ev, v)
+		return agent.PermissionDecision{ToolID: ev.ToolID, Allow: true, Reason: "decider: " + v.Reason}, nil
 	}
 	base := string(id) + ":" + ev.ToolID
 	ch := make(chan transport.Decision, 1)

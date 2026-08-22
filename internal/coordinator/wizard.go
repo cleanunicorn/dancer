@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
@@ -792,9 +793,14 @@ func summarize(title string, d agent.Definition) string {
 	return b.String()
 }
 
+// truncate cuts at a rune boundary — the result is posted to a chat thread
+// and written to the event log, and neither wants half a rune.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "…"
 }
