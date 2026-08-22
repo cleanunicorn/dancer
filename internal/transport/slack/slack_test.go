@@ -13,7 +13,7 @@ func TestAddress(t *testing.T) {
 		t.Errorf("mention: %q", got)
 	}
 	// A settled prompt drops the address again, and only that one.
-	if got := leadingMentionRE.ReplaceAllString(address("🔐 *Bash* wants to run <@U7>", "U42"), ""); got != "🔐 *Bash* wants to run <@U7>" {
+	if got := unaddress(address("🔐 *Bash* wants to run <@U7>", "U42")); got != "🔐 *Bash* wants to run <@U7>" {
 		t.Errorf("settled: %q", got)
 	}
 }

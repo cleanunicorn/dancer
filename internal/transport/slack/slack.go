@@ -154,7 +154,7 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 			// Replace the buttons with the outcome so they cannot be clicked
 			// twice. The prompt's leading mention has done its job; a settled
 			// prompt that still opens with it reads as if it were waiting.
-			settled := leadingMentionRE.ReplaceAllString(firstText(cb.Message), "")
+			settled := unaddress(firstText(cb.Message))
 			_, _, _, err := c.api.UpdateMessageContext(ctx, cb.Channel.ID, cb.Message.Timestamp,
 				slack.MsgOptionText(fmt.Sprintf("%s\n→ *%s* by %s", settled, choice, mention(cb.User.ID)), false),
 				slack.MsgOptionBlocks())
@@ -333,6 +333,12 @@ func address(text, user string) string {
 // mention is Slack's mrkdwn for addressing a user.
 func mention(userID string) string { return "<@" + userID + ">" }
 
+// unaddress drops the address() prefix from text, and only that one.
+func unaddress(text string) string { return leadingMentionRE.ReplaceAllString(text, "") }
+
+// leadingMentionRE matches the mention address() put in front of a message.
+var leadingMentionRE = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
+
 // threadTS is the root message ts of a thread id, "" at top level.
 func threadTS(th transport.ThreadID) string {
 	_, ts, _ := strings.Cut(string(th), "/")
@@ -483,9 +489,6 @@ func threadID(ch, threadTS, ts string) transport.ThreadID {
 	}
 	return transport.ThreadID(ch + "/" + threadTS)
 }
-
-// leadingMentionRE matches the mention address() put in front of a message.
-var leadingMentionRE = regexp.MustCompile(`^<@[A-Z0-9]+>\s*`)
 
 func stripMention(text, botID string) string {
 	text = strings.ReplaceAll(text, mention(botID), "")
