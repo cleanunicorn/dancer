@@ -139,6 +139,70 @@ user so it finds your Claude Code login and ssh/docker config. Edit
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
 
+## 7. Keep it up to date automatically
+
+```sh
+make update-install    # poll origin/main every 5 minutes; rebuild and restart on a new commit
+make update-status     # when it last ran, when it fires next
+make update-logs
+```
+
+This installs two more system units and a copy of `scripts/dancer-update.sh`:
+
+- `dancer-update.timer` — fires 2 minutes after boot, then every `INTERVAL`
+  (default `5min`). The `OnBootSec` tick is what covers downtime: the machine
+  comes back and picks up whatever landed on the branch meanwhile.
+- `dancer-update.service` — a oneshot that does the work, as root.
+
+Each run: `git fetch` into a **deploy checkout** at `SRC` (default
+`/opt/dancer/src`, cloned on the first run), compare `HEAD` with
+`origin/main`, and stop there if they match. Otherwise hard-reset the checkout
+to `origin/main`, build into a scratch directory, smoke-test the new binary,
+replace `/usr/local/bin/dancer` with an atomic rename, and
+`systemctl restart dancer`.
+
+The deploy checkout is root-owned and separate from any checkout you edit in —
+it is reset on every run, so never work in it.
+
+Three things can go wrong, and each has a defined outcome:
+
+| failure | what happens |
+|---|---|
+| `main` does not compile | old binary keeps running, nothing restarts, exit 1 in the journal; retried every tick and deploys itself once `main` compiles again |
+| new binary fails `dancer -h` | same — it never reaches `/usr/local/bin/dancer` |
+| new binary installs but the service will not stay up | the previous binary is restored from `$BIN.prev`, the service is restarted, and that sha is recorded in `deployed.sha.failed` and skipped until the branch moves |
+
+That last case is why the deployed sha lives in `/var/lib/dancer/deployed.sha`
+and is written *after* the restart is confirmed healthy, not before: a deploy
+that never came up is not a deploy. `DANCER_UPDATE_GRACE` (default 10s) is how
+long the service must stay up to count, and `DANCER_UPDATE_FORCE=1` retries a
+sha that was skipped.
+
+Restarts go through the same drain path as everything else (see *Restarting
+dancer* below): live threads are notified, in-flight tool calls get
+`drain_timeout` to finish, and interrupted tasks resume themselves after the
+new binary starts. A deploy that lands mid-task is not a lost task.
+
+Overridable on install:
+
+| variable   | default                    | what it is                          |
+|------------|----------------------------|-------------------------------------|
+| `REPO`     | this clone's `origin` URL  | what to pull from                   |
+| `BRANCH`   | `main`                     | branch to track                     |
+| `INTERVAL` | `5min`                     | poll period                         |
+| `SRC`      | `/opt/dancer/src`          | the deploy checkout                 |
+| `BIN`      | `/usr/local/bin/dancer`    | where the binary is installed       |
+
+```sh
+make update-install BRANCH=release INTERVAL=15min SRC=/opt/dancer/src
+make update-now          # deploy right now instead of waiting for the tick
+make update-uninstall    # stop and remove the timer; the binary stays
+```
+
+A private repo needs credentials root can use non-interactively — a deploy key
+plus `REPO=git@github.com:you/dancer.git` and a `/root/.ssh/config` entry, or a
+token in the URL.
+
 ## Files from the agent
 
 When the agent mentions a file path in its reply (`/tmp/settings-top.png`,
