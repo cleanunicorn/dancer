@@ -459,7 +459,9 @@ func TestGracefulRestart(t *testing.T) {
 	c2.DefaultDefinition = "coder"
 	go c2.Run(ctx2)
 	<-tr2.ready
-	tr2.waitFor(t, th, "dancer is back")
+	if o := tr2.waitFor(t, th, "dancer is back"); o.Mention != "u1" {
+		t.Errorf("restart notice addressed to %q, want the requester u1", o.Mention)
+	}
 	tr2.mu.Lock()
 	seeded := len(tr2.remembered) == 1 && tr2.remembered[0] == th
 	tr2.mu.Unlock()
