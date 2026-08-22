@@ -107,9 +107,9 @@ closing line says how long it took, how many tools it used and what it cost.
 The lines that need you — a permission or question prompt, the closing line,
 an error, a "dancer is back" notice that asks you to pick the task up —
 mention whoever started the task (`@you ✅ done · …`), so you can mute the
-thread and still be told when to look. Only that one person is tagged, even if someone else replies in
-the thread; `⏹️ cancelled` is not tagged; the status line and the agent's own
-text never are. This needs no extra scope.
+thread and still be told when to look. Only that one person is tagged, even
+if someone else replies in the thread; `⏹️ cancelled` is not tagged; the
+status line and the agent's own text never are. This needs no extra scope.
 
 The same text also shows above the composer ("dancer ⏳ thinking · 4s") when
 the app has Slack's *Agents & AI Apps* feature: the manifest enables it
