@@ -68,10 +68,11 @@ bin/dancer run
 In the channel you invited the bot to:
 
 ```
-@dancer run coder create hello.py that prints hi, then run it
+@dancer create hello.py that prints hi, then run it
 ```
 
-dancer answers in a thread under your message. When the agent wants to run
+dancer answers **in a thread under your message** (look for "1 reply"), using the
+default agent; `run <agent> <prompt>` picks a specific one. When the agent wants to run
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
 thread to continue the conversation; `status`, `cancel`, `agents`, `help` work
 anywhere. DMs to the bot work the same way without the mention.

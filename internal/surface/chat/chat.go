@@ -32,7 +32,8 @@ func (s *Surface) Name() string      { return s.name }
 func (s *Surface) Transport() string { return s.transport }
 
 const help = "Commands:\n" +
-	"• `run <agent> <prompt>` — start a task with a defined agent (or `run <prompt>` for the default)\n" +
+	"• `<prompt>` — start a task with the default agent\n" +
+	"• `run <agent> <prompt>` — start a task with a specific agent\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +

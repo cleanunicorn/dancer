@@ -76,24 +76,25 @@ type fakeAgent struct{}
 
 func (fakeAgent) Kind() agent.Kind { return "fake" }
 func (fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
-	r := &fakeRun{events: make(chan agent.Event, 16), decided: make(chan agent.PermissionDecision, 1), done: make(chan struct{})}
+	r := newFakeRun()
 	go func() {
-		r.events <- agent.Event{Type: agent.EventInit, Session: "sess-1"}
-		r.events <- agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolID: "tool-1", ToolInput: map[string]any{"command": "ls"}}
-		d := <-r.decided
-		r.events <- agent.Event{Type: agent.EventText, Text: fmt.Sprintf("allowed=%v", d.Allow)}
-		r.events <- agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1", Cost: 0.01}
-		<-r.done
+		r.emit(agent.Event{Type: agent.EventInit, Session: "sess-1"})
+		r.emit(agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolID: "tool-1", ToolInput: map[string]any{"command": "ls"}})
+		select {
+		case d := <-r.decided:
+			r.emit(agent.Event{Type: agent.EventText, Text: fmt.Sprintf("allowed=%v", d.Allow)})
+			r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1", Cost: 0.01})
+		case <-r.done:
+		}
 	}()
 	return r, nil
 }
 func (f fakeAgent) Resume(ctx context.Context, env environment.Environment, def agent.Definition, session, prompt string) (agent.Run, error) {
-	r := &fakeRun{events: make(chan agent.Event, 16), decided: make(chan agent.PermissionDecision, 1), done: make(chan struct{})}
+	r := newFakeRun()
 	go func() {
-		r.events <- agent.Event{Type: agent.EventInit, Session: session}
-		r.events <- agent.Event{Type: agent.EventText, Text: "echo:" + prompt}
-		r.events <- agent.Event{Type: agent.EventResult, Text: "ok", Session: session}
-		<-r.done
+		r.emit(agent.Event{Type: agent.EventInit, Session: session})
+		r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + prompt})
+		r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: session})
 	}()
 	return r, nil
 }
@@ -101,14 +102,30 @@ func (f fakeAgent) Resume(ctx context.Context, env environment.Environment, def 
 type fakeRun struct {
 	events  chan agent.Event
 	decided chan agent.PermissionDecision
-	once    sync.Once
 	done    chan struct{}
+
+	mu     sync.Mutex
+	closed bool
+}
+
+func newFakeRun() *fakeRun {
+	return &fakeRun{events: make(chan agent.Event, 16), decided: make(chan agent.PermissionDecision, 1), done: make(chan struct{})}
+}
+
+// emit sends unless the run was stopped; sends and Stop are serialized by mu.
+func (r *fakeRun) emit(ev agent.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	r.events <- ev
 }
 
 func (r *fakeRun) Events() <-chan agent.Event { return r.events }
 func (r *fakeRun) Send(ctx context.Context, text string) error {
-	r.events <- agent.Event{Type: agent.EventText, Text: "echo:" + text}
-	r.events <- agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1"}
+	r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + text})
+	r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1"})
 	return nil
 }
 func (r *fakeRun) Decide(ctx context.Context, d agent.PermissionDecision) error {
@@ -116,7 +133,13 @@ func (r *fakeRun) Decide(ctx context.Context, d agent.PermissionDecision) error 
 	return nil
 }
 func (r *fakeRun) Stop() error {
-	r.once.Do(func() { close(r.done); close(r.events) })
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.closed {
+		r.closed = true
+		close(r.done)
+		close(r.events)
+	}
 	return nil
 }
 
@@ -204,6 +227,11 @@ func TestTwoSurfacesOneTransport(t *testing.T) {
 	tr.say(th, "again")
 	tr.waitFor(t, th, "resuming session")
 	tr.waitFor(t, th, "echo:again")
+
+	// Plain text on a fresh thread starts a task with the default agent.
+	th2 := transport.ThreadID("C-dev/2.0")
+	tr.say(th2, "just do the thing")
+	tr.waitFor(t, th2, "started with agent *coder*")
 }
 
 func firstTask(t *testing.T, st store.Store) executor.TaskID {

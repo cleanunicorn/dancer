@@ -7,7 +7,7 @@ prompts back as buttons, and keeps every event in SQLite so sessions survive
 restarts.
 
 ```
-@dancer run coder add retries to the HTTP client and run the tests
+@dancer add retries to the HTTP client and run the tests
   ▶️ task `a1b2c3d4` started with agent *coder* (local)
   🔐 Bash wants to run: go test ./...        [Allow] [Deny]
   Added exponential backoff in client.go; 12 tests pass.
@@ -36,8 +36,8 @@ Design, decisions and progress: [PLAN.md](PLAN.md).
 
 | message                      | effect                                      |
 |------------------------------|---------------------------------------------|
-| `run <agent> <prompt>`       | start a task (thread opens under your message) |
-| `run <prompt>`               | same, with the default agent                |
+| `@dancer <prompt>`           | start a task with the default agent (replies in a thread under your message) |
+| `run <agent> <prompt>`       | start a task with a specific agent          |
 | reply in the thread          | follow-up to that task (resumes if idle)    |
 | `status` / `cancel` / `agents` / `help` | what they say                     |
 

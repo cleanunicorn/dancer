@@ -233,6 +233,11 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 		}
 	}
 	st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
+	if errors.Is(err, store.ErrNotFound) && c.DefaultDefinition != "" {
+		// A fresh thread with plain text: start a task with the default agent.
+		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: c.DefaultDefinition, Prompt: it.Text})
+		return
+	}
 	if err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no task on this thread — say `help`"}, s)
 		return
