@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -327,4 +329,41 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func TestFilePathRE(t *testing.T) {
+	text := "Screenshots: `/tmp/settings-top.png` and ![mid](out/mid.jpeg). Also /etc/passwd, shot.webp, and notafile.png."
+	var got []string
+	for _, m := range filePathRE.FindAllStringSubmatch(text, -1) {
+		got = append(got, m[1])
+	}
+	want := []string{"/tmp/settings-top.png", "out/mid.jpeg", "shot.webp", "notafile.png"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("paths = %v, want %v", got, want)
+	}
+}
+
+func TestAttachFilesFromEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "out"), 0o755)
+	os.WriteFile(filepath.Join(dir, "out", "shot.png"), []byte("PNGDATA"), 0o644)
+	abs := filepath.Join(dir, "report.pdf")
+	os.WriteFile(abs, []byte("PDFDATA"), 0o644)
+
+	ex := New(map[agent.Kind]agent.Agent{"proc": procAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
+	sink := &recSink{}
+	// procAgent echoes the shell output as a tool result; its result text is
+	// fixed, so attach through a text event via Send is not available — use
+	// attachFiles directly against a real local environment.
+	env, _ := envlocal.Factory{}.New(environment.Spec{Workdir: dir})
+	sent := map[string]bool{}
+	files := ex.attachFiles(context.Background(), env, "Done: out/shot.png and "+abs+" plus missing.png", sent)
+	if len(files) != 2 || files[0].Name != "shot.png" || string(files[0].Data) != "PNGDATA" || files[1].Name != "report.pdf" {
+		t.Fatalf("files = %+v", files)
+	}
+	// Same paths again are not re-sent.
+	if again := ex.attachFiles(context.Background(), env, "see out/shot.png", sent); len(again) != 0 {
+		t.Fatalf("re-sent %+v", again)
+	}
+	_ = sink
 }

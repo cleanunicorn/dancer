@@ -7,6 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"path"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +33,10 @@ type Executor struct {
 	// waits for in-flight tool calls to finish before stopping the agent.
 	// Zero stops immediately. Cancel() always stops immediately.
 	DrainTimeout time.Duration
+	// MaxFileBytes caps a single attachment pulled from the environment
+	// (default 20 MiB); MaxFilesPerEvent caps attachments per message (default 10).
+	MaxFileBytes     int64
+	MaxFilesPerEvent int
 
 	mu      sync.Mutex
 	running map[executor.TaskID]*live
@@ -102,7 +110,11 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 	defer idle.Stop()
 
 	inflight := map[string]bool{} // tool_use ids without a tool_result yet
+	sent := map[string]bool{}     // attachments already delivered this run
 	handle := func(ev agent.Event) {
+		if (ev.Type == agent.EventText && !ev.Partial) || ev.Type == agent.EventResult {
+			ev.Files = e.attachFiles(ctx, env, ev.Text, sent)
+		}
 		switch ev.Type {
 		case agent.EventToolUse:
 			inflight[ev.ToolID] = true
@@ -166,6 +178,45 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 }
 
 func events(run agent.Run) <-chan agent.Event { return run.Events() }
+
+// filePathRE finds file paths with a shareable extension in agent text:
+// absolute (/tmp/shot.png), relative with a directory (out/report.pdf) or
+// bare (shot.png). Surrounding markdown/backticks are tolerated.
+var filePathRE = regexp.MustCompile(`(?i)(?:^|[\s` + "`" + `("'\[<])((?:/|\./|~/)?(?:[\w.@-]+/)*[\w.@-]+\.(?:png|jpe?g|gif|webp|svg|pdf|mp4|webm|mov|txt|md|csv|json|log|html?|zip|tar\.gz|diff|patch))(?:[\s` + "`" + `)"'\]>.,;:]|$)`)
+
+// attachFiles pulls files the agent mentioned out of its environment.
+func (e *Executor) attachFiles(ctx context.Context, env environment.Environment, text string, sent map[string]bool) []agent.File {
+	if text == "" {
+		return nil
+	}
+	maxBytes := e.MaxFileBytes
+	if maxBytes <= 0 {
+		maxBytes = 20 << 20
+	}
+	maxFiles := e.MaxFilesPerEvent
+	if maxFiles <= 0 {
+		maxFiles = 10
+	}
+	var out []agent.File
+	for _, m := range filePathRE.FindAllStringSubmatch(text, -1) {
+		p := m[1]
+		if sent[p] || len(out) >= maxFiles {
+			continue
+		}
+		sent[p] = true
+		r, err := env.CopyOut(ctx, p)
+		if err != nil {
+			continue // not a real file; the agent was just talking about it
+		}
+		data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+		r.Close()
+		if err != nil || len(data) == 0 || int64(len(data)) > maxBytes {
+			continue
+		}
+		out = append(out, agent.File{Name: path.Base(strings.TrimRight(p, "/")), Path: p, Data: data})
+	}
+	return out
+}
 
 func (e *Executor) relayPermission(ctx context.Context, id executor.TaskID, ev agent.Event, run agent.Run, sink executor.Sink) {
 	d, err := sink.AwaitDecision(ctx, id, ev)

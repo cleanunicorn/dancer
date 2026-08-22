@@ -7,6 +7,7 @@
 package slack
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -190,8 +191,23 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		return err
 	}
 	for _, chunk := range chunks(msg.Text, 3900) {
+		if chunk == "" {
+			continue
+		}
 		if _, _, err := c.api.PostMessageContext(ctx, chID, append(opts, slack.MsgOptionText(chunk, false))...); err != nil {
 			return err
+		}
+	}
+	for _, f := range msg.Files {
+		_, err := c.api.UploadFileContext(ctx, slack.UploadFileParameters{
+			Reader: bytes.NewReader(f.Data), FileSize: len(f.Data), Filename: f.Name, Title: f.Name,
+			Channel: chID, ThreadTimestamp: ts,
+		})
+		if err != nil {
+			c.log.Warn("slack file upload failed (needs files:write scope?)", "file", f.Name, "err", err)
+			if _, _, perr := c.api.PostMessageContext(ctx, chID, append(opts, slack.MsgOptionText(fmt.Sprintf("⚠️ could not upload `%s`: %v", f.Name, err), false))...); perr != nil {
+				return perr
+			}
 		}
 	}
 	return nil

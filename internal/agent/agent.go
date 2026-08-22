@@ -71,8 +71,16 @@ type Event struct {
 	ParentID  string     // non-empty when emitted by a sub-agent
 	Partial   bool       // EventText: true for streaming deltas
 	Questions []Question // EventQuestion
+	Files     []File     // files the agent referred to, fetched from its environment
 	Cost      float64
 	Raw       []byte // vendor message, kept for the event log
+}
+
+// File is an attachment pulled out of the agent's environment.
+type File struct {
+	Name string // base name
+	Path string // path as the agent wrote it
+	Data []byte `json:"-"` // contents; not written to the event log
 }
 
 // Question is one question an agent asks the human.

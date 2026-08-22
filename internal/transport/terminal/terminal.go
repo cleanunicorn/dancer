@@ -74,7 +74,12 @@ func (c *Transport) Run(ctx context.Context, inbox chan<- transport.Inbound) err
 func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	fmt.Fprintln(c.Out, msg.Text)
+	if msg.Text != "" {
+		fmt.Fprintln(c.Out, msg.Text)
+	}
+	for _, f := range msg.Files {
+		fmt.Fprintf(c.Out, "📎 %s (%d bytes)\n", f.Name, len(f.Data))
+	}
 	if msg.Prompt != nil {
 		c.prompt = msg.Prompt
 		switch {

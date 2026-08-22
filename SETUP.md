@@ -121,6 +121,15 @@ user so it finds your Claude Code login and ssh/docker config. Edit
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
 
+## Files from the agent
+
+When the agent mentions a file path in its reply (`/tmp/settings-top.png`,
+`out/report.pdf`) and the file exists in its environment, dancer uploads it
+into the thread — images and PDFs show inline. Agents are told this in their
+system prompt, so "send me a screenshot" works. Up to 10 files per message,
+20 MiB each. Requires the `files:write` bot scope (in the manifest; if you
+created the app before it was added, add the scope and reinstall the app).
+
 ## Restarting dancer
 
 `make service-restart` (or Ctrl-C / `systemctl restart dancer`) is safe while

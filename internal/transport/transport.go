@@ -33,6 +33,13 @@ type Outbound struct {
 	Thread ThreadID
 	Text   string
 	Prompt *Prompt // non-nil: render as a question with buttons/choices
+	Files  []File  // attachments uploaded after the text
+}
+
+// File is an attachment.
+type File struct {
+	Name string
+	Data []byte
 }
 
 // Prompt asks the human for a decision.

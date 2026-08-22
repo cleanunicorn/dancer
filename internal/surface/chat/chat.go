@@ -136,10 +136,14 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 	default:
 		return nil
 	}
-	if text == "" {
+	var files []transport.File
+	for _, f := range a.Files {
+		files = append(files, transport.File{Name: f.Name, Data: f.Data})
+	}
+	if text == "" && len(files) == 0 {
 		return nil
 	}
-	return []transport.Outbound{{Thread: ev.Thread, Text: text}}
+	return []transport.Outbound{{Thread: ev.Thread, Text: text, Files: files}}
 }
 
 // questionText renders a question with its numbered options.

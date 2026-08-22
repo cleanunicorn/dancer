@@ -37,6 +37,12 @@ func (a *Agent) Resume(ctx context.Context, env environment.Environment, def age
 	return a.start(ctx, env, def, session, prompt)
 }
 
+// shareFilesHint is appended to every system prompt so agents know how
+// attachments reach the human.
+const shareFilesHint = "You are operated through a chat channel (e.g. Slack). The human cannot open files on this machine. " +
+	"To show them a file you produced (screenshot, report, diagram), write its absolute path on its own in your reply, e.g. `/tmp/settings-top.png`; " +
+	"dancer uploads every mentioned path that exists. Images and PDFs render inline in the chat."
+
 // args builds the CLI argument list for a definition.
 func args(def agent.Definition, session string) ([]string, error) {
 	out := []string{
@@ -54,9 +60,7 @@ func args(def agent.Definition, session string) ([]string, error) {
 	if def.Model != "" {
 		out = append(out, "--model", def.Model)
 	}
-	if def.SystemPrompt != "" {
-		out = append(out, "--append-system-prompt", def.SystemPrompt)
-	}
+	out = append(out, "--append-system-prompt", strings.TrimSpace(shareFilesHint+"\n\n"+def.SystemPrompt))
 	if len(def.AllowedTools) > 0 {
 		out = append(out, "--allowedTools", strings.Join(def.AllowedTools, ","))
 	}

@@ -4,3 +4,4 @@
 *.db-journal
 *.db-wal
 .env
+/.claude/worktrees/
