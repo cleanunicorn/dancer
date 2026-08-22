@@ -5,13 +5,14 @@
 Description=dancer — periodic check for new commits on origin/main
 
 [Timer]
-# First check shortly after boot, then every interval.
+# Monotonic, not OnCalendar=: check shortly after every boot, then every interval.
+# This is also what covers downtime — the machine comes back, OnBootSec fires, and
+# whatever landed on the branch meanwhile is picked up on that first tick.
+# (Persistent= would be inert here: it only has an effect on OnCalendar= timers.)
 OnBootSec=2min
 OnUnitActiveSec=__INTERVAL__
 # Spread the load off exact minute boundaries.
 RandomizedDelaySec=30
-# If the machine was off when a tick was due, run once on the next boot.
-Persistent=true
 Unit=dancer-update.service
 
 [Install]

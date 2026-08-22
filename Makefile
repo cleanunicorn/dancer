@@ -115,6 +115,7 @@ service-logs: ## Follow service logs
 
 update-install: ## Poll REPO for new commits every INTERVAL=$(INTERVAL), rebuild, restart (SRC=$(SRC))
 	@test -n "$(GO_BIN)" || { echo "go not found on PATH; pass GO_BIN=/path/to/go"; exit 1; }
+	@test -n "$(REPO)" || { echo "no git remote 'origin' here; pass REPO=https://github.com/you/dancer"; exit 1; }
 	sudo install -d $(dir $(UPDATER))
 	sudo install -m 0755 scripts/dancer-update.sh $(UPDATER)
 	sed -e 's|__REPO__|$(REPO)|g' -e 's|__BRANCH__|$(BRANCH)|g' -e 's|__SRC__|$(SRC)|g' \
@@ -125,14 +126,15 @@ update-install: ## Poll REPO for new commits every INTERVAL=$(INTERVAL), rebuild
 	sudo systemctl enable --now dancer-update.timer
 	@$(MAKE) --no-print-directory update-status
 
-update-uninstall: ## Stop the timer and remove the updater (leaves SRC and the binary)
+update-uninstall: ## Stop the timer and remove the updater (leaves SRC, state and the binary)
 	-sudo systemctl disable --now dancer-update.timer
 	-sudo rm -f $(UPDATE_UNIT) $(UPDATE_TIMER) $(UPDATER)
 	sudo systemctl daemon-reload
 
 update-now: ## Run one update immediately instead of waiting for the timer
-	sudo systemctl start dancer-update.service
-	@journalctl -u dancer-update.service -n 20 --no-pager
+	@sudo systemctl start dancer-update.service; rc=$$?; \
+		journalctl -u dancer-update.service -n 30 --no-pager; \
+		exit $$rc
 
 update-status: ## Show when the update timer last ran and next fires
 	systemctl list-timers dancer-update.timer --no-pager

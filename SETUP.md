@@ -150,8 +150,8 @@ make update-logs
 This installs two more system units and a copy of `scripts/dancer-update.sh`:
 
 - `dancer-update.timer` — fires 2 minutes after boot, then every `INTERVAL`
-  (default `5min`). `Persistent=true`, so a tick missed while the machine was
-  off runs once on the next boot.
+  (default `5min`). The `OnBootSec` tick is what covers downtime: the machine
+  comes back and picks up whatever landed on the branch meanwhile.
 - `dancer-update.service` — a oneshot that does the work, as root.
 
 Each run: `git fetch` into a **deploy checkout** at `SRC` (default
@@ -162,9 +162,21 @@ replace `/usr/local/bin/dancer` with an atomic rename, and
 `systemctl restart dancer`.
 
 The deploy checkout is root-owned and separate from any checkout you edit in —
-it is reset on every run, so never work in it. If the build or the smoke test
-fails, the old binary keeps running and the failure is in
-`journalctl -u dancer-update.service`.
+it is reset on every run, so never work in it.
+
+Three things can go wrong, and each has a defined outcome:
+
+| failure | what happens |
+|---|---|
+| `main` does not compile | old binary keeps running, nothing restarts, exit 1 in the journal; retried every tick and deploys itself once `main` compiles again |
+| new binary fails `dancer -h` | same — it never reaches `/usr/local/bin/dancer` |
+| new binary installs but the service will not stay up | the previous binary is restored from `$BIN.prev`, the service is restarted, and that sha is recorded in `deployed.sha.failed` and skipped until the branch moves |
+
+That last case is why the deployed sha lives in `/var/lib/dancer/deployed.sha`
+and is written *after* the restart is confirmed healthy, not before: a deploy
+that never came up is not a deploy. `DANCER_UPDATE_GRACE` (default 10s) is how
+long the service must stay up to count, and `DANCER_UPDATE_FORCE=1` retries a
+sha that was skipped.
 
 Restarts go through the same drain path as everything else (see *Restarting
 dancer* below): live threads are notified, in-flight tool calls get
