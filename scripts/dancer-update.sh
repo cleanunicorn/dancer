@@ -28,8 +28,29 @@ POISON="$STATE.failed"
 # How long the restarted service must stay up before the deploy counts as good.
 GRACE=${DANCER_UPDATE_GRACE:-10}
 FORCE=${DANCER_UPDATE_FORCE:-}
+# Also act as a watchdog: start the service if it is enabled but not running.
+# 0 disables that, e.g. while you keep it stopped for maintenance.
+WATCHDOG=${DANCER_UPDATE_WATCHDOG:-1}
 
 log() { printf 'dancer-update: %s\n' "$*"; }
+
+# The sha check alone cannot notice that dancer is down: with no new commit every
+# tick reports "up to date" and moves on. That is how a stray `pkill` kept the box
+# down for 23 minutes once. Restart=always covers the common case; this covers a
+# unit sitting in `failed` after tripping systemd's start rate limit, which
+# Restart= cannot get out of on its own.
+ensure_running() {
+	[ "$WATCHDOG" = 1 ] || return 0
+	systemctl is-enabled --quiet "$SERVICE" 2>/dev/null || return 0
+	systemctl is-active --quiet "$SERVICE" && return 0
+	log "$SERVICE is enabled but not running — starting it"
+	systemctl reset-failed "$SERVICE" 2>/dev/null || true
+	if systemctl start "$SERVICE"; then
+		log "$SERVICE started"
+	else
+		log "WARNING: could not start $SERVICE"
+	fi
+}
 fail() { printf 'dancer-update: ERROR: %s\n' "$*" >&2; exit 1; }
 
 # One updater at a time: a slow build must not overlap the next timer tick.
@@ -59,12 +80,14 @@ deployed_sha=$(cat "$STATE" 2>/dev/null || echo none)
 
 if [ "$deployed_sha" = "$remote_sha" ] && [ -x "$BIN" ] && [ -z "$FORCE" ]; then
 	log "up to date at ${remote_sha:0:12}"
+	ensure_running
 	exit 0
 fi
 
 if [ "$(cat "$POISON" 2>/dev/null || true)" = "$remote_sha" ] && [ -z "$FORCE" ]; then
 	log "${remote_sha:0:12} already failed to stay up; waiting for a new commit on $BRANCH"
 	log "(DANCER_UPDATE_FORCE=1 retries it anyway)"
+	ensure_running
 	exit 0
 fi
 
