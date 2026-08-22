@@ -25,9 +25,13 @@ binary = "claude"
 [decider]
 kind = "off"                # off | claude
 model = "haiku"
-uses = ["resume"]           # question kinds it may answer; [] = never asked
+uses = ["resume"]           # question kinds it may answer: resume, permission; [] = never asked
 timeout = "15s"
 max_per_task = 20           # questions one task may cost before the rules take over
+# Ceiling for permission decisions: tool calls the decider may approve without
+# asking you. Same syntax as a definition's allowed_tools. Empty (the default)
+# means every permission prompt still reaches you, whatever the decider thinks.
+auto_allow = []             # e.g. ["Read", "Glob", "Grep", "Bash(go test:*)"]
 
 [slack]
 app_token = "xapp-..."      # App-level token with connections:write

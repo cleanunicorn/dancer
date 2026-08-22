@@ -95,8 +95,13 @@ type Decider struct {
 	Model string `toml:"model"` // default "haiku"
 	// Uses lists the question kinds the decider may answer ("resume").
 	// Empty means none, so switching it on is deliberate per kind.
-	Uses       []string `toml:"uses"`
-	Timeout    Duration `toml:"timeout"`
+	Uses    []string `toml:"uses"`
+	Timeout Duration `toml:"timeout"`
+	// AutoAllow is the ceiling for permission decisions: tool patterns the
+	// decider may approve without asking a human, in the same syntax as a
+	// definition's allowed_tools ("Read", "Bash(go test:*)"). Empty means
+	// every permission prompt still reaches a person.
+	AutoAllow  []string `toml:"auto_allow"`
 	MaxPerTask int      `toml:"max_per_task"`
 }
 
@@ -269,8 +274,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("config: unknown decider kind %q (off|claude)", c.Decider.Kind)
 	}
 	for _, u := range c.Decider.Uses {
-		if u != "resume" {
-			return fmt.Errorf("config: decider cannot answer %q yet (resume)", u)
+		if u != "resume" && u != "permission" {
+			return fmt.Errorf("config: decider cannot answer %q yet (resume|permission)", u)
 		}
 	}
 	seen := map[string]bool{}

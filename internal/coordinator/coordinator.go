@@ -90,6 +90,11 @@ type Coordinator struct {
 	// MaxDecisionsPerTask caps how many questions one task may cost before
 	// it falls back to the rules for good (default 20).
 	MaxDecisionsPerTask int
+	// AutoAllow is the ceiling for permission decisions: tool patterns
+	// ("Read", "Bash(go test:*)") a decider may approve without a human.
+	// Empty — the default — means every prompt reaches a person, whatever
+	// the decider thinks.
+	AutoAllow []string
 
 	drives sync.WaitGroup
 
@@ -97,6 +102,7 @@ type Coordinator struct {
 
 	mu        sync.Mutex
 	decisions map[executor.TaskID]int                   // questions asked about a task
+	allowed   map[executor.TaskID]int                   // tool calls auto-allowed for a task
 	verdicts  map[executor.TaskID]decider.Verdict       // last verdict, for `status`
 	threads   map[transport.ThreadID]executor.TaskID    // live task per thread
 	owner     map[executor.TaskID]string                // task -> surface that started it
@@ -114,6 +120,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		Store: st, Executor: ex, Transports: transports, Surfaces: surfaces, Log: log,
 		transports: map[string]transport.Transport{},
 		decisions:  map[executor.TaskID]int{},
+		allowed:    map[executor.TaskID]int{},
 		verdicts:   map[executor.TaskID]decider.Verdict{},
 		threads:    map[transport.ThreadID]executor.TaskID{},
 		owner:      map[executor.TaskID]string{},
@@ -717,6 +724,11 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {
 	if ev.Type == agent.EventQuestion {
 		return s.awaitAnswers(ctx, id, ev)
+	}
+	st0 := s.snapshot()
+	if v, ok := s.c.decidePermission(ctx, st0, ev); ok {
+		s.c.noteAutoAllowed(ctx, st0, ev, v)
+		return agent.PermissionDecision{ToolID: ev.ToolID, Allow: true, Reason: "decider: " + v.Reason}, nil
 	}
 	base := string(id) + ":" + ev.ToolID
 	ch := make(chan transport.Decision, 1)

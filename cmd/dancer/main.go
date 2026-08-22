@@ -146,6 +146,7 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		c.DeciderUses = cfg.Decider.Uses
 		c.DeciderTimeout = cfg.Decider.Timeout.Duration
 		c.MaxDecisionsPerTask = cfg.Decider.MaxPerTask
+		c.AutoAllow = cfg.Decider.AutoAllow
 	}
 	c.AutoResume = cfg.Server.AutoResume == nil || *cfg.Server.AutoResume
 	c.ResumePrompt = cfg.Server.ResumePrompt

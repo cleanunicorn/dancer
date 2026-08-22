@@ -38,7 +38,17 @@ func checkDecider(cfg *config.Config) check {
 	if len(cfg.Decider.Uses) == 0 {
 		return check{"decider", false, fmt.Sprintf("kind %q but uses = [] — it is never asked anything", cfg.Decider.Kind)}
 	}
-	return check{"decider", true, fmt.Sprintf("%s/%s for %v (timeout %s)", cfg.Decider.Kind, cfg.Decider.Model, cfg.Decider.Uses, cfg.Decider.Timeout.Duration)}
+	info := fmt.Sprintf("%s/%s for %v (timeout %s)", cfg.Decider.Kind, cfg.Decider.Model, cfg.Decider.Uses, cfg.Decider.Timeout.Duration)
+	for _, u := range cfg.Decider.Uses {
+		if u != "permission" {
+			continue
+		}
+		if len(cfg.Decider.AutoAllow) == 0 {
+			return check{"decider", false, info + "; permission is listed but auto_allow is empty, so every prompt still asks"}
+		}
+		info += fmt.Sprintf(", may allow %v", cfg.Decider.AutoAllow)
+	}
+	return check{"decider", true, info}
 }
 
 func runDoctor(cfgPath string) error {

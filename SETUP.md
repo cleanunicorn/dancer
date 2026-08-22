@@ -191,9 +191,10 @@ word the resume in the task's own terms. See [DECIDER.md](DECIDER.md).
 [decider]
 kind = "claude"       # off (default) | claude
 model = "haiku"
-uses = ["resume"]     # question kinds it may answer; [] = never asked
+uses = ["resume", "permission"]   # question kinds it may answer; [] = never asked
 timeout = "15s"
 max_per_task = 20
+auto_allow = ["Read", "Glob", "Grep", "Bash(go test:*)"]   # see "permission" below
 ```
 
 On a restart it judges each cut-short task from the tail of its own thread —
@@ -207,9 +208,25 @@ files it changed, the tool call that was in flight — and picks one of four:
 | wait | `▶️ dancer is back — <reason>; reply in this thread to continue` |
 | abandon | `⏹️ leaving this task: <reason>` — no restart offers it again, a reply still can |
 
-It can only ever narrow what the rules already allow: `auto_resume_within`,
-`max_auto_resumes` and a definition's `allowed_tools` are applied before it is
-asked, and an answer outside the offered options is discarded. If it fails,
+With `"permission"` in `uses` it also triages approval prompts, so routine
+tool calls stop waking you. A prompt means the call is outside what the agent
+definition pre-approved, so the decider needs permission you wrote down
+yourself: `auto_allow` (same syntax as `allowed_tools` — `Read`,
+`Bash(go test:*)`, `Bash(*)`). A call outside that list goes straight to the
+buttons without asking the decider anything; a call inside it may be approved,
+and the thread is told:
+
+```
+🔓 allowed automatically: `Bash go test ./...` — Run all tests; explicitly requested.
+_say `cancel` to stop this task_
+```
+
+`auto_allow` is empty by default, so nothing is approved without you until you
+list something.
+
+The decider can only ever narrow what the rules already allow:
+`auto_resume_within`, `max_auto_resumes` and `auto_allow` are applied before it
+is asked, and an answer outside the offered options is discarded. If it fails,
 times out or is not configured, dancer behaves exactly as it does without one.
 Every verdict, with its reason, is in the event log and in `status`.
 
