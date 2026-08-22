@@ -41,11 +41,11 @@ var toolPresets = []struct {
 	{"None", "ask for every tool", nil},
 }
 
-// threadFree reports whether a flow may start on th, telling the thread
-// why not otherwise.
-func (c *Coordinator) threadFree(ctx context.Context, s surface.Surface, th transport.ThreadID, what string) bool {
+// threadFree reports whether a flow of the given kind may start on th,
+// telling the thread why not otherwise.
+func (c *Coordinator) threadFree(ctx context.Context, s surface.Surface, th transport.ThreadID, kind string) bool {
 	if _, busy := c.lookup(th); busy {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("a task is running on this thread — start `%s` in a new thread", what)}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("a task is running on this thread — start `%s` in a new thread", flowLabel(kind))}, s)
 		return false
 	}
 	if c.wizardOpen(th) {
@@ -57,7 +57,7 @@ func (c *Coordinator) threadFree(ctx context.Context, s surface.Surface, th tran
 
 // addAgent starts the flow on a thread.
 func (c *Coordinator) addAgent(ctx context.Context, s surface.Surface, it surface.AddAgent) {
-	if !c.threadFree(ctx, s, it.Thread, "agent add") {
+	if !c.threadFree(ctx, s, it.Thread, flowAddAgent) {
 		return
 	}
 	c.startWizard(ctx, s, it.Thread, nil)
@@ -66,7 +66,7 @@ func (c *Coordinator) addAgent(ctx context.Context, s surface.Surface, it surfac
 // editAgent changes one definition field at a time until the user saves.
 // Tasks already running keep the settings they started with.
 func (c *Coordinator) editAgent(ctx context.Context, s surface.Surface, it surface.EditAgent) {
-	if !c.threadFree(ctx, s, it.Thread, "agent edit") {
+	if !c.threadFree(ctx, s, it.Thread, flowEditAgent) {
 		return
 	}
 	c.startFlow(ctx, s, it.Thread, flowEditAgent, nil, func(ctx context.Context, w *wizard) (string, error) {
@@ -97,7 +97,7 @@ func (c *Coordinator) editAgent(ctx context.Context, s surface.Surface, it surfa
 // deleteAgent removes a definition after a confirmation. A definition that
 // is the global or a channel default is refused: point the default elsewhere first.
 func (c *Coordinator) deleteAgent(ctx context.Context, s surface.Surface, it surface.DeleteAgent) {
-	if !c.threadFree(ctx, s, it.Thread, "agent delete") {
+	if !c.threadFree(ctx, s, it.Thread, flowDeleteAgent) {
 		return
 	}
 	c.startFlow(ctx, s, it.Thread, flowDeleteAgent, nil, func(ctx context.Context, w *wizard) (string, error) {
@@ -177,6 +177,9 @@ func (c *Coordinator) resumeFlows(ctx context.Context) {
 		return
 	}
 	for _, f := range flows {
+		if f.Kind == "add_agent" { // saved by versions before the `agent` namespace
+			f.Kind = flowAddAgent
+		}
 		var s surface.Surface
 		for _, cand := range c.Surfaces {
 			if cand.Name() == f.Surface {
@@ -417,23 +420,17 @@ func (w *wizard) pickAgent(ctx context.Context, name, header, text string) (agen
 		}
 		q.Options = append(q.Options, agent.Option{Label: d.Name, Description: desc})
 	}
-	name, err = w.askUntil(ctx, q, func(a string) (string, error) {
+	var picked agent.Definition
+	_, err = w.askUntil(ctx, q, func(a string) (string, error) {
 		for _, d := range defs {
 			if strings.EqualFold(a, d.Name) {
+				picked = d
 				return d.Name, nil
 			}
 		}
 		return "", fmt.Errorf("no agent named %q", a)
 	})
-	if err != nil {
-		return agent.Definition{}, err
-	}
-	for _, d := range defs {
-		if d.Name == name {
-			return d, nil
-		}
-	}
-	return agent.Definition{}, store.ErrNotFound
+	return picked, err
 }
 
 // confirm asks a yes/no question; yes is the label of the affirmative button.
@@ -579,7 +576,12 @@ func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) erro
 	if err != nil {
 		return err
 	}
-	env := environment.Spec{Kind: environment.Kind(kind), KeyPath: def.Environment.KeyPath, Env: def.Environment.Env}
+	// Settings the questions do not cover (ssh key, container env) only
+	// make sense for the kind they were written for.
+	env := environment.Spec{Kind: environment.Kind(kind)}
+	if env.Kind == def.Environment.Kind {
+		env.KeyPath, env.Env = def.Environment.KeyPath, def.Environment.Env
+	}
 	switch env.Kind {
 	case environment.KindLocal:
 		env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task." + pathHint,
@@ -714,6 +716,17 @@ func describeEnvironment(d agent.Definition) string {
 		fmt.Fprintf(&b, " · workdir `%s`", d.Environment.Workdir)
 	} else {
 		b.WriteString(" · fresh directory per task")
+	}
+	if d.Environment.KeyPath != "" {
+		fmt.Fprintf(&b, " · key `%s`", d.Environment.KeyPath)
+	}
+	if len(d.Environment.Env) > 0 {
+		keys := make([]string, 0, len(d.Environment.Env))
+		for k := range d.Environment.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fmt.Fprintf(&b, " · env %s", strings.Join(keys, ", "))
 	}
 	return b.String()
 }

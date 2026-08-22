@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,7 +161,8 @@ kind = "local"
 		t.Fatal(err)
 	}
 
-	// Replace: the old block (with its comment) goes, the rest stays byte for byte.
+	// Replace: the block is rewritten in place, its comment and position
+	// (and so the implicit default) stay, the rest stays byte for byte.
 	d := Definition{Name: "reviewer", Kind: "claude", Model: "haiku", PermissionMode: "manual"}
 	d.Environment.Kind = "local"
 	if err := ReplaceDefinition(path, d); err != nil {
@@ -168,37 +170,42 @@ kind = "local"
 	}
 	b, _ := os.ReadFile(path)
 	got := string(b)
-	head := orig[:strings.Index(orig, "\n# added from chat")]
-	if !strings.HasPrefix(got, head) {
-		t.Fatalf("content before the replaced block changed:\n%s", got)
+	head := orig[:strings.Index(orig, "[[definitions]]\nname = \"reviewer\"")]
+	tail := orig[strings.Index(orig, "\n[[definitions]]\nname = 'tester'"):]
+	if !strings.HasPrefix(got, head) || !strings.HasSuffix(got, tail) {
+		t.Fatalf("content around the replaced block changed:\n%s", got)
 	}
-	if strings.Contains(got, "ghcr.io") || strings.Contains(got, "FOO") || strings.Contains(got, "# added from chat") {
-		t.Fatalf("old block survived:\n%s", got)
-	}
-	if !strings.Contains(got, "name = 'tester'") || !strings.Contains(got, "# updated from chat on") {
-		t.Fatalf("rewritten file:\n%s", got)
+	if strings.Contains(got, "ghcr.io") || strings.Contains(got, "FOO") || !strings.Contains(got, "# added from chat") {
+		t.Fatalf("old block survived or its comment was lost:\n%s", got)
 	}
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Definitions) != 3 || cfg.Definitions[2].Name != "reviewer" || cfg.Definitions[2].Model != "haiku" ||
-		cfg.Definitions[2].Environment.Kind != "local" || cfg.Definitions[1].Name != "tester" {
+	if len(cfg.Definitions) != 3 || cfg.Definitions[1].Name != "reviewer" || cfg.Definitions[1].Model != "haiku" ||
+		cfg.Definitions[1].Environment.Kind != "local" || cfg.Definitions[2].Name != "tester" {
 		t.Fatalf("loaded = %+v", cfg.Definitions)
 	}
 
-	// Replace of an unknown name is refused before writing.
-	before, _ := os.ReadFile(path)
-	if err := ReplaceDefinition(path, Definition{Name: "nosuch", Environment: EnvironmentConfig{Kind: "local"}}); err == nil {
-		t.Fatal("unknown definition replaced")
+	// Replace of a name the file lacks appends it.
+	if err := ReplaceDefinition(path, Definition{Name: "extra", Environment: EnvironmentConfig{Kind: "local"}}); err != nil {
+		t.Fatal(err)
 	}
-	// Remove: the global default and an effective channel default are refused;
-	// an overridden [[channels]] block does not count.
-	if err := RemoveDefinition(path, "coder"); err == nil || !strings.Contains(err.Error(), "default_agent") {
+	if cfg, _ := Load(path); len(cfg.Definitions) != 4 || cfg.Definitions[3].Name != "extra" {
+		t.Fatalf("loaded = %+v", cfg.Definitions)
+	}
+	if err := RemoveDefinition(path, "extra"); err != nil {
+		t.Fatal(err)
+	}
+	// Remove: the default agent and an effective channel default are refused;
+	// an overridden [[channels]] block does not count; a missing name is
+	// ErrNoDefinition.
+	before, _ := os.ReadFile(path)
+	if err := RemoveDefinition(path, "coder"); err == nil || !strings.Contains(err.Error(), "default agent") {
 		t.Fatalf("removing the default agent: %v", err)
 	}
-	if err := RemoveDefinition(path, "nosuch"); err == nil {
-		t.Fatal("unknown definition removed")
+	if err := RemoveDefinition(path, "nosuch"); !errors.Is(err, ErrNoDefinition) {
+		t.Fatalf("unknown definition: %v", err)
 	}
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
@@ -212,7 +219,7 @@ kind = "local"
 	}
 	b, _ = os.ReadFile(path)
 	got = string(b)
-	if !strings.HasPrefix(got, head) || strings.Contains(got, "name = \"reviewer\"") || strings.Contains(got, "tester") || strings.Contains(got, "updated from chat") {
+	if !strings.HasPrefix(got, orig[:strings.Index(orig, "\n# added from chat")]) || strings.Contains(got, "name = \"reviewer\"") || strings.Contains(got, "tester") || strings.Contains(got, "added from chat") {
 		t.Fatalf("after removals:\n%s", got)
 	}
 	cfg, err = Load(path)
@@ -224,26 +231,38 @@ kind = "local"
 	}
 }
 
-func TestCutDefinition(t *testing.T) {
+func TestSpliceDefinition(t *testing.T) {
 	src := "[[definitions]]\nname = \"a\"\n[definitions.environment]\nkind = \"local\"\n\n[[definitions]]\nname = \"b\"\n[definitions.environment]\nkind = \"local\"\n[[channels]]\nid = \"C\"\nagent = \"a\"\n"
-	out, ok := cutDefinition([]byte(src), "b")
+	out, ok := spliceDefinition([]byte(src), "b", nil)
 	if !ok || string(out) != "[[definitions]]\nname = \"a\"\n[definitions.environment]\nkind = \"local\"\n[[channels]]\nid = \"C\"\nagent = \"a\"\n" {
 		t.Fatalf("cut b: ok=%v\n%s", ok, out)
 	}
-	out, ok = cutDefinition([]byte(src), "a")
+	out, ok = spliceDefinition([]byte(src), "a", nil)
 	if !ok || !strings.HasPrefix(string(out), "[[definitions]]\nname = \"b\"\n") {
 		t.Fatalf("cut a: ok=%v\n%s", ok, out)
 	}
+	// Replacement keeps the comment above and the blank line after.
+	out, ok = spliceDefinition([]byte("# a\n[[definitions]]\nname = \"a\"\n\n[[definitions]]\nname = \"b\"\n"), "a", []byte("[[definitions]]\nname = \"a\"\nmodel = \"x\"\n"))
+	if !ok || string(out) != "# a\n[[definitions]]\nname = \"a\"\nmodel = \"x\"\n\n[[definitions]]\nname = \"b\"\n" {
+		t.Fatalf("replace a: ok=%v\n%q", ok, out)
+	}
 	// Comments and blank lines above the next block stay with it.
-	out, ok = cutDefinition([]byte("[[definitions]]\nname = \"a\"\n\n# b is next\n[[definitions]]\nname = \"b\"\n"), "a")
+	out, ok = spliceDefinition([]byte("[[definitions]]\nname = \"a\"\n\n# b is next\n[[definitions]]\nname = \"b\"\n"), "a", nil)
 	if !ok || string(out) != "# b is next\n[[definitions]]\nname = \"b\"\n" {
 		t.Fatalf("cut a before a commented block: ok=%v\n%q", ok, out)
 	}
+	// Sub-tables, array sub-tables and lines starting with "[" inside
+	// multi-line strings are part of the block.
+	src = "[[definitions]]\nname = \"a\"\nsystem_prompt = \"\"\"\n[IMPORTANT]\nbe nice\n\"\"\"\n[[definitions.sub_agents.x]]\nname = \"z\"\n[[definitions]]\nname = \"b\"\n"
+	out, ok = spliceDefinition([]byte(src), "a", nil)
+	if !ok || string(out) != "[[definitions]]\nname = \"b\"\n" {
+		t.Fatalf("cut a with string and sub-array: ok=%v\n%q", ok, out)
+	}
 	// A sub-table key named "name" does not identify the block.
-	if _, ok := cutDefinition([]byte("[[definitions]]\nname = \"x\"\n[definitions.sub_agents.y]\nname = \"z\"\n"), "z"); ok {
+	if _, ok := spliceDefinition([]byte("[[definitions]]\nname = \"x\"\n[definitions.sub_agents.y]\nname = \"z\"\n"), "z", nil); ok {
 		t.Fatal("matched a sub-table name")
 	}
-	if _, ok := cutDefinition([]byte("definitions = [{name = \"inline\"}]\n"), "inline"); ok {
+	if _, ok := spliceDefinition([]byte("definitions = [{name = \"inline\"}]\n"), "inline", nil); ok {
 		t.Fatal("matched an inline table")
 	}
 }

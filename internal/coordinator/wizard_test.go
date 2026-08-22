@@ -214,7 +214,7 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	defer cancel()
 	workdir := t.TempDir()
 	for _, d := range []agent.Definition{
-		{Name: "coder", Kind: "fake", Model: "sonnet", PermissionMode: agent.PermissionManual, Environment: environment.Spec{Kind: environment.KindLocal, Workdir: workdir}},
+		{Name: "coder", Kind: "fake", Model: "sonnet", PermissionMode: agent.PermissionManual, Environment: environment.Spec{Kind: environment.KindLocal, Workdir: workdir, Env: map[string]string{"FOO": "1"}}},
 		{Name: "reviewer", Kind: "fake", Model: "opus", PermissionMode: agent.PermissionManual, AllowedTools: []string{"Read"}, Environment: environment.Spec{Kind: environment.KindLocal}},
 		{Name: "tester", Kind: "fake", Model: "haiku", Environment: environment.Spec{Kind: environment.KindLocal}},
 	} {
@@ -297,7 +297,9 @@ func TestEditAndDeleteAgent(t *testing.T) {
 		t.Fatalf("picker = %+v", pick.Prompt)
 	}
 	tr.decide(th2, pick.Prompt.ID, "coder")
-	tr.waitFor(t, th2, "What do you want to change?")
+	if m := tr.waitFor(t, th2, "What do you want to change?"); !strings.Contains(m.Text, "· env FOO") {
+		t.Fatalf("env not shown:\n%s", m.Text)
+	}
 	tr.say(th2, "Environment")
 	tr.waitFor(t, th2, "Where does it run?")
 	tr.say(th2, "docker")
@@ -306,8 +308,8 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	tr.waitFor(t, th2, "Host directory to mount")
 	tr.say(th2, "none")
 	m := waitForNthOut(t, tr, th2, "What do you want to change?", 2)
-	if !strings.Contains(m.Text, "docker · image `ghcr.io/x/claude` · fresh directory per task") {
-		t.Fatalf("menu after environment change:\n%s", m.Text)
+	if !strings.Contains(m.Text, "docker · image `ghcr.io/x/claude` · fresh directory per task") || strings.Contains(m.Text, "env FOO") {
+		t.Fatalf("menu after environment change (env must not carry over to another kind):\n%s", m.Text)
 	}
 	tr.say(th2, "Cancel")
 	tr.waitFor(t, th2, "agent edit cancelled")

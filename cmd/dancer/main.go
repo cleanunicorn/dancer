@@ -147,7 +147,12 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		return config.ReplaceDefinition(cfgPath, config.DefinitionFromAgent(d))
 	}
 	c.DeleteDefinition = func(_ context.Context, name string) error {
-		return config.RemoveDefinition(cfgPath, name)
+		// A definition only the store knows (removed from the file by hand)
+		// has nothing to delete there.
+		if err := config.RemoveDefinition(cfgPath, name); err != nil && !errors.Is(err, config.ErrNoDefinition) {
+			return err
+		}
+		return nil
 	}
 	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions))
 	err = c.Run(ctx)

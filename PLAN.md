@@ -146,3 +146,4 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | Slack wire                             | real workspace, mention in channel              | pass   |
 | graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
+| agent edit / delete from chat          | `go test -race ./internal/config ./internal/coordinator`; terminal run against a temp config: edit rewrites the block in place, delete keeps neighbouring comments, default refused | pass |

@@ -78,6 +78,12 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
 	case "agent", "definition":
 		return s.agentCommand(in, rest), true
+	case "add", "edit", "delete", "remove":
+		// The pre-namespace spelling: point at the new one rather than
+		// sending "add agent" to a Claude session as a prompt.
+		if w, tail := splitWord(rest); strings.EqualFold(w, "agent") && !strings.Contains(tail, " ") {
+			return []surface.Intent{surface.Say{Thread: in.Thread, Text: fmt.Sprintf("`%s agent` is now `agent %s` — %s", strings.ToLower(cmd), strings.ToLower(cmd), agentUsage)}}, true
+		}
 	}
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text}}, true
 }

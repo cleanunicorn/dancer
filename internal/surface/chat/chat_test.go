@@ -44,7 +44,7 @@ func TestHandleCommands(t *testing.T) {
 		{"Agent Update coder", surface.EditAgent{Thread: th, Agent: "coder"}},
 		{"agent delete coder", surface.DeleteAgent{Thread: th, Agent: "coder"}},
 		{"agent rm", surface.DeleteAgent{Thread: th}},
-		{"add agent", surface.FollowUp{Thread: th, Text: "add agent"}},
+		{"add agent config to the readme", surface.FollowUp{Thread: th, Text: "add agent config to the readme"}},
 		{"delete the old files", surface.FollowUp{Thread: th, Text: "delete the old files"}},
 		{"edit main.go", surface.FollowUp{Thread: th, Text: "edit main.go"}},
 	}
@@ -54,7 +54,7 @@ func TestHandleCommands(t *testing.T) {
 			t.Errorf("%q → %+v (ok=%v), want %+v", c.text, got, ok, c.want)
 		}
 	}
-	for _, text := range []string{"default a b", "agent add now", "agent edit coder to use opus", "agent delete coder please", "agent frobnicate", "agent list all"} {
+	for _, text := range []string{"default a b", "agent add now", "agent edit coder to use opus", "agent delete coder please", "agent frobnicate", "agent list all", "add agent", "edit agent coder", "delete agent"} {
 		got, _ := s.Handle(context.Background(), transport.Inbound{Transport: "slack", Thread: th, Text: text})
 		if say, ok := got[0].(surface.Say); !ok || !strings.Contains(say.Text, "usage") {
 			t.Errorf("%q → %+v", text, got)
