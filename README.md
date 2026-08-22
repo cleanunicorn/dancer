@@ -45,6 +45,7 @@ Design, decisions and progress: [PLAN.md](PLAN.md).
 | `agent add`                  | define a new agent question by question; saved to config.toml, usable at once |
 | `agent edit <name>`          | change an agent's model, environment, permissions, tools or system prompt; `agent edit` picks from a list |
 | `agent delete <name>`        | remove an agent after a confirmation (refused while it is a default) |
+| `close`                      | stop the task and end the thread: dancer goes quiet there and marks it ✅ (mention it in the thread to pick it up again) |
 | `status` / `cancel` / `agent list` / `help` | what they say                 |
 
 ## Layout

@@ -39,6 +39,7 @@ const help = "Commands:\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
+	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
 	"• `agent add` — define a new agent, question by question\n" +
 	"• `agent edit <name>` — change an agent's model, environment, permissions, tools or prompt\n" +
@@ -74,6 +75,8 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Status{Thread: in.Thread}}, true
 	case "cancel", "stop":
 		return []surface.Intent{surface.Cancel{Thread: in.Thread}}, true
+	case "close":
+		return []surface.Intent{surface.CloseThread{Thread: in.Thread}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
 	case "agent", "definition":
@@ -112,6 +115,8 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 			return out("❌ task failed")
 		}
 		return nil
+	case surface.EventClosed:
+		return out("✅ thread closed — mention me here to pick it up again")
 	case surface.EventReply:
 		return out(ev.Text)
 	case surface.EventError:

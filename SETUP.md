@@ -92,8 +92,24 @@ When the agent asks a question (Claude Code's `AskUserQuestion`), the thread
 shows the options as buttons; click one, or reply in the thread with your own
 answer. Multi-select questions are answered one option at a time for now. When the agent wants to run
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
-thread to continue the conversation; `status`, `cancel`, `agent list` (or `agents`), `help` work
-anywhere. DMs to the bot work the same way without the mention.
+thread to continue the conversation; `status`, `cancel`, `close`, `agent list`
+(or `agents`), `help` work anywhere. DMs to the bot work the same way without
+the mention.
+
+## Closing a thread
+
+`close` in a thread ends the conversation there: the task running on it is
+cancelled, the thread's first message gets a ✅, and dancer stops following
+the thread — later replies in it are ignored instead of resuming the agent,
+and a restart leaves it alone. Mention the bot in the thread again (or type
+in it on the terminal transport) to reopen it and continue where you left
+off; the agent session is still there.
+
+The ✅ needs the `reactions:write` bot scope (in the manifest; if you created
+the app before it was added, add the scope and reinstall — without it closing
+still works, dancer just logs a warning instead of reacting). dancer never
+deletes messages: closing tidies the channel by ending threads, Slack's own
+history stays intact.
 
 ## Managing agents from chat
 

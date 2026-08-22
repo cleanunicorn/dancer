@@ -63,6 +63,12 @@ type Store interface {
 	ListDefinitions(ctx context.Context) ([]agent.Definition, error)
 	DeleteDefinition(ctx context.Context, name string) error
 
+	// Threads: closing is a property of the thread, not of a task on it,
+	// so it outlives the status transitions of whatever ran there.
+	// SetThreadClosed(.., false) reopens a closed thread.
+	SetThreadClosed(ctx context.Context, thread transport.ThreadID, closed bool) error
+	ClosedThreads(ctx context.Context) ([]transport.ThreadID, error)
+
 	// Flows: one per thread; PutFlow replaces an existing one.
 	PutFlow(ctx context.Context, f FlowState) error
 	ListFlows(ctx context.Context) ([]FlowState, error)
