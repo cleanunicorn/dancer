@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -28,6 +29,8 @@ CREATE TABLE IF NOT EXISTS log (
 	payload BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS log_task ON log(task, seq);
+CREATE INDEX IF NOT EXISTS log_thread ON log(thread, seq);
+CREATE INDEX IF NOT EXISTS log_task_kind ON log(task, kind, seq);
 
 CREATE TABLE IF NOT EXISTS tasks (
 	id         TEXT PRIMARY KEY,
@@ -139,18 +142,76 @@ func (s *Store) Replay(ctx context.Context, after int64, fn func(store.Record) e
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var r store.Record
-		var at, task, thread string
-		if err := rows.Scan(&r.Seq, &at, &task, &thread, &r.Kind, &r.Payload); err != nil {
+		r, err := scanRecord(rows)
+		if err != nil {
 			return err
 		}
-		r.At, _ = time.Parse(time.RFC3339Nano, at)
-		r.Task, r.Thread = executor.TaskID(task), transport.ThreadID(thread)
 		if err := fn(r); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
+}
+
+// scanRecord reads one row of the log's SELECT column list.
+func scanRecord(rows *sql.Rows) (store.Record, error) {
+	var r store.Record
+	var at, task, thread string
+	if err := rows.Scan(&r.Seq, &at, &task, &thread, &r.Kind, &r.Payload); err != nil {
+		return r, err
+	}
+	r.At, _ = time.Parse(time.RFC3339Nano, at)
+	r.Task, r.Thread = executor.TaskID(task), transport.ThreadID(thread)
+	return r, nil
+}
+
+// tail runs a newest-first query and returns its rows oldest-first.
+func (s *Store) tail(ctx context.Context, query string, args ...any) ([]store.Record, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Record
+	for rows.Next() {
+		r, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	slices.Reverse(out)
+	return out, nil
+}
+
+func (s *Store) ThreadRecords(ctx context.Context, thread transport.ThreadID, limit int) ([]store.Record, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.tail(ctx,
+		`SELECT seq, at, task, thread, kind, payload FROM log WHERE thread = ? ORDER BY seq DESC LIMIT ?`,
+		string(thread), limit)
+}
+
+func (s *Store) ThreadRecordsOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]store.Record, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.tail(ctx, // walks log_thread(thread, seq) newest-first until limit of the kind are found
+		`SELECT seq, at, task, thread, kind, payload FROM log WHERE thread = ? AND kind = ? ORDER BY seq DESC LIMIT ?`,
+		string(thread), kind, limit)
+}
+
+func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind string, limit int) ([]store.Record, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.tail(ctx, // uses the log_task_kind(task, kind, seq) index
+		`SELECT seq, at, task, thread, kind, payload FROM log WHERE task = ? AND kind = ? ORDER BY seq DESC LIMIT ?`,
+		string(task), kind, limit)
 }
 
 func (s *Store) PutTask(ctx context.Context, t store.TaskState) error {

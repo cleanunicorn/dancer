@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/cleanunicorn/dancer/internal/decider"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
@@ -21,6 +24,7 @@ import (
 type Config struct {
 	Server      Server       `toml:"server"`
 	Claude      Claude       `toml:"claude"`
+	Decider     Decider      `toml:"decider"`
 	Slack       Slack        `toml:"slack"`
 	Docker      Docker       `toml:"docker"`
 	Surfaces    []Surface    `toml:"surfaces"`
@@ -85,6 +89,41 @@ type Server struct {
 type Claude struct {
 	Binary string `toml:"binary"`
 }
+
+// Decider configures the small model that answers dancer's policy
+// questions (see DECIDER.md). It is off by default: dancer's own rules
+// answer everything, which is also the fallback whenever the decider
+// fails, times out or answers something unacceptable.
+type Decider struct {
+	Kind  string `toml:"kind"`  // "off" (default) | "claude" | "openai"
+	Model string `toml:"model"` // claude: default "haiku"; openai: required, the endpoint's own name
+	// Uses lists the question kinds the decider may answer ("resume",
+	// "permission").
+	// Empty means none, so switching it on is deliberate per kind.
+	Uses    []string `toml:"uses"`
+	Timeout Duration `toml:"timeout"`
+	// AutoAllow is the ceiling for permission decisions: tool patterns the
+	// decider may approve without asking a human, in the same syntax as a
+	// definition's allowed_tools ("Read", "Bash(go test:*)"). Empty means
+	// every permission prompt still reaches a person.
+	AutoAllow  []string `toml:"auto_allow"`
+	MaxPerTask int      `toml:"max_per_task"`
+	// OpenAI configures kind = "openai": any endpoint that speaks the
+	// OpenAI chat-completions shape (OpenAI, DeepSeek, Groq, Mistral,
+	// OpenRouter, a local Ollama or vLLM).
+	OpenAI OpenAI `toml:"openai"`
+}
+
+// OpenAI points the "openai" decider at an endpoint. The key lives here,
+// next to the Slack tokens, in the 0600 config file; empty sends no
+// Authorization header at all, which is what a local server wants.
+type OpenAI struct {
+	BaseURL string `toml:"base_url"` // default "https://api.openai.com/v1"; "/chat/completions" is appended
+	APIKey  string `toml:"api_key"`  // bearer token; "" for servers that need none
+}
+
+// Enabled reports whether a decider other than the built-in rules is set.
+func (d Decider) Enabled() bool { return d.Kind != "" && d.Kind != "off" }
 
 // Docker is host-wide container behaviour; per-agent settings live on the
 // definition's [definitions.environment].
@@ -219,6 +258,21 @@ func (c *Config) applyDefaults(path string) {
 	if c.Claude.Binary == "" {
 		c.Claude.Binary = "claude"
 	}
+	if c.Decider.Kind == "" {
+		c.Decider.Kind = "off"
+	}
+	if c.Decider.Model == "" && c.Decider.Kind == "claude" {
+		c.Decider.Model = "haiku" // only claude has a model every install can name
+	}
+	if c.Decider.OpenAI.BaseURL == "" {
+		c.Decider.OpenAI.BaseURL = "https://api.openai.com/v1"
+	}
+	if c.Decider.Timeout.Duration == 0 {
+		c.Decider.Timeout.Duration = 15 * time.Second
+	}
+	if c.Decider.MaxPerTask == 0 {
+		c.Decider.MaxPerTask = 20
+	}
 	if len(c.Server.Transports) == 0 {
 		if c.Slack.AppToken != "" {
 			c.Server.Transports = []string{"slack"}
@@ -278,6 +332,29 @@ func (c *Config) ChannelAgents() map[string]string {
 }
 
 func (c *Config) validate() error {
+	switch c.Decider.Kind {
+	case "off", "claude":
+	case "openai":
+		if c.Decider.Model == "" {
+			return fmt.Errorf("config: decider kind \"openai\" needs a model (e.g. \"gpt-4o-mini\", \"deepseek-chat\")")
+		}
+		u, err := url.Parse(c.Decider.OpenAI.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("config: decider.openai.base_url %q is not an http(s) URL", c.Decider.OpenAI.BaseURL)
+		}
+	default:
+		return fmt.Errorf("config: unknown decider kind %q (off|claude|openai)", c.Decider.Kind)
+	}
+	for _, p := range c.Decider.AutoAllow {
+		if _, err := decider.ParseAllow(p); err != nil {
+			return fmt.Errorf("config: decider.%w", err)
+		}
+	}
+	for _, u := range c.Decider.Uses {
+		if u != "resume" && u != "permission" {
+			return fmt.Errorf("config: decider cannot answer %q yet (resume|permission)", u)
+		}
+	}
 	seen := map[string]bool{}
 	for _, d := range c.Definitions {
 		if d.Name == "" {

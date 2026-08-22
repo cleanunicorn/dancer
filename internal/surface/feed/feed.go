@@ -58,6 +58,16 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		}
 		text := fmt.Sprintf("🔐 `%s` — *%s* wants to run:\n```%s```", ev.TaskID, ev.Agent.Tool, describeInput(ev.Agent))
 		return []transport.Outbound{{Thread: s.thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
+	case surface.EventAllowed:
+		// The feed that would have shown the prompt shows what ran instead.
+		if !s.Approvals || ev.Agent == nil {
+			return nil
+		}
+		text := fmt.Sprintf("🔓 `%s` — *%s* ran without asking:\n```%s```", ev.TaskID, ev.Agent.Tool, describeInput(ev.Agent))
+		if ev.Text != "" {
+			text += "\n" + ev.Text
+		}
+		return out(text)
 	case surface.EventQuestion:
 		if !s.Approvals {
 			return nil

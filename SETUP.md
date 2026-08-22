@@ -285,6 +285,83 @@ Auto-resume is on by default and tunable in `[server]`:
 The counter behind `max_auto_resumes` is cleared as soon as a resumed agent
 finishes a turn.
 
+## The decider (optional)
+
+Dancer's restart rules are blunt on purpose: everything cut mid-execution is
+picked up with the same "carry on" sentence. Switching on a decider hands those
+judgement calls to a small model — it can leave a task for you with a reason, or
+word the resume in the task's own terms. See [DECIDER.md](DECIDER.md).
+
+```toml
+[decider]
+kind = "claude"       # off (default) | claude | openai
+model = "haiku"
+uses = ["resume", "permission"]   # question kinds it may answer; [] = never asked
+timeout = "15s"
+max_per_task = 20
+auto_allow = ["Read", "Glob", "Grep", "Bash(go test:*)"]   # see "permission" below
+```
+
+`kind = "claude"` runs the `claude` CLI you already have. `kind = "openai"`
+talks to any OpenAI-compatible endpoint instead — OpenAI, DeepSeek, Groq,
+Mistral, OpenRouter, or a local Ollama/vLLM — and then `model` is the
+endpoint's own model name:
+
+```toml
+[decider]
+kind = "openai"
+model = "gpt-4o-mini"                      # or "deepseek-chat", "llama3.2", …
+[decider.openai]
+base_url = "https://api.openai.com/v1"     # "https://api.deepseek.com/v1", "http://localhost:11434/v1"
+api_key = "sk-…"                           # leave out for a local server that needs none
+```
+
+The key lives in `config.toml` next to your Slack tokens (the file is
+`0600`); nothing is read from the environment. `dancer doctor` calls the
+endpoint's `/models` with that key and fails the check if it is unreachable
+or the key is rejected — the one misconfiguration that would otherwise fall
+back to the rules silently on every question. No `temperature` or
+`response_format` is sent, so reasoning models and minimal endpoints work
+as-is.
+
+On a restart it judges each cut-short task from the tail of its own thread —
+the last thing you asked, the agent's last words, its recent tool calls, the
+files it changed, the tool call that was in flight — and picks one of four:
+
+| verdict | what you see |
+|---------|--------------|
+| continue | `⏯️ resuming session`, with a prompt naming what the agent was in the middle of |
+| ask | a question with **continue** / **drop** buttons; replying with your own words resumes it instead |
+| wait | `▶️ dancer is back — <reason>; reply in this thread to continue` |
+| abandon | `⏹️ leaving this task: <reason>` — no restart offers it again, a reply still can |
+
+With `"permission"` in `uses` it also triages approval prompts, so routine
+tool calls stop waking you. A prompt means the call is outside what the agent
+definition pre-approved, so the decider needs permission you wrote down
+yourself: `auto_allow` (same syntax as `allowed_tools` — `Read`,
+`Read(/repo/*)`, `Bash(go test:*)`, `Bash(*)`). A command is matched the way a
+shell reads it, so `Bash(go test:*)` covers `go test ./... && go test ./cmd`
+and `go test ./... 2>&1`, but not `go test ./... && rm -rf .git`, not
+`go test ./... > somefile`, and not `go test $(something)`. Paths are cleaned
+first, so `Read(/repo/*)` does not cover `/repo/../etc/shadow`. A pattern that
+does not parse (`Bash(`, `Bash()`) is a config error, never "every call". A
+call outside that list goes straight to the buttons without asking the decider
+anything; a call inside it may be approved, and the thread is told:
+
+```
+🔓 allowed automatically: `Bash go test ./...` — Run all tests; explicitly requested.
+_say `cancel` to stop this task_
+```
+
+`auto_allow` is empty by default, so nothing is approved without you until you
+list something.
+
+The decider can only ever narrow what the rules already allow:
+`auto_resume_within`, `max_auto_resumes` and `auto_allow` are applied before it
+is asked, and an answer outside the offered options is discarded. If it fails,
+times out or is not configured, dancer behaves exactly as it does without one.
+Every verdict, with its reason, is in the event log and in `status`.
+
 ## Environments
 
 **local** — the agent runs on the dancer host in `workdir` (or a fresh

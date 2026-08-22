@@ -121,7 +121,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		return nil
 	case surface.EventClosed:
 		return out("✅ thread closed — mention me here to pick it up again")
-	case surface.EventReply:
+	case surface.EventReply, surface.EventAllowed:
 		return out(ev.Text)
 	case surface.EventError:
 		return out("❌ " + ev.Text)
