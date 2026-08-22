@@ -16,7 +16,8 @@
 // which renders standard Markdown; Slack's own mrkdwn would show **bold**
 // and # headings literally. Outbound.Mention goes out as "<@U…> " in front
 // of plain and prompt text, so Slack notifies that user even in a muted
-// thread; keyed messages ignore it, and the markdown block is not given one.
+// thread; keyed messages ignore it, and surfaces do not set one on the
+// agent's Markdown text (see transport.Outbound.Mention).
 package slack
 
 import (
