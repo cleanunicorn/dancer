@@ -217,7 +217,8 @@ func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind stri
 
 // taskCols is the tasks column list, in the order scanTask reads it and
 // PutTask binds it. A column added here needs a `?` in PutTask's VALUES,
-// an `excluded.` line in its ON CONFLICT SET, and a dest in scanTask.
+// an `excluded.` line in its ON CONFLICT SET, a dest in scanTask and, unless
+// it is also added to the CREATE TABLE above, an ALTER entry in migrate.
 const taskCols = "id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at"
 
 func (s *Store) PutTask(ctx context.Context, t store.TaskState) error {
