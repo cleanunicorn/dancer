@@ -101,6 +101,8 @@ func click(t *testing.T, form url.Values, user string, i int) slack.InteractionC
 	return callback(t, form, user, &slack.BlockAction{ActionID: btn.ActionID, BlockID: ab.BlockID, Value: btn.Value})
 }
 
+// callback is the block-actions callback Slack posts back for the prompt
+// message 1.2 in thread C1/1.0, carrying the blocks that were posted.
 func callback(t *testing.T, form url.Values, user string, a *slack.BlockAction) slack.InteractionCallback {
 	t.Helper()
 	return slack.InteractionCallback{
@@ -112,6 +114,8 @@ func callback(t *testing.T, form url.Values, user string, a *slack.BlockAction) 
 	}
 }
 
+// interactive wraps a callback the way Socket Mode hands it to handle,
+// without a Request to Ack.
 func interactive(cb slack.InteractionCallback) socketmode.Event {
 	return socketmode.Event{Type: socketmode.EventTypeInteractive, Data: cb}
 }
@@ -185,9 +189,13 @@ func TestSettledPromptDropsLeadingMention(t *testing.T) {
 	if got, want := updates[0].Get("text"), "🔐 *Bash* wants to run <@U7>\n→ *allow* by <@U7>"; got != want {
 		t.Errorf("settled text = %q, want %q", got, want)
 	}
+	// The clicked message is the one edited, and its buttons are gone.
+	if u := updates[0]; u.Get("channel") != "C1" || u.Get("ts") != "1.2" || u.Get("blocks") != "[]" {
+		t.Errorf("update = channel %q ts %q blocks %q", u.Get("channel"), u.Get("ts"), u.Get("blocks"))
+	}
 	select {
 	case in := <-inbox:
-		if in.Decision == nil || in.Decision.PromptID != "chat:p1" || in.Decision.Choice != "allow" || in.UserID != "U7" {
+		if in.Transport != "slack" || in.Thread != "C1/1.0" || in.Decision == nil || in.Decision.PromptID != "chat:p1" || in.Decision.Choice != "allow" || in.UserID != "U7" {
 			t.Errorf("decision = %+v", in)
 		}
 	default:
@@ -222,7 +230,7 @@ func TestSelectAnswersWithTheOption(t *testing.T) {
 	default:
 		t.Error("no decision delivered")
 	}
-	if updates := f.of("chat.update"); len(updates) != 1 || !strings.HasSuffix(updates[0].Get("text"), "→ *a3* by <@U7>") || strings.HasPrefix(updates[0].Get("text"), "<@U42>") {
+	if updates := f.of("chat.update"); len(updates) != 1 || updates[0].Get("blocks") != "[]" || !strings.HasSuffix(updates[0].Get("text"), "→ *a3* by <@U7>") || strings.HasPrefix(updates[0].Get("text"), "<@U42>") {
 		t.Errorf("settled select = %+v", updates)
 	}
 }
