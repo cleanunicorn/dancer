@@ -9,7 +9,7 @@ Planning
 - [x] Architecture review and language choice (Go; agents driven via `claude -p --output-format stream-json`)
 - [x] Module layout and interface definitions
 - [x] Split "channel" into Transport (the wire) and Surface (the interaction on it)
-- [ ] Slack app created from `deploy/slack-manifest.yaml` and tokens pasted into config (needs: Daniel, Slack workspace admin)
+- [x] Slack app created from `deploy/slack-manifest.yaml` and tokens pasted into config
 
 Milestone 1 — walking skeleton (local folder + terminal) ✅
 - [x] `environment/local`: exec with stdio pipes, CopyIn/CopyOut (unit test)
@@ -23,9 +23,9 @@ Milestone 1 — walking skeleton (local folder + terminal) ✅
 
 Milestone 2 — Slack
 - [x] `transport/slack`: Socket Mode, thread per task, Block Kit buttons for prompts, allowed-user filter
-- [x] Permission round-trip: `needs_permission` → buttons → `Decide` (logic covered by coordinator test; Slack wire untested)
+- [x] Permission round-trip: `needs_permission` → buttons → `Decide` (coordinator test)
 - [x] `surface/feed`: mirror starts/approvals/results to a fixed thread (second surface on the same transport)
-- [ ] Live validation against a real Slack workspace (needs tokens from Daniel)
+- [x] Live validation against a real Slack workspace: mention → thread reply → task started (2026-08-22)
 - [ ] Slash command `/dancer` (optional; mentions + DMs work without it)
 
 Milestone 3 — environments ✅
@@ -45,7 +45,8 @@ Milestone 5 — deploy-ready on Linux
 - [x] `dancer doctor`: config, workdir, claude auth, docker, ssh hosts, Slack auth, surfaces
 - [x] `deploy/dancer.service` + `make service-install`
 - [x] `SETUP.md`: Slack app manifest, install steps, first run, docker/ssh notes
-- [ ] Validate on this machine: wizard → `make service-install` → Slack message → result (needs Slack tokens)
+- [x] Wizard → `make run` → Slack message → task runs (2026-08-22)
+- [ ] `make service-install` and run as a systemd unit
 
 Deferred
 - [ ] `agent/codex` (`codex exec --json`)
@@ -129,4 +130,4 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | executor idle/resume/cancel            | `go test ./internal/executor/...`               | pass   |
 | two surfaces on one transport          | `go test -race ./internal/coordinator`          | pass   |
 | whole binary via terminal              | `scripts/e2e.py` (run→allow→done→status→follow-up) | pass |
-| Slack wire                             | —                                               | pending tokens |
+| Slack wire                             | real workspace, mention in channel              | pass   |
