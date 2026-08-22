@@ -77,6 +77,22 @@ type fakeAgent struct{}
 func (fakeAgent) Kind() agent.Kind { return "fake" }
 func (fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
 	r := newFakeRun()
+	if strings.HasPrefix(prompt, "ask") {
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: "sess-q"})
+			r.emit(agent.Event{Type: agent.EventQuestion, Tool: "AskUserQuestion", ToolID: "q-1", Questions: []agent.Question{
+				{Header: "Fruit", Text: "Apple or Banana?", Options: []agent.Option{{Label: "Apple"}, {Label: "Banana", Description: "long"}}},
+				{Header: "Size", Text: "Big or small?", Options: []agent.Option{{Label: "Big"}, {Label: "Small"}}},
+			}})
+			select {
+			case d := <-r.decided:
+				r.emit(agent.Event{Type: agent.EventText, Text: fmt.Sprintf("answers=%s|%s", d.Answers["Apple or Banana?"], d.Answers["Big or small?"])})
+				r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-q"})
+			case <-r.done:
+			}
+		}()
+		return r, nil
+	}
 	go func() {
 		r.emit(agent.Event{Type: agent.EventInit, Session: "sess-1"})
 		r.emit(agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolID: "tool-1", ToolInput: map[string]any{"command": "ls"}})
@@ -232,6 +248,18 @@ func TestTwoSurfacesOneTransport(t *testing.T) {
 	th2 := transport.ThreadID("C-dev/2.0")
 	tr.say(th2, "just do the thing")
 	tr.waitFor(t, th2, "started with agent *coder*")
+
+	// Questions: first answered with a button, second with a typed reply.
+	th3 := transport.ThreadID("C-dev/3.0")
+	tr.say(th3, "ask me things")
+	q1 := tr.waitFor(t, th3, "Apple or Banana?")
+	if q1.Prompt == nil || len(q1.Prompt.Options) != 2 || !q1.Prompt.FreeText {
+		t.Fatalf("question prompt = %+v", q1.Prompt)
+	}
+	tr.decide(th3, q1.Prompt.ID, "Banana")
+	tr.waitFor(t, th3, "Big or small?")
+	tr.say(th3, "medium, actually")
+	tr.waitFor(t, th3, "answers=Banana|medium, actually")
 }
 
 func firstTask(t *testing.T, st store.Store) executor.TaskID {

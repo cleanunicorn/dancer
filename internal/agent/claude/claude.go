@@ -147,7 +147,16 @@ func (r *run) Decide(ctx context.Context, d agent.PermissionDecision) error {
 	}
 	var payload any
 	if d.Allow {
-		payload = permissionAllow{Behavior: "allow", UpdatedInput: pp.input}
+		input := pp.input
+		if d.Answers != nil {
+			// AskUserQuestion: the answers travel back inside the tool input.
+			input = make(map[string]any, len(pp.input)+1)
+			for k, v := range pp.input {
+				input[k] = v
+			}
+			input["answers"] = d.Answers
+		}
+		payload = permissionAllow{Behavior: "allow", UpdatedInput: input}
 	} else {
 		msg := d.Reason
 		if msg == "" {

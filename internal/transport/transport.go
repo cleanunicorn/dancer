@@ -35,10 +35,36 @@ type Outbound struct {
 	Prompt *Prompt // non-nil: render as a question with buttons/choices
 }
 
-// Prompt asks the human to pick one choice. Used for permission requests.
+// Prompt asks the human for a decision.
+//
+// Permission prompts set Choices ("allow"/"deny"); questions set Options
+// and usually FreeText, meaning a typed reply in the thread also answers.
+// Decision.Choice carries the chosen value (or the typed text).
 type Prompt struct {
-	ID      string
-	Choices []string // e.g. ["allow", "deny"]
+	ID       string
+	Choices  []string // simple prompts: the accepted values
+	Question string   // questions: the text shown above the options
+	Options  []Option // questions: selectable answers
+	FreeText bool     // questions: accept a typed answer too
+}
+
+// Option is one selectable answer of a Prompt.
+type Option struct {
+	Value       string // what comes back in Decision.Choice
+	Label       string // button text
+	Description string
+}
+
+// Values returns the accepted decision values of a prompt.
+func (p *Prompt) Values() []string {
+	if len(p.Options) == 0 {
+		return p.Choices
+	}
+	out := make([]string, 0, len(p.Options))
+	for _, o := range p.Options {
+		out = append(out, o.Value)
+	}
+	return out
 }
 
 // Transport is the interface every communication channel implements.

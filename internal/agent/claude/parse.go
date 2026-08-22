@@ -101,6 +101,10 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			if l.Request.AgentID != "" {
 				ev.ParentID = l.Request.AgentID
 			}
+			if l.Request.ToolName == "AskUserQuestion" {
+				ev.Type = agent.EventQuestion
+				ev.Questions = parseQuestions(l.Request.Input)
+			}
 			p.Permission = &permissionReq{RequestID: l.RequestID, Event: ev}
 		} else {
 			lc := l
@@ -108,4 +112,30 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 		}
 	}
 	return p, nil
+}
+
+// parseQuestions decodes the AskUserQuestion tool input.
+func parseQuestions(input map[string]any) []agent.Question {
+	raw, _ := json.Marshal(input)
+	var in struct {
+		Questions []struct {
+			Header      string `json:"header"`
+			Question    string `json:"question"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	_ = json.Unmarshal(raw, &in)
+	out := make([]agent.Question, 0, len(in.Questions))
+	for _, q := range in.Questions {
+		aq := agent.Question{Header: q.Header, Text: q.Question, MultiSelect: q.MultiSelect}
+		for _, o := range q.Options {
+			aq.Options = append(aq.Options, agent.Option{Label: o.Label, Description: o.Description})
+		}
+		out = append(out, aq)
+	}
+	return out
 }

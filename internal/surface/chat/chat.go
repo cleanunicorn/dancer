@@ -82,6 +82,8 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	case surface.EventPermission:
 		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, describeInput(ev.Agent))
 		return []transport.Outbound{{Thread: ev.Thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
+	case surface.EventQuestion:
+		return []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}}
 	case surface.EventAgent:
 		return s.renderAgent(ev)
 	case surface.EventFinished:
@@ -133,6 +135,34 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 		return nil
 	}
 	return []transport.Outbound{{Thread: ev.Thread, Text: text}}
+}
+
+// questionText renders a question with its numbered options.
+func questionText(q *agent.Question) string {
+	var b strings.Builder
+	if q.Header != "" {
+		fmt.Fprintf(&b, "❓ *%s* — ", q.Header)
+	} else {
+		b.WriteString("❓ ")
+	}
+	b.WriteString(q.Text)
+	for i, o := range q.Options {
+		fmt.Fprintf(&b, "\n%d. *%s*", i+1, o.Label)
+		if o.Description != "" {
+			fmt.Fprintf(&b, " — %s", o.Description)
+		}
+	}
+	b.WriteString("\n_Pick an option or reply in this thread with your own answer._")
+	return b.String()
+}
+
+// questionPrompt builds the transport prompt for a question.
+func questionPrompt(id string, q *agent.Question) *transport.Prompt {
+	p := &transport.Prompt{ID: id, Question: q.Text, FreeText: true}
+	for _, o := range q.Options {
+		p.Options = append(p.Options, transport.Option{Value: o.Label, Label: o.Label, Description: o.Description})
+	}
+	return p
 }
 
 func describeInput(ev *agent.Event) string {

@@ -67,6 +67,21 @@ func TestTranslateFixture(t *testing.T) {
 	}
 }
 
+func TestTranslateQuestion(t *testing.T) {
+	raw := []byte(`{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","tool_use_id":"t9","input":{"questions":[{"question":"Apple or Banana?","header":"Fruit","multiSelect":false,"options":[{"label":"Apple","description":"round"},{"label":"Banana","description":"long"}]}]}}}`)
+	p, err := translate(raw, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Permission == nil || p.Permission.Event.Type != agent.EventQuestion {
+		t.Fatalf("parsed = %+v", p)
+	}
+	qs := p.Permission.Event.Questions
+	if len(qs) != 1 || qs[0].Header != "Fruit" || qs[0].Text != "Apple or Banana?" || len(qs[0].Options) != 2 || qs[0].Options[1].Label != "Banana" {
+		t.Fatalf("questions = %+v", qs)
+	}
+}
+
 func TestArgs(t *testing.T) {
 	got, err := args(agent.Definition{Model: "haiku", AllowedTools: []string{"Read", "Edit"}, PermissionMode: agent.PermissionAcceptEdits}, "sess-1")
 	if err != nil {

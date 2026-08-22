@@ -39,6 +39,7 @@ Design, decisions and progress: [PLAN.md](PLAN.md).
 | `@dancer <prompt>`           | start a task with the default agent (replies in a thread under your message) |
 | `run <agent> <prompt>`       | start a task with a specific agent          |
 | reply in the thread          | follow-up to that task (resumes if idle)    |
+| button / reply to a question | answers the agent's `AskUserQuestion`       |
 | `status` / `cancel` / `agents` / `help` | what they say                     |
 
 ## Layout

@@ -50,6 +50,7 @@ type Coordinator struct {
 	threads map[transport.ThreadID]executor.TaskID // live task per thread
 	owner   map[executor.TaskID]string             // task -> surface that started it
 	pending map[string]chan transport.Decision     // prompt base id -> waiter
+	askText map[transport.ThreadID]string          // thread -> prompt base id accepting a typed answer
 }
 
 // New returns a Coordinator.
@@ -63,6 +64,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		threads:    map[transport.ThreadID]executor.TaskID{},
 		owner:      map[executor.TaskID]string{},
 		pending:    map[string]chan transport.Decision{},
+		askText:    map[transport.ThreadID]string{},
 	}
 	for _, t := range transports {
 		c.transports[t.Name()] = t
@@ -222,7 +224,15 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 }
 
 // followUp routes a plain message to the thread's task, resuming if needed.
+// While a question is open on the thread, the text answers it instead.
 func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surface.FollowUp) {
+	c.mu.Lock()
+	base, asking := c.askText[it.Thread]
+	c.mu.Unlock()
+	if asking {
+		c.deliver(base, transport.Decision{PromptID: base, Choice: it.Text})
+		return
+	}
 	id, ok := c.lookup(it.Thread)
 	if ok {
 		if err := c.Executor.Send(ctx, id, it.Text); err == nil {
@@ -314,6 +324,9 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 }
 
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {
+	if ev.Type == agent.EventQuestion {
+		return s.awaitAnswers(ctx, id, ev)
+	}
 	base := string(id) + ":" + ev.ToolID
 	ch := make(chan transport.Decision, 1)
 	s.c.mu.Lock()
@@ -337,6 +350,46 @@ func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev age
 	}
 }
 
+// awaitAnswers asks each question in turn and returns the answers as an
+// allow decision. A button click (option value) or a typed reply answers.
+func (s *taskSink) awaitAnswers(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {
+	st := s.snapshot()
+	answers := map[string]string{}
+	for i := range ev.Questions {
+		q := ev.Questions[i]
+		base := fmt.Sprintf("%s:%s#%d", id, ev.ToolID, i)
+		ch := make(chan transport.Decision, 1)
+		s.c.mu.Lock()
+		s.c.pending[base] = ch
+		s.c.askText[st.Thread] = base
+		s.c.mu.Unlock()
+
+		e := ev
+		s.c.broadcast(ctx, surface.Event{Kind: surface.EventQuestion, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e, Question: &q, PromptID: base})
+
+		var d transport.Decision
+		select {
+		case d = <-ch:
+		case <-ctx.Done():
+			s.c.clearAsk(st.Thread, base)
+			return agent.PermissionDecision{}, ctx.Err()
+		}
+		s.c.clearAsk(st.Thread, base)
+		s.c.append(ctx, id, st.Thread, "decision", d)
+		answers[q.Text] = d.Choice
+	}
+	return agent.PermissionDecision{ToolID: ev.ToolID, Allow: true, Answers: answers}, nil
+}
+
+func (c *Coordinator) clearAsk(th transport.ThreadID, base string) {
+	c.mu.Lock()
+	delete(c.pending, base)
+	if c.askText[th] == base {
+		delete(c.askText, th)
+	}
+	c.mu.Unlock()
+}
+
 // resolveDecision delivers a Decide intent. Prompt ids are
 // "<surface>:<task>:<tool>"; the surface prefix is stripped so any surface
 // that rendered the prompt can answer it.
@@ -345,6 +398,11 @@ func (c *Coordinator) resolveDecision(ctx context.Context, d surface.Decide) {
 	if i := strings.Index(base, ":"); i >= 0 {
 		base = base[i+1:]
 	}
+	c.deliver(base, transport.Decision{PromptID: d.PromptID, Choice: d.Choice})
+}
+
+// deliver hands a decision to the waiter registered under base.
+func (c *Coordinator) deliver(base string, d transport.Decision) {
 	c.mu.Lock()
 	ch, ok := c.pending[base]
 	c.mu.Unlock()
@@ -353,7 +411,7 @@ func (c *Coordinator) resolveDecision(ctx context.Context, d surface.Decide) {
 		return
 	}
 	select {
-	case ch <- transport.Decision{PromptID: d.PromptID, Choice: d.Choice}:
+	case ch <- d:
 	default:
 	}
 }

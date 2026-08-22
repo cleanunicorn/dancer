@@ -85,6 +85,7 @@ const (
 	EventResumed    EventKind = "resumed"    // idle session picked up again
 	EventAgent      EventKind = "agent"      // Agent carries the agent event
 	EventPermission EventKind = "permission" // Agent is a needs_permission; PromptID set
+	EventQuestion   EventKind = "question"   // Agent is a question; Question + PromptID set
 	EventFinished   EventKind = "finished"   // process exited; Task.Status is final
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
 	EventError      EventKind = "error"      // Text explains a failure
@@ -96,7 +97,8 @@ type Event struct {
 	Thread   transport.ThreadID
 	Task     *store.TaskState // nil for Reply/Error without a task
 	TaskID   executor.TaskID
-	Agent    *agent.Event // EventAgent, EventPermission
-	PromptID string       // EventPermission: id the Decide intent must echo
-	Text     string       // EventReply, EventError
+	Agent    *agent.Event    // EventAgent, EventPermission
+	PromptID string          // EventPermission/EventQuestion: id the Decide intent must echo
+	Question *agent.Question // EventQuestion: the single question this event carries
+	Text     string          // EventReply, EventError
 }

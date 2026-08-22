@@ -54,6 +54,7 @@ const (
 	EventToolUse         EventType = "tool_use"         // agent invoked a tool
 	EventToolResult      EventType = "tool_result"      // tool finished
 	EventNeedsPermission EventType = "needs_permission" // agent blocked on approval
+	EventQuestion        EventType = "question"         // agent asks the human (AskUserQuestion); Questions set
 	EventResult          EventType = "result"           // turn finished
 	EventError           EventType = "error"
 )
@@ -66,18 +67,36 @@ type Event struct {
 	Text      string // EventText, EventError, EventResult summary
 	Tool      string // EventToolUse / EventToolResult / EventNeedsPermission
 	ToolInput map[string]any
-	ToolID    string // correlates ToolUse, ToolResult, NeedsPermission
-	ParentID  string // non-empty when emitted by a sub-agent
-	Partial   bool   // EventText: true for streaming deltas
+	ToolID    string     // correlates ToolUse, ToolResult, NeedsPermission
+	ParentID  string     // non-empty when emitted by a sub-agent
+	Partial   bool       // EventText: true for streaming deltas
+	Questions []Question // EventQuestion
 	Cost      float64
 	Raw       []byte // vendor message, kept for the event log
 }
 
-// PermissionDecision answers an EventNeedsPermission.
+// Question is one question an agent asks the human.
+type Question struct {
+	Header      string
+	Text        string
+	Options     []Option
+	MultiSelect bool
+}
+
+// Option is one selectable answer.
+type Option struct {
+	Label       string
+	Description string
+}
+
+// PermissionDecision answers an EventNeedsPermission or EventQuestion.
 type PermissionDecision struct {
 	ToolID string
 	Allow  bool
 	Reason string
+	// Answers maps Question.Text to the chosen label (or free text) for
+	// EventQuestion; nil for plain permissions.
+	Answers map[string]string
 }
 
 // Run is a live agent turn.

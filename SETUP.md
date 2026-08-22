@@ -72,7 +72,11 @@ In the channel you invited the bot to:
 ```
 
 dancer answers **in a thread under your message** (look for "1 reply"), using the
-default agent; `run <agent> <prompt>` picks a specific one. When the agent wants to run
+default agent; `run <agent> <prompt>` picks a specific one.
+
+When the agent asks a question (Claude Code's `AskUserQuestion`), the thread
+shows the options as buttons; click one, or reply in the thread with your own
+answer. Multi-select questions are answered one option at a time for now. When the agent wants to run
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
 thread to continue the conversation; `status`, `cancel`, `agents`, `help` work
 anywhere. DMs to the bot work the same way without the mention.

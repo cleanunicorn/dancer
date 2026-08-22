@@ -57,6 +57,16 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		}
 		text := fmt.Sprintf("🔐 `%s` — *%s* wants to run:\n```%s```", ev.TaskID, ev.Agent.Tool, describeInput(ev.Agent))
 		return []transport.Outbound{{Thread: s.thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
+	case surface.EventQuestion:
+		if !s.Approvals {
+			return nil
+		}
+		text := fmt.Sprintf("❓ `%s` — *%s*: %s", ev.TaskID, ev.Question.Header, ev.Question.Text)
+		p := &transport.Prompt{ID: s.name + ":" + ev.PromptID, Question: ev.Question.Text}
+		for _, o := range ev.Question.Options {
+			p.Options = append(p.Options, transport.Option{Value: o.Label, Label: o.Label, Description: o.Description})
+		}
+		return []transport.Outbound{{Thread: s.thread, Text: text, Prompt: p}}
 	case surface.EventAgent:
 		if ev.Agent == nil {
 			return nil

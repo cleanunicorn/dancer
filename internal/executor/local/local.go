@@ -102,7 +102,7 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 				return nil
 			}
 			switch ev.Type {
-			case agent.EventNeedsPermission:
+			case agent.EventNeedsPermission, agent.EventQuestion:
 				sink.OnEvent(ctx, t.ID, ev)
 				go e.relayPermission(ctx, t.ID, ev, run, sink)
 			case agent.EventResult, agent.EventError:
