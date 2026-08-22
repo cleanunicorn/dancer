@@ -324,7 +324,7 @@ func (c *Transport) setStatus(ctx context.Context, chID, ts, text string) {
 // the markdown block for agent text does not render, so surfaces only set
 // it on dancer's own lines.
 func address(text, user string) string {
-	if user == "" {
+	if user == "" || text == "" {
 		return text
 	}
 	return mention(user) + " " + text
