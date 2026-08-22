@@ -44,6 +44,12 @@ CREATE TABLE IF NOT EXISTS definitions (
 	name TEXT PRIMARY KEY,
 	body BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS flows (
+	thread     TEXT PRIMARY KEY,
+	body       BLOB NOT NULL,
+	updated_at TEXT NOT NULL
+);
 `
 
 // Store is a SQLite-backed store.Store.
@@ -255,5 +261,45 @@ func (s *Store) ListDefinitions(ctx context.Context) ([]agent.Definition, error)
 // DeleteDefinition removes a definition by name.
 func (s *Store) DeleteDefinition(ctx context.Context, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM definitions WHERE name = ?`, name)
+	return err
+}
+
+func (s *Store) PutFlow(ctx context.Context, f store.FlowState) error {
+	if f.Thread == "" {
+		return fmt.Errorf("sqlite: flow thread is required")
+	}
+	body, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO flows(thread, body, updated_at) VALUES(?,?,?) ON CONFLICT(thread) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at`,
+		string(f.Thread), body, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ListFlows(ctx context.Context) ([]store.FlowState, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT body FROM flows ORDER BY updated_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.FlowState
+	for rows.Next() {
+		var body []byte
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		var f store.FlowState
+		if err := json.Unmarshal(body, &f); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteFlow(ctx context.Context, thread transport.ThreadID) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM flows WHERE thread = ?`, string(thread))
 	return err
 }

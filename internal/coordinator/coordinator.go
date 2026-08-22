@@ -94,6 +94,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		return err
 	}
 	c.seedThreads(ctx)
+	c.resumeFlows(ctx)
 	inbox := make(chan transport.Inbound, 64)
 	var wg sync.WaitGroup
 	for _, t := range c.Transports {

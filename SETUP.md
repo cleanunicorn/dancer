@@ -97,6 +97,8 @@ and an optional system prompt, then shows a summary with **Save / Cancel**.
 Click a button or type the answer; `cancel` at any point abandons the flow.
 Type paths in backticks (`` `/home/me/app` ``): Slack refuses to send a
 message that starts with `/` because it looks like a slash command.
+Answers are saved as you go, so a dancer restart mid-way re-asks the next
+question when it is back.
 
 Saving appends a `[[definitions]]` block to `config.toml` (the rest of the
 file is left untouched) and registers the agent immediately — `agents` lists

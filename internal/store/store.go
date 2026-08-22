@@ -53,6 +53,22 @@ type Store interface {
 	GetDefinition(ctx context.Context, name string) (agent.Definition, error)
 	ListDefinitions(ctx context.Context) ([]agent.Definition, error)
 	DeleteDefinition(ctx context.Context, name string) error
+
+	// Flows: one per thread; PutFlow replaces an existing one.
+	PutFlow(ctx context.Context, f FlowState) error
+	ListFlows(ctx context.Context) ([]FlowState, error)
+	DeleteFlow(ctx context.Context, thread transport.ThreadID) error
+}
+
+// FlowState is a multi-step conversation with a human (e.g. "add agent")
+// in progress on a thread. The answers given so far are kept so a restart
+// can replay them and continue with the next question.
+type FlowState struct {
+	Thread    transport.ThreadID
+	Transport string
+	Surface   string // surface that runs the flow
+	Kind      string // "add_agent"
+	Answers   []string
 }
 
 // Task statuses.

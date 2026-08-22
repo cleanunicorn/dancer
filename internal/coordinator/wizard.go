@@ -39,44 +39,82 @@ var toolPresets = []struct {
 	{"None", "ask for every tool", nil},
 }
 
-// addAgent runs the flow in its own goroutine; one per thread.
+// addAgent starts the flow on a thread.
 func (c *Coordinator) addAgent(ctx context.Context, s surface.Surface, it surface.AddAgent) {
 	if _, busy := c.lookup(it.Thread); busy {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is running on this thread — start `add agent` in a new thread"}, s)
 		return
 	}
-	wctx, cancel := context.WithCancel(ctx)
-	c.mu.Lock()
-	if _, open := c.wizards[it.Thread]; open {
-		c.mu.Unlock()
-		cancel()
+	if c.wizardOpen(it.Thread) {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "already adding an agent on this thread — answer the question above or `cancel`"}, s)
 		return
 	}
-	c.wizards[it.Thread] = cancel
+	c.startWizard(ctx, s, it.Thread, nil)
+}
+
+// resumeFlows restarts flows that were open before a restart: the saved
+// answers are replayed silently and the next question is asked again.
+func (c *Coordinator) resumeFlows(ctx context.Context) {
+	flows, err := c.Store.ListFlows(ctx)
+	if err != nil {
+		c.Log.Error("list flows", "err", err)
+		return
+	}
+	for _, f := range flows {
+		var s surface.Surface
+		for _, cand := range c.Surfaces {
+			if cand.Name() == f.Surface {
+				s = cand
+			}
+		}
+		if s == nil || f.Kind != flowAddAgent {
+			c.Log.Warn("dropping flow without a surface", "thread", f.Thread, "surface", f.Surface, "kind", f.Kind)
+			_ = c.Store.DeleteFlow(ctx, f.Thread)
+			continue
+		}
+		c.Log.Info("resuming flow", "thread", f.Thread, "answers", len(f.Answers))
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: f.Thread, Text: "▶️ dancer is back — continuing with the agent questions"}, s)
+		c.startWizard(ctx, s, f.Thread, f.Answers)
+	}
+}
+
+const flowAddAgent = "add_agent"
+
+// startWizard runs the flow in its own goroutine; one per thread. answers
+// are replayed before any new question is asked.
+func (c *Coordinator) startWizard(ctx context.Context, s surface.Surface, th transport.ThreadID, answers []string) {
+	wctx, cancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	c.wizards[th] = cancel
 	c.mu.Unlock()
 
-	w := &wizard{c: c, s: s, thread: it.Thread, id: newID(), parent: ctx}
+	w := &wizard{c: c, s: s, thread: th, id: newID(), parent: ctx, answers: answers}
+	c.drives.Add(1)
 	go func() {
+		defer c.drives.Done()
 		defer func() {
 			cancel()
 			c.mu.Lock()
-			delete(c.wizards, it.Thread)
+			delete(c.wizards, th)
 			c.mu.Unlock()
 		}()
 		def, err := w.run(wctx)
 		// Report with a context that survives shutdown.
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer rcancel()
+		if ctx.Err() != nil {
+			// Shutdown: keep the saved answers; resumeFlows continues after restart.
+			w.say(rctx, "⏸️ dancer is restarting — the agent questions continue when it is back")
+			return
+		}
+		_ = c.Store.DeleteFlow(rctx, th)
 		switch {
 		case errors.Is(err, errWizardCancelled):
 			w.say(rctx, "⏹️ add agent cancelled")
 		case errors.Is(err, context.DeadlineExceeded):
 			w.say(rctx, "⌛ no answer — add agent abandoned; say `add agent` to start over")
 		case err != nil:
-			if ctx.Err() == nil {
-				w.say(rctx, "❌ add agent: "+err.Error())
-			}
+			w.say(rctx, "❌ add agent: "+err.Error())
 		default:
 			w.say(rctx, fmt.Sprintf("✅ agent *%s* saved — try `run %s <prompt>`", def.Name, def.Name))
 		}
@@ -101,6 +139,9 @@ type wizard struct {
 	id     string
 	parent context.Context // the coordinator's context; ends only on shutdown
 	step   int
+
+	answers []string // every answer so far; persisted after each one
+	next    int      // answers[next:] are still to be replayed
 }
 
 func (w *wizard) say(ctx context.Context, text string) {
@@ -109,8 +150,14 @@ func (w *wizard) say(ctx context.Context, text string) {
 
 // ask posts one question and waits for its answer (button value or typed
 // text). Questions are rendered only on the surface that started the flow.
+// While saved answers remain they are returned instead of asking.
 func (w *wizard) ask(ctx context.Context, q agent.Question) (string, error) {
 	w.step++
+	if w.next < len(w.answers) {
+		a := w.answers[w.next]
+		w.next++
+		return a, nil
+	}
 	base := fmt.Sprintf("def-%s#%d", w.id, w.step)
 	ch := make(chan transport.Decision, 1)
 	w.c.mu.Lock()
@@ -124,7 +171,13 @@ func (w *wizard) ask(ctx context.Context, q agent.Question) (string, error) {
 	select {
 	case d := <-ch:
 		w.c.append(ctx, "", w.thread, "decision", d)
-		return unquote(d.Choice), nil
+		a := unquote(d.Choice)
+		w.answers = append(w.answers, a)
+		w.next = len(w.answers)
+		if err := w.c.Store.PutFlow(ctx, store.FlowState{Thread: w.thread, Transport: w.s.Transport(), Surface: w.s.Name(), Kind: flowAddAgent, Answers: w.answers}); err != nil {
+			w.c.Log.Error("persist flow", "thread", w.thread, "err", err)
+		}
+		return a, nil
 	case <-time.After(wizardTimeout):
 		return "", context.DeadlineExceeded
 	case <-ctx.Done():
