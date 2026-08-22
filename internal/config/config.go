@@ -3,9 +3,12 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -234,8 +237,12 @@ func (c *Config) validate() error {
 		if ch.ID == "" {
 			return fmt.Errorf("config: channel without id")
 		}
-		if !seen[ch.Agent] {
-			return fmt.Errorf("config: channel %q: unknown agent %q", ch.ID, ch.Agent)
+	}
+	// Only the effective default per channel must exist: earlier, overridden
+	// [[channels]] blocks may name an agent that has since been deleted.
+	for key, agent := range c.ChannelAgents() {
+		if !seen[agent] {
+			return fmt.Errorf("config: channel %s: unknown agent %q", key, agent)
 		}
 	}
 	transports := map[string]bool{}
@@ -336,16 +343,11 @@ func AppendDefinition(path string, d Definition) error {
 		return err
 	}
 
-	var snippet bytes.Buffer
-	enc := toml.NewEncoder(&snippet)
-	enc.Indent = ""
-	if err := enc.Encode(struct {
-		Definitions []Definition `toml:"definitions"`
-	}{[]Definition{d}}); err != nil {
+	snippet, err := definitionSnippet(d)
+	if err != nil {
 		return err
 	}
-
-	return appendBlock(path, "# added from chat on "+time.Now().Format("2006-01-02"), snippet.Bytes())
+	return appendBlock(path, "# added from chat on "+time.Now().Format("2006-01-02"), snippet)
 }
 
 // AppendChannel records a per-channel default agent by appending a
@@ -361,39 +363,239 @@ func AppendChannel(path string, ch Channel) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
+	snippet, err := tomlSnippet(struct {
+		Channels []Channel `toml:"channels"`
+	}{[]Channel{ch}})
+	if err != nil {
+		return err
+	}
+	return appendBlock(path, fmt.Sprintf("# default agent for channel %s set from chat on %s", ch.ID, time.Now().Format("2006-01-02")), snippet)
+}
+
+// ErrNoDefinition is returned by RemoveDefinition when the config file has
+// no definition of that name (it may still exist in the store).
+var ErrNoDefinition = errors.New("config: no such definition")
+
+// ReplaceDefinition rewrites the definition named d.Name in the config
+// file at path in place: only its [[definitions]] block is replaced, so its
+// position (which decides the implicit default agent), the comments above
+// it and the rest of the file survive. A definition the file does not have
+// is appended. The result is validated as a whole before the file is
+// touched and restored if the new file fails to load.
+func ReplaceDefinition(path string, d Definition) error {
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	i := indexDefinition(cfg, d.Name)
+	if i < 0 {
+		return AppendDefinition(path, d)
+	}
+	cfg.Definitions[i] = d
+	cfg.applyDefaults(path)
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	snippet, err := definitionSnippet(d)
+	if err != nil {
+		return err
+	}
+	return rewrite(path, func(src []byte) ([]byte, error) {
+		out, ok := spliceDefinition(src, d.Name, snippet)
+		if !ok {
+			return nil, fmt.Errorf("config: definition %q is not a [[definitions]] block in %s; edit the file by hand", d.Name, path)
+		}
+		return out, nil
+	})
+}
+
+// RemoveDefinition deletes the [[definitions]] block named name from the
+// config file at path. The default agent (server.default_agent, or the
+// first definition when unset) and channel defaults are refused; a name the
+// file does not have returns ErrNoDefinition.
+func RemoveDefinition(path, name string) error {
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	i := indexDefinition(cfg, name)
+	if i < 0 {
+		return fmt.Errorf("%w: %q", ErrNoDefinition, name)
+	}
+	if name == cfg.Server.DefaultAgent {
+		return fmt.Errorf("config: %q is the default agent (server.default_agent); change that first", name)
+	}
+	cfg.Definitions = append(cfg.Definitions[:i], cfg.Definitions[i+1:]...)
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	return rewrite(path, func(src []byte) ([]byte, error) {
+		out, ok := spliceDefinition(src, name, nil)
+		if !ok {
+			return nil, fmt.Errorf("config: definition %q is not a [[definitions]] block in %s; edit the file by hand", name, path)
+		}
+		return out, nil
+	})
+}
+
+func indexDefinition(cfg *Config, name string) int {
+	for i, d := range cfg.Definitions {
+		if d.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// tomlSnippet encodes v as unindented TOML.
+func tomlSnippet(v any) ([]byte, error) {
 	var snippet bytes.Buffer
 	enc := toml.NewEncoder(&snippet)
 	enc.Indent = ""
-	if err := enc.Encode(struct {
-		Channels []Channel `toml:"channels"`
-	}{[]Channel{ch}}); err != nil {
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return snippet.Bytes(), nil
+}
+
+// definitionSnippet encodes one definition as a [[definitions]] block.
+func definitionSnippet(d Definition) ([]byte, error) {
+	return tomlSnippet(struct {
+		Definitions []Definition `toml:"definitions"`
+	}{[]Definition{d}})
+}
+
+var (
+	tableHeaderRE = regexp.MustCompile(`^\s*\[`)
+	defHeaderRE   = regexp.MustCompile(`^\s*\[\[\s*definitions\s*\]\]`)
+	defSubTableRE = regexp.MustCompile(`^\s*\[\[?\s*definitions\.`)
+	nameKeyRE     = regexp.MustCompile(`^\s*name\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+)
+
+// defBlock locates the [[definitions]] block whose name key is name in
+// lines: header is its header line, end the line after its last key or
+// sub-table (blank and comment lines before the next header belong to the
+// next block), comments the first of the comment lines directly above the
+// header. Lines inside multi-line strings are never headers. ok is false
+// when no such block exists (for example a definition written as an
+// inline table).
+func defBlock(lines []string, name string) (comments, header, end int, ok bool) {
+	isHeader := make([]bool, len(lines))
+	inString := false
+	for i, l := range lines {
+		isHeader[i] = !inString && tableHeaderRE.MatchString(l)
+		if strings.Count(l, `"""`)%2 == 1 || strings.Count(l, `'''`)%2 == 1 {
+			inString = !inString
+		}
+	}
+	for h := 0; h < len(lines); h++ {
+		if !isHeader[h] || !defHeaderRE.MatchString(lines[h]) {
+			continue
+		}
+		end = h + 1
+		for end < len(lines) && (!isHeader[end] || defSubTableRE.MatchString(lines[end])) {
+			end++
+		}
+		for end > h+1 && isBlankOrComment(lines[end-1]) {
+			end--
+		}
+		// Its own keys are the lines before the first sub-table.
+		found := false
+		for i := h + 1; i < end && !isHeader[i]; i++ {
+			if m := nameKeyRE.FindStringSubmatch(lines[i]); m != nil && (m[1] == name || m[2] == name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			h = end - 1
+			continue
+		}
+		comments = h
+		for comments > 0 && strings.HasPrefix(strings.TrimSpace(lines[comments-1]), "#") {
+			comments--
+		}
+		return comments, h, end, true
+	}
+	return 0, 0, 0, false
+}
+
+// spliceDefinition replaces the [[definitions]] block named name with
+// replacement, keeping the comment lines above it. A nil replacement
+// removes the block together with those comments and one blank line before
+// them. ok is false when no such block exists.
+func spliceDefinition(src []byte, name string, replacement []byte) (out []byte, ok bool) {
+	lines := strings.SplitAfter(string(src), "\n")
+	comments, header, end, ok := defBlock(lines, name)
+	if !ok {
+		return nil, false
+	}
+	var b strings.Builder
+	if replacement != nil {
+		b.WriteString(strings.Join(lines[:header], ""))
+		b.Write(replacement)
+		b.WriteString(strings.Join(lines[end:], ""))
+		return []byte(b.String()), true
+	}
+	start := comments
+	if start > 0 && strings.TrimSpace(lines[start-1]) == "" {
+		start--
+	}
+	if start == 0 {
+		// First block in the file: do not leave it starting with blank lines.
+		for end < len(lines) && strings.TrimSpace(lines[end]) == "" {
+			end++
+		}
+	}
+	b.WriteString(strings.Join(lines[:start], ""))
+	b.WriteString(strings.Join(lines[end:], ""))
+	return []byte(b.String()), true
+}
+
+func isBlankOrComment(line string) bool {
+	t := strings.TrimSpace(line)
+	return t == "" || strings.HasPrefix(t, "#")
+}
+
+// appendSnippet adds a commented TOML snippet to the end of src.
+func appendSnippet(src []byte, comment string, snippet []byte) []byte {
+	var out bytes.Buffer
+	out.Write(src)
+	if len(src) > 0 && src[len(src)-1] != '\n' {
+		out.WriteByte('\n')
+	}
+	fmt.Fprintf(&out, "\n%s\n", comment)
+	out.Write(snippet)
+	return out.Bytes()
+}
+
+// rewrite replaces the file at path with edit(original) and restores the
+// original if the result does not load.
+func rewrite(path string, edit func([]byte) ([]byte, error)) error {
+	orig, err := os.ReadFile(path)
+	if err != nil {
 		return err
 	}
-	return appendBlock(path, fmt.Sprintf("# default agent for channel %s set from chat on %s", ch.ID, time.Now().Format("2006-01-02")), snippet.Bytes())
+	out, err := edit(orig)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return err
+	}
+	if _, err := Load(path); err != nil {
+		_ = os.WriteFile(path, orig, 0o600)
+		return fmt.Errorf("rewritten config does not load, restored original: %w", err)
+	}
+	return nil
 }
 
 // appendBlock adds a commented TOML snippet to the end of the file at path
 // and restores the original if the result does not load.
 func appendBlock(path, comment string, snippet []byte) error {
-	orig, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var out bytes.Buffer
-	out.Write(orig)
-	if len(orig) > 0 && orig[len(orig)-1] != '\n' {
-		out.WriteByte('\n')
-	}
-	fmt.Fprintf(&out, "\n%s\n", comment)
-	out.Write(snippet)
-	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
-		return err
-	}
-	if _, err := Load(path); err != nil {
-		_ = os.WriteFile(path, orig, 0o600)
-		return fmt.Errorf("appended config does not load, restored original: %w", err)
-	}
-	return nil
+	return rewrite(path, func(src []byte) ([]byte, error) {
+		return appendSnippet(src, comment, snippet), nil
+	})
 }
 
 // Save writes the config to path, creating parent directories.

@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/environment"
 	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
 	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
+	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/store/sqlite"
 	"github.com/cleanunicorn/dancer/internal/surface"
 	"github.com/cleanunicorn/dancer/internal/surface/chat"
@@ -68,13 +70,13 @@ func TestAddAgentFlow(t *testing.T) {
 
 	// Cancel half-way: the thread is free again afterwards.
 	th := transport.ThreadID("C-dev/9.0")
-	tr.say(th, "add agent")
+	tr.say(th, "agent add")
 	tr.waitFor(t, th, "Name for the new agent")
 	tr.say(th, "cancel")
-	tr.waitFor(t, th, "add agent cancelled")
+	tr.waitFor(t, th, "agent add cancelled")
 
 	workdir := t.TempDir()
-	tr.say(th, "add agent")
+	tr.say(th, "agent add")
 	waitForNth(t, tr, th, "Name for the new agent", 2)
 	// Name: invalid, taken, then fine. Typed replies answer the question.
 	tr.say(th, "bad name")
@@ -152,7 +154,7 @@ func TestAddAgentFlowSurvivesRestart(t *testing.T) {
 	done1 := make(chan struct{})
 	go func() { c1.Run(ctx1); close(done1) }()
 	<-tr1.ready
-	tr1.say(th, "add agent")
+	tr1.say(th, "agent add")
 	tr1.waitFor(t, th, "Name for the new agent")
 	tr1.say(th, "reviewer")
 	tr1.waitFor(t, th, "Which model")
@@ -200,4 +202,174 @@ func TestAddAgentFlowSurvivesRestart(t *testing.T) {
 	if flows, _ := st.ListFlows(ctx2); len(flows) != 0 {
 		t.Fatalf("flow left behind: %+v", flows)
 	}
+}
+
+func TestEditAndDeleteAgent(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	workdir := t.TempDir()
+	for _, d := range []agent.Definition{
+		{Name: "coder", Kind: "fake", Model: "sonnet", PermissionMode: agent.PermissionManual, Environment: environment.Spec{Kind: environment.KindLocal, Workdir: workdir, Env: map[string]string{"FOO": "1"}}},
+		{Name: "reviewer", Kind: "fake", Model: "opus", PermissionMode: agent.PermissionManual, AllowedTools: []string{"Read"}, Environment: environment.Spec{Kind: environment.KindLocal}},
+		{Name: "tester", Kind: "fake", Model: "haiku", Environment: environment.Spec{Kind: environment.KindLocal}},
+	} {
+		if err := st.PutDefinition(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	c.DefaultDefinition = "coder"
+	c.ChannelAgents = map[string]string{"slack/C-review": "reviewer"}
+	var mu sync.Mutex
+	var updated []agent.Definition
+	var deleted []string
+	c.UpdateDefinition = func(_ context.Context, d agent.Definition) error {
+		mu.Lock()
+		defer mu.Unlock()
+		updated = append(updated, d)
+		return nil
+	}
+	c.DeleteDefinition = func(_ context.Context, name string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		deleted = append(deleted, name)
+		return nil
+	}
+	go c.Run(ctx)
+	<-tr.ready
+
+	// Edit: unknown name is refused; the menu shows current values; Save
+	// without a change is a no-op.
+	th := transport.ThreadID("C-dev/20.0")
+	tr.say(th, "agent edit nosuch")
+	tr.waitFor(t, th, "unknown agent")
+	tr.say(th, "agent edit reviewer")
+	menu := tr.waitFor(t, th, "What do you want to change?")
+	if menu.Prompt == nil || len(menu.Prompt.Options) != 7 || menu.Prompt.Options[0].Description != "opus" || menu.Prompt.Options[3].Description != "Read" ||
+		!strings.Contains(menu.Text, "• model: opus") {
+		t.Fatalf("edit menu = %+v\n%s", menu.Prompt, menu.Text)
+	}
+	tr.say(th, "save")
+	tr.waitFor(t, th, "nothing changed on *reviewer*")
+
+	// Change the model (button), the tools (typed), then save.
+	tr.say(th, "agent edit reviewer")
+	waitForNth(t, tr, th, "What do you want to change?", 2)
+	tr.say(th, "nope")
+	tr.waitFor(t, th, "pick one of the listed fields")
+	tr.say(th, "Model")
+	tr.waitFor(t, th, "Which model?")
+	tr.say(th, "haiku")
+	menu2 := waitForNthOut(t, tr, th, "What do you want to change?", 4) // 3rd was the re-ask after "nope"
+	if menu2.Prompt.Options[0].Description != "haiku" {
+		t.Fatalf("menu after model change = %+v", menu2.Prompt.Options)
+	}
+	tr.say(th, "tools")
+	tr.waitFor(t, th, "Pre-approved tools")
+	tr.say(th, "Read, Edit, Bash(go test:*)")
+	waitForNth(t, tr, th, "What do you want to change?", 5)
+	tr.say(th, "Save")
+	tr.waitFor(t, th, "agent *reviewer* updated")
+	def, err := st.GetDefinition(ctx, "reviewer")
+	if err != nil || def.Model != "haiku" || strings.Join(def.AllowedTools, ",") != "Read,Edit,Bash(go test:*)" || def.PermissionMode != agent.PermissionManual || def.Kind != "fake" {
+		t.Fatalf("edited definition = %+v err=%v", def, err)
+	}
+	mu.Lock()
+	if len(updated) != 1 || updated[0].Name != "reviewer" || updated[0].Model != "haiku" {
+		t.Fatalf("UpdateDefinition calls = %+v", updated)
+	}
+	mu.Unlock()
+
+	// Edit via the picker, change the environment, cancel: nothing persisted.
+	th2 := transport.ThreadID("C-dev/21.0")
+	tr.say(th2, "agent edit")
+	pick := tr.waitFor(t, th2, "Which agent do you want to edit?")
+	if pick.Prompt == nil || len(pick.Prompt.Options) != 3 {
+		t.Fatalf("picker = %+v", pick.Prompt)
+	}
+	tr.decide(th2, pick.Prompt.ID, "coder")
+	if m := tr.waitFor(t, th2, "What do you want to change?"); !strings.Contains(m.Text, "· env FOO") {
+		t.Fatalf("env not shown:\n%s", m.Text)
+	}
+	tr.say(th2, "Environment")
+	tr.waitFor(t, th2, "Where does it run?")
+	tr.say(th2, "docker")
+	tr.waitFor(t, th2, "Docker image?")
+	tr.say(th2, "ghcr.io/x/claude")
+	tr.waitFor(t, th2, "Host directory to mount")
+	tr.say(th2, "none")
+	m := waitForNthOut(t, tr, th2, "What do you want to change?", 2)
+	if !strings.Contains(m.Text, "docker · image `ghcr.io/x/claude` · fresh directory per task") || strings.Contains(m.Text, "env FOO") {
+		t.Fatalf("menu after environment change (env must not carry over to another kind):\n%s", m.Text)
+	}
+	tr.say(th2, "Cancel")
+	tr.waitFor(t, th2, "agent edit cancelled")
+	if def, _ := st.GetDefinition(ctx, "coder"); def.Environment.Kind != environment.KindLocal || def.Environment.Workdir != workdir {
+		t.Fatalf("cancelled edit persisted: %+v", def)
+	}
+
+	// Delete: defaults are protected; confirmation; the picker works too.
+	th3 := transport.ThreadID("C-dev/22.0")
+	tr.say(th3, "agent delete coder")
+	tr.waitFor(t, th3, "global default agent")
+	tr.say(th3, "agent delete reviewer")
+	tr.waitFor(t, th3, "default agent on slack/C-review")
+	tr.say(th3, "agent delete tester")
+	q := tr.waitFor(t, th3, "Delete agent *tester*")
+	if q.Prompt == nil || len(q.Prompt.Options) != 2 || q.Prompt.Options[0].Label != "Delete" {
+		t.Fatalf("confirm prompt = %+v", q.Prompt)
+	}
+	tr.say(th3, "no")
+	tr.waitFor(t, th3, "agent delete cancelled")
+	if _, err := st.GetDefinition(ctx, "tester"); err != nil {
+		t.Fatalf("tester deleted without confirmation: %v", err)
+	}
+	tr.say(th3, "agent delete")
+	p := tr.waitFor(t, th3, "Which agent do you want to delete?")
+	tr.decide(th3, p.Prompt.ID, "tester")
+	q2 := waitForNthOut(t, tr, th3, "Delete agent *tester*", 2)
+	tr.decide(th3, q2.Prompt.ID, "Delete")
+	tr.waitFor(t, th3, "agent *tester* deleted")
+	if _, err := st.GetDefinition(ctx, "tester"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("tester still stored: %v", err)
+	}
+	mu.Lock()
+	if len(deleted) != 1 || deleted[0] != "tester" {
+		t.Fatalf("DeleteDefinition calls = %v", deleted)
+	}
+	mu.Unlock()
+	tr.say(th3, "agents")
+	if o := tr.waitFor(t, th3, "*reviewer*"); strings.Contains(o.Text, "tester") {
+		t.Fatalf("deleted agent still listed: %s", o.Text)
+	}
+	if flows, _ := st.ListFlows(ctx); len(flows) != 0 {
+		t.Fatalf("flow left behind: %+v", flows)
+	}
+}
+
+// waitForNthOut waits for the nth outbound on th containing sub and returns it.
+func waitForNthOut(t *testing.T, tr *fakeTransport, th transport.ThreadID, sub string, n int) transport.Outbound {
+	t.Helper()
+	waitForNth(t, tr, th, sub, n)
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	seen := 0
+	for _, o := range tr.out {
+		if o.Thread == th && strings.Contains(o.Text, sub) {
+			seen++
+			if seen == n {
+				return o
+			}
+		}
+	}
+	return transport.Outbound{}
 }

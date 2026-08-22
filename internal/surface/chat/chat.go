@@ -39,8 +39,12 @@ const help = "Commands:\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
-	"• `agents` — list agent definitions\n" +
-	"• `add agent` — define a new agent, question by question"
+	"• `agent list` — list agent definitions (`agents` for short)\n" +
+	"• `agent add` — define a new agent, question by question\n" +
+	"• `agent edit <name>` — change an agent's model, environment, permissions, tools or prompt\n" +
+	"• `agent delete <name>` — remove an agent (asks to confirm)"
+
+const agentUsage = "usage: `agent list` · `agent add` · `agent edit [name]` · `agent delete [name]`"
 
 func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.Intent, bool) {
 	if in.Decision != nil {
@@ -72,9 +76,13 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Cancel{Thread: in.Thread}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
-	case "add", "new", "create", "define":
-		if w, _ := splitWord(rest); strings.EqualFold(w, "agent") || strings.EqualFold(w, "definition") {
-			return []surface.Intent{surface.AddAgent{Thread: in.Thread}}, true
+	case "agent", "definition":
+		return s.agentCommand(in, rest), true
+	case "add", "edit", "delete", "remove":
+		// The pre-namespace spelling: point at the new one rather than
+		// sending "add agent" to a Claude session as a prompt.
+		if w, tail := splitWord(rest); strings.EqualFold(w, "agent") && !strings.Contains(tail, " ") {
+			return []surface.Intent{surface.Say{Thread: in.Thread, Text: fmt.Sprintf("`%s agent` is now `agent %s` — %s", strings.ToLower(cmd), strings.ToLower(cmd), agentUsage)}}, true
 		}
 	}
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text}}, true
@@ -200,6 +208,36 @@ func describeInput(ev *agent.Event) string {
 	}
 	b, _ := json.Marshal(ev.ToolInput)
 	return string(b)
+}
+
+// agentCommand handles the `agent <sub> [name]` namespace.
+func (s *Surface) agentCommand(in transport.Inbound, rest string) []surface.Intent {
+	sub, tail := splitWord(rest)
+	name, extra := splitWord(tail)
+	usage := func() []surface.Intent { return []surface.Intent{surface.Say{Thread: in.Thread, Text: agentUsage}} }
+	switch strings.ToLower(sub) {
+	case "", "list", "ls":
+		if name != "" {
+			return usage()
+		}
+		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}
+	case "add", "new", "create":
+		if name != "" {
+			return usage()
+		}
+		return []surface.Intent{surface.AddAgent{Thread: in.Thread}}
+	case "edit", "update", "change":
+		if extra != "" {
+			return usage()
+		}
+		return []surface.Intent{surface.EditAgent{Thread: in.Thread, Agent: name}}
+	case "delete", "remove", "rm":
+		if extra != "" {
+			return usage()
+		}
+		return []surface.Intent{surface.DeleteAgent{Thread: in.Thread, Agent: name}}
+	}
+	return usage()
 }
 
 func splitWord(s string) (string, string) {

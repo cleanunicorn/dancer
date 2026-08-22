@@ -42,8 +42,10 @@ Design, decisions and progress: [PLAN.md](PLAN.md).
 | `default <agent>`            | make `<agent>` the default for this channel (saved to config.toml); `default` shows it |
 | reply in the thread          | follow-up to that task (resumes if idle)    |
 | button / reply to a question | answers the agent's `AskUserQuestion`       |
-| `add agent`                  | define a new agent question by question; saved to config.toml, usable at once |
-| `status` / `cancel` / `agents` / `help` | what they say                     |
+| `agent add`                  | define a new agent question by question; saved to config.toml, usable at once |
+| `agent edit <name>`          | change an agent's model, environment, permissions, tools or system prompt; `agent edit` picks from a list |
+| `agent delete <name>`        | remove an agent after a confirmation (refused while it is a default) |
+| `status` / `cancel` / `agent list` / `help` | what they say                 |
 
 ## Layout
 

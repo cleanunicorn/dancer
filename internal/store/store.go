@@ -60,14 +60,14 @@ type Store interface {
 	DeleteFlow(ctx context.Context, thread transport.ThreadID) error
 }
 
-// FlowState is a multi-step conversation with a human (e.g. "add agent")
+// FlowState is a multi-step conversation with a human (e.g. "agent add")
 // in progress on a thread. The answers given so far are kept so a restart
 // can replay them and continue with the next question.
 type FlowState struct {
 	Thread    transport.ThreadID
 	Transport string
 	Surface   string // surface that runs the flow
-	Kind      string // "add_agent"
+	Kind      string // "agent_add"
 	Answers   []string
 }
 
