@@ -55,6 +55,7 @@ func runSetup(cfgPath string) error {
 	cfg.Server.DB = ask("SQLite database path", filepath.Join(base, "dancer.db"))
 	cfg.Server.WorkdirRoot = ask("Root for per-task working directories", filepath.Join(base, "work"))
 	cfg.Server.IdleTimeout = config.Duration{Duration: 10 * time.Minute}
+	cfg.Server.DrainTimeout = config.Duration{Duration: 2 * time.Minute}
 
 	fmt.Println("\n2/4  Claude Code")
 	cfg.Claude.Binary = ask("claude binary", "claude")

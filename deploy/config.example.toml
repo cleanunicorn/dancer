@@ -5,6 +5,7 @@
 db = "/home/me/.config/dancer/dancer.db"
 workdir_root = "/home/me/.config/dancer/work"   # per-task dirs for definitions without a fixed workdir
 idle_timeout = "10m"        # keep a finished turn's process alive this long for follow-ups
+drain_timeout = "2m"        # on restart, let in-flight tool calls finish before stopping agents
 verbose = false             # true: post every tool call to the thread
 default_agent = "coder"     # used by `run <prompt>` without an agent name
 channels = ["slack"]        # "slack", "tui"

@@ -43,6 +43,11 @@ type Coordinator struct {
 	// WorkdirRoot hosts per-task working directories for definitions that
 	// do not pin one.
 	WorkdirRoot string
+	// DrainTimeout bounds how long Run waits for live tasks to stop after
+	// its context is cancelled (executors drain in-flight tool calls).
+	DrainTimeout time.Duration
+
+	drives sync.WaitGroup
 
 	transports map[string]transport.Transport
 
@@ -96,6 +101,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			c.shutdown(ctx)
 			wg.Wait()
 			return ctx.Err()
 		case in := <-inbox:
@@ -104,10 +110,45 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	}
 }
 
+// shutdown tells every live thread that dancer is restarting, then waits
+// (bounded) for executors to drain and persist their final state.
+func (c *Coordinator) shutdown(ctx context.Context) {
+	timeout := c.DrainTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout+15*time.Second)
+	defer cancel()
+
+	c.mu.Lock()
+	live := make(map[transport.ThreadID]executor.TaskID, len(c.threads))
+	for th, id := range c.threads {
+		live[th] = id
+	}
+	c.mu.Unlock()
+	for th, id := range live {
+		st, err := c.Store.GetTask(sctx, id)
+		if err != nil {
+			continue
+		}
+		c.Log.Info("shutdown: notifying live task", "task", id, "thread", th)
+		c.emitTo(sctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: th, TaskID: id, Task: &st,
+			Text: "⏸️ dancer is restarting — the agent finishes its current step and stops; reply in this thread to resume"})
+	}
+
+	done := make(chan struct{})
+	go func() { c.drives.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(timeout + 10*time.Second):
+		c.Log.Warn("shutdown: tasks still running after drain timeout")
+	}
+}
+
 // recover marks tasks that were live before a restart as idle; their
 // sessions are resumable with the next message on the thread.
 func (c *Coordinator) recover(ctx context.Context) error {
-	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued} {
+	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued, store.StatusInterrupted} {
 		tasks, err := c.Store.ListTasks(ctx, status)
 		if err != nil {
 			return err
@@ -121,6 +162,11 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				return err
 			}
 			c.Log.Info("recovered task", "task", t.ID, "status", t.Status)
+			if t.Status == store.StatusIdle {
+				tt := t
+				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
+					Text: "▶️ dancer is back — reply in this thread to continue where the agent left off"})
+			}
 		}
 	}
 	return nil
@@ -213,13 +259,14 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	if def.Environment.Workdir == "" && c.WorkdirRoot != "" {
 		def.Environment.Workdir = filepath.Join(c.WorkdirRoot, string(id))
 	}
-	st := store.TaskState{ID: id, Thread: it.Thread, Definition: def, Status: store.StatusQueued}
+	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Status: store.StatusQueued}
 	if err := c.Store.PutTask(ctx, st); err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "store: " + err.Error()}, s)
 		return
 	}
 	c.bind(it.Thread, id, s.Name())
 	c.broadcast(ctx, surface.Event{Kind: surface.EventStarted, Thread: it.Thread, TaskID: id, Task: &st})
+	c.drives.Add(1)
 	go c.drive(ctx, st, prompt)
 }
 
@@ -256,32 +303,51 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "task cannot be resumed — start a new one with `run`"}, s)
 		return
 	}
+	if st.Transport == "" {
+		st.Transport = s.Transport()
+	}
 	c.bind(it.Thread, st.ID, s.Name())
 	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: it.Thread, TaskID: st.ID, Task: &st})
+	c.drives.Add(1)
 	go c.drive(ctx, st, it.Text)
 }
 
 // drive runs one executor turn-loop for a task and records the outcome.
 func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt string) {
+	defer c.drives.Done()
 	st.Status = store.StatusRunning
 	_ = c.Store.PutTask(ctx, st)
 	sink := &taskSink{c: c, state: st}
 	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session}, sink)
 	final := sink.snapshot()
+	// The run may have ended because ctx was cancelled (shutdown); persist
+	// and notify with a context that still works.
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	switch {
+	case err != nil && errors.Is(err, context.Canceled) && ctx.Err() != nil:
+		// Shutdown: the session is resumable; recover() notifies the thread.
+		final.Status = store.StatusInterrupted
+		if final.Session == "" {
+			final.Status = store.StatusFailed
+		}
 	case err != nil && errors.Is(err, context.Canceled):
 		final.Status = store.StatusCancelled
 	case err != nil:
 		final.Status = store.StatusFailed
-		c.broadcast(ctx, surface.Event{Kind: surface.EventError, Thread: st.Thread, TaskID: st.ID, Task: &final, Text: err.Error()})
+		c.broadcast(pctx, surface.Event{Kind: surface.EventError, Thread: st.Thread, TaskID: st.ID, Task: &final, Text: err.Error()})
 	case final.Session != "":
 		final.Status = store.StatusIdle
 	default:
 		final.Status = store.StatusDone
 	}
-	_ = c.Store.PutTask(ctx, final)
+	if err := c.Store.PutTask(pctx, final); err != nil {
+		c.Log.Error("persist final task state", "task", st.ID, "err", err)
+	}
 	c.unbind(st.Thread, st.ID)
-	c.broadcast(ctx, surface.Event{Kind: surface.EventFinished, Thread: st.Thread, TaskID: st.ID, Task: &final})
+	if ctx.Err() == nil {
+		c.broadcast(pctx, surface.Event{Kind: surface.EventFinished, Thread: st.Thread, TaskID: st.ID, Task: &final})
+	}
 }
 
 // taskSink implements executor.Sink for one task.
@@ -315,7 +381,9 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	}
 	st := s.state
 	s.mu.Unlock()
-	_ = s.c.Store.PutTask(ctx, st)
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	_ = s.c.Store.PutTask(pctx, st)
+	cancel()
 	if ev.Type == agent.EventNeedsPermission {
 		return // rendered by AwaitDecision with its prompt id
 	}
@@ -427,6 +495,16 @@ func (c *Coordinator) emit(ctx context.Context, ev surface.Event, s surface.Surf
 	}
 }
 
+// emitTo renders an event through every surface bound to a transport
+// (all surfaces when the transport is unknown).
+func (c *Coordinator) emitTo(ctx context.Context, transportName string, ev surface.Event) {
+	for _, s := range c.Surfaces {
+		if transportName == "" || s.Transport() == transportName {
+			c.emit(ctx, ev, s)
+		}
+	}
+}
+
 // broadcast renders an event through every surface.
 func (c *Coordinator) broadcast(ctx context.Context, ev surface.Event) {
 	for _, s := range c.Surfaces {
@@ -434,11 +512,15 @@ func (c *Coordinator) broadcast(ctx context.Context, ev surface.Event) {
 	}
 }
 
+// append writes a record to the log. It must not be lost during shutdown,
+// so it ignores cancellation of ctx.
 func (c *Coordinator) append(ctx context.Context, id executor.TaskID, th transport.ThreadID, kind string, v any) int64 {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return 0
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	seq, err := c.Store.Append(ctx, store.Record{At: time.Now(), Task: id, Thread: th, Kind: kind, Payload: b})
 	if err != nil {
 		c.Log.Error("append failed", "err", err)

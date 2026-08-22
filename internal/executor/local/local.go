@@ -25,6 +25,10 @@ type Executor struct {
 	// IdleTimeout is how long a finished turn keeps its process alive waiting
 	// for a follow-up before it is stopped (the session stays resumable).
 	IdleTimeout time.Duration
+	// DrainTimeout bounds how long a shutdown (parent context cancelled)
+	// waits for in-flight tool calls to finish before stopping the agent.
+	// Zero stops immediately. Cancel() always stops immediately.
+	DrainTimeout time.Duration
 
 	mu      sync.Mutex
 	running map[executor.TaskID]*live
@@ -43,7 +47,7 @@ func New(agents map[agent.Kind]agent.Agent, envs map[environment.Kind]environmen
 	if idle <= 0 {
 		idle = 10 * time.Minute
 	}
-	return &Executor{Agents: agents, Envs: envs, IdleTimeout: idle, running: map[executor.TaskID]*live{}}
+	return &Executor{Agents: agents, Envs: envs, IdleTimeout: idle, DrainTimeout: 2 * time.Minute, running: map[executor.TaskID]*live{}}
 }
 
 func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink) error {
@@ -71,11 +75,14 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// The agent process must outlive runCtx so a shutdown can drain it;
+	// its lifetime is managed explicitly through run.Stop().
+	procCtx := context.WithoutCancel(runCtx)
 	var run agent.Run
 	if t.Session != "" {
-		run, err = ag.Resume(runCtx, env, t.Definition, t.Session, t.Prompt)
+		run, err = ag.Resume(procCtx, env, t.Definition, t.Session, t.Prompt)
 	} else {
-		run, err = ag.Start(runCtx, env, t.Definition, t.Prompt)
+		run, err = ag.Start(procCtx, env, t.Definition, t.Prompt)
 	}
 	if err != nil {
 		return err
@@ -94,38 +101,71 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 	idle.Stop()
 	defer idle.Stop()
 
-	events := run.Events()
+	inflight := map[string]bool{} // tool_use ids without a tool_result yet
+	handle := func(ev agent.Event) {
+		switch ev.Type {
+		case agent.EventToolUse:
+			inflight[ev.ToolID] = true
+			sink.OnEvent(ctx, t.ID, ev)
+		case agent.EventToolResult:
+			delete(inflight, ev.ToolID)
+			sink.OnEvent(ctx, t.ID, ev)
+		case agent.EventNeedsPermission, agent.EventQuestion:
+			sink.OnEvent(ctx, t.ID, ev)
+			go e.relayPermission(ctx, t.ID, ev, run, sink)
+		case agent.EventResult, agent.EventError:
+			inflight = map[string]bool{}
+			sink.OnEvent(ctx, t.ID, ev)
+			idle.Reset(e.IdleTimeout)
+		default:
+			sink.OnEvent(ctx, t.ID, ev)
+		}
+	}
+	stop := func() {
+		run.Stop()
+		for ev := range events(run) {
+			sink.OnEvent(ctx, t.ID, ev)
+		}
+	}
+
+	evs := run.Events()
 	for {
 		select {
-		case ev, ok := <-events:
+		case ev, ok := <-evs:
 			if !ok {
 				return nil
 			}
-			switch ev.Type {
-			case agent.EventNeedsPermission, agent.EventQuestion:
-				sink.OnEvent(ctx, t.ID, ev)
-				go e.relayPermission(ctx, t.ID, ev, run, sink)
-			case agent.EventResult, agent.EventError:
-				sink.OnEvent(ctx, t.ID, ev)
-				idle.Reset(e.IdleTimeout)
-			default:
-				sink.OnEvent(ctx, t.ID, ev)
-			}
+			handle(ev)
 		case <-l.activity:
 			idle.Stop()
 		case <-idle.C:
-			run.Stop()
-			// Drain remaining events (the closed channel ends the loop).
-			for ev := range events {
-				sink.OnEvent(ctx, t.ID, ev)
-			}
+			stop()
 			return nil
 		case <-runCtx.Done():
-			run.Stop()
+			// Shutdown (parent cancelled) drains in-flight tool calls;
+			// an explicit Cancel stops at once.
+			if ctx.Err() != nil && e.DrainTimeout > 0 && len(inflight) > 0 {
+				drain := time.NewTimer(e.DrainTimeout)
+				defer drain.Stop()
+				for len(inflight) > 0 {
+					select {
+					case ev, ok := <-evs:
+						if !ok {
+							return runCtx.Err()
+						}
+						handle(ev)
+					case <-drain.C:
+						inflight = nil
+					}
+				}
+			}
+			stop()
 			return runCtx.Err()
 		}
 	}
 }
+
+func events(run agent.Run) <-chan agent.Event { return run.Events() }
 
 func (e *Executor) relayPermission(ctx context.Context, id executor.TaskID, ev agent.Event, run agent.Run, sink executor.Sink) {
 	d, err := sink.AwaitDecision(ctx, id, ev)

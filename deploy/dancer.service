@@ -21,7 +21,8 @@ ExecStart=__BIN__ run
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGTERM
-TimeoutStopSec=30
+# drain_timeout (default 2m) + margin: in-flight tool calls finish before stop
+TimeoutStopSec=150
 
 [Install]
 WantedBy=multi-user.target

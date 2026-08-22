@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -96,6 +97,7 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		},
 		cfg.Server.IdleTimeout.Duration,
 	)
+	ex.DrainTimeout = cfg.Server.DrainTimeout.Duration
 
 	transportNames := cfg.Server.Transports
 	surfaceCfgs := cfg.Surfaces
@@ -133,9 +135,10 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	c := coordinator.New(st, ex, transports, surfaces, log)
 	c.DefaultDefinition = cfg.Server.DefaultAgent
 	c.WorkdirRoot = cfg.Server.WorkdirRoot
+	c.DrainTimeout = cfg.Server.DrainTimeout.Duration
 	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions))
 	err = c.Run(ctx)
-	if err == context.Canceled {
+	if errors.Is(err, context.Canceled) {
 		log.Info("dancer stopped")
 		return nil
 	}

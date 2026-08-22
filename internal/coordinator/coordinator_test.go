@@ -262,6 +262,63 @@ func TestTwoSurfacesOneTransport(t *testing.T) {
 	tr.waitFor(t, th3, "answers=Banana|medium, actually")
 }
 
+func TestGracefulRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "c.db")
+	st, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	c.DefaultDefinition = "coder"
+	c.DrainTimeout = time.Second
+	runDone := make(chan error, 1)
+	go func() { runDone <- c.Run(ctx) }()
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/9.0")
+	tr.say(th, "run coder do it")
+	tr.waitFor(t, th, "wants to run") // task is live, waiting on a permission
+
+	cancel() // SIGTERM
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("coordinator did not stop")
+	}
+	tr.waitFor(t, th, "dancer is restarting")
+	id := firstTask(t, st)
+	ts, _ := st.GetTask(context.Background(), id)
+	if ts.Status != store.StatusInterrupted || ts.Session != "sess-1" || ts.Transport != "slack" {
+		t.Fatalf("task after shutdown = %+v", ts)
+	}
+	st.Close()
+
+	// Restart: recovered task gets a "back" notice and the next reply resumes it.
+	st2, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	tr2 := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c2 := New(st2, ex, []transport.Transport{tr2}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c2.DefaultDefinition = "coder"
+	go c2.Run(ctx2)
+	<-tr2.ready
+	tr2.waitFor(t, th, "dancer is back")
+	tr2.say(th, "carry on")
+	tr2.waitFor(t, th, "resuming session")
+	tr2.waitFor(t, th, "echo:carry on")
+}
+
 func firstTask(t *testing.T, st store.Store) executor.TaskID {
 	tasks, err := st.ListTasks(context.Background(), "")
 	if err != nil || len(tasks) == 0 {

@@ -40,7 +40,9 @@ type Server struct {
 	DB          string   `toml:"db"`
 	WorkdirRoot string   `toml:"workdir_root"`
 	IdleTimeout Duration `toml:"idle_timeout"`
-	Verbose     bool     `toml:"verbose"`
+	// DrainTimeout: on shutdown, how long to let in-flight tool calls finish.
+	DrainTimeout Duration `toml:"drain_timeout"`
+	Verbose      bool     `toml:"verbose"`
 	// DefaultAgent is used by `run <prompt>` without an agent name.
 	DefaultAgent string `toml:"default_agent"`
 	// Transports to start: "slack", "terminal". Defaults to slack when
@@ -124,6 +126,9 @@ func (c *Config) applyDefaults(path string) {
 	}
 	if c.Server.IdleTimeout.Duration == 0 {
 		c.Server.IdleTimeout.Duration = 10 * time.Minute
+	}
+	if c.Server.DrainTimeout.Duration == 0 {
+		c.Server.DrainTimeout.Duration = 2 * time.Minute
 	}
 	if c.Claude.Binary == "" {
 		c.Claude.Binary = "claude"

@@ -29,6 +29,7 @@ type Record struct {
 // TaskState is the projection the coordinator reads.
 type TaskState struct {
 	ID         executor.TaskID
+	Transport  string // transport the thread belongs to ("slack", "terminal")
 	Thread     transport.ThreadID
 	Definition agent.Definition
 	Session    string
@@ -59,7 +60,8 @@ const (
 	StatusQueued            = "queued"
 	StatusRunning           = "running"
 	StatusWaitingPermission = "waiting_permission"
-	StatusIdle              = "idle" // turn finished, session resumable
+	StatusIdle              = "idle"        // turn finished, session resumable
+	StatusInterrupted       = "interrupted" // stopped by a dancer shutdown, session resumable
 	StatusDone              = "done"
 	StatusFailed            = "failed"
 	StatusCancelled         = "cancelled"

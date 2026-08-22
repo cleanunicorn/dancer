@@ -95,6 +95,21 @@ user so it finds your Claude Code login and ssh/docker config. Edit
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
 
+## Restarting dancer
+
+`make service-restart` (or Ctrl-C / `systemctl restart dancer`) is safe while
+agents run:
+
+1. Every live thread gets "⏸️ dancer is restarting — reply in this thread to resume".
+2. Agents that are in the middle of a tool call (a test run, a build) are given
+   `drain_timeout` (default 2m) to finish that call; then their processes stop.
+   Files in the workdir stay.
+3. On start, those threads get "▶️ dancer is back"; your next reply resumes the
+   Claude session (`--resume`) where it left off.
+
+`status` shows such tasks as *interrupted* until resumed. `cancel` is still
+immediate. The systemd unit's `TimeoutStopSec` is set above `drain_timeout`.
+
 ## Environments
 
 **local** — the agent runs on the dancer host in `workdir` (or a fresh
