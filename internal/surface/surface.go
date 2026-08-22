@@ -145,10 +145,10 @@ const (
 type Event struct {
 	Kind     EventKind
 	Thread   transport.ThreadID
-	Task     *store.TaskState // nil for Reply/Error without a task
+	Task     *store.TaskState // nil for Reply/Error without a task; EventNotice always carries the task whose requester it addresses
 	TaskID   executor.TaskID
 	Agent    *agent.Event    // EventAgent, EventPermission
 	PromptID string          // EventPermission/EventQuestion: id the Decide intent must echo
 	Question *agent.Question // EventQuestion: the single question this event carries
-	Text     string          // EventReply, EventError
+	Text     string          // EventReply, EventNotice, EventAllowed, EventError
 }
