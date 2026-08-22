@@ -407,9 +407,17 @@ func TestMentionStaysWithRequester(t *testing.T) {
 		t.Errorf("requester = %q err=%v, want u1", ts.Requester, err)
 	}
 
-	// A new task on the same thread, started by u2, is u2's.
+	// A new task on the same thread, started by u2, is u2's. `run` is
+	// refused while the thread is bound to the first task, so wait for
+	// exactly that to clear.
 	deadline = time.Now().Add(3 * time.Second)
-	for ex.IsRunning(id) && time.Now().Before(deadline) {
+	for {
+		if _, busy := c.lookup(th); !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("thread still bound to the first task after the idle timeout")
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	tr.sayAs(th, "u2", "run coder other thing")
