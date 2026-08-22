@@ -143,7 +143,7 @@ files first — they carry the contract, the concrete packages under them are im
 - **The Claude handshake is protocol-sensitive** (`internal/agent/claude`): spawn with
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
   `can_use_tool` with a `control_response`. Verified against claude 2.1.239; `parse_test.go` fixtures
-  pin the mapping, `PLAN.md` has the stream-json → `agent.Event` table.
+  pin the stream-json → `agent.Event` mapping and `testdata/session.jsonl` is a real captured session.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.
@@ -163,10 +163,10 @@ files first — they carry the contract, the concrete packages under them are im
 ## Conventions
 
 - Only non-stdlib deps: `modernc.org/sqlite`, `slack-go/slack`, `BurntSushi/toml`. Adding a dependency
-  is a decision — record it in `PLAN.md` under Decisions.
+  is a decision — justify it in the PR and in the package doc of the package that uses it.
 - Package docs carry the design rationale; keep them accurate when the contract changes.
-- `PLAN.md` is the living plan: a Progress checkbox list, numbered Decisions, and a Validation log
-  table. Tick boxes and add a validation row as work lands.
+- A feature's plan lives in its PR: a Progress checkbox list kept current as work lands, and the
+  validation that was run (`make test-race`, `make e2e`, `make restart-drill`) named in the body.
 - `.claude/worktrees/` holds other worktrees' full copies of the tree (gitignored). Scope greps and
   `find` to `cmd/ internal/` or exclude it, or you will read another branch's files as if they were
   yours.

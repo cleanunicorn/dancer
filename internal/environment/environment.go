@@ -73,6 +73,26 @@ type Spec struct {
 	ReuseKey string
 }
 
+// String names the environment in a few words: the kind, the docker image
+// or ssh host, and the working directory when one is set.
+func (s Spec) String() string {
+	out := string(s.Kind)
+	switch s.Kind {
+	case KindDocker:
+		if s.Image != "" {
+			out += " " + s.Image
+		}
+	case KindSSH:
+		if s.Host != "" {
+			out += " " + s.Host
+		}
+	}
+	if s.Workdir != "" {
+		out += " " + s.Workdir
+	}
+	return out
+}
+
 // Process is a running command inside an environment.
 type Process interface {
 	Stdin() io.WriteCloser
