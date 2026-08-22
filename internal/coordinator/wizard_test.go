@@ -85,7 +85,7 @@ func TestAddAgentFlow(t *testing.T) {
 	tr.waitFor(t, th, "already exists")
 	tr.say(th, "reviewer")
 	model := tr.waitFor(t, th, "Which model")
-	if model.Prompt == nil || !strings.HasPrefix(model.Prompt.ID, "chat:") || len(model.Prompt.Options) != 3 {
+	if model.Prompt == nil || !strings.HasPrefix(model.Prompt.ID, "chat:") || len(model.Prompt.Options) != 4 {
 		t.Fatalf("model prompt = %+v", model.Prompt)
 	}
 	// A button click answers too.

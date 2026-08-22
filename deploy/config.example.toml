@@ -35,7 +35,7 @@ agent = "sandbox"
 
 [[definitions]]
 name = "coder"
-model = "sonnet"
+model = "sonnet"                          # haiku | sonnet | opus | fable, or a full model id
 permission_mode = "manual"                 # manual | acceptEdits | auto | bypassPermissions
 allowed_tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"]
 system_prompt = "You are working inside a git repository. Commit when done."
