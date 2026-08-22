@@ -27,7 +27,7 @@ const homeSkeleton = "/opt/dancer-home"
 // provisionVersion changes whenever provisionScript does; it is part of the
 // derived image tag, so an upgraded dancer rebuilds instead of reusing an
 // image built by the old script.
-const provisionVersion = "1"
+const provisionVersion = "2"
 
 // agentInstall maps an agent kind to the command that installs its CLI.
 var agentInstall = map[string]string{
@@ -235,7 +235,7 @@ pm_install() {
 
 pm_refresh
 say "installing base tools"
-pm_install ca-certificates curl git
+pm_install ca-certificates curl git sudo
 # Nice to have for agents that grep; not worth failing the build over.
 pm_install ripgrep || say "ripgrep unavailable, skipping"
 `, uid, gid, ProvisionedHome)
@@ -285,6 +285,19 @@ else
 fi
 mkdir -p "$DANCER_HOME"
 chown -R "$DANCER_UID:$DANCER_GID" "$DANCER_HOME"
+
+# The agent runs as this user, not root, so the workdir it shares with the
+# host stays owned by the human. Without sudo it could not install anything
+# it turns out to need mid-task, which is most of the point of a container
+# it gets to keep. What it may actually run is still gated by the agent's
+# permission mode.
+if command -v sudo >/dev/null 2>&1; then
+	mkdir -p /etc/sudoers.d
+	printf '#%%s ALL=(ALL) NOPASSWD:ALL\n' "$DANCER_UID" > /etc/sudoers.d/dancer
+	chmod 0440 /etc/sudoers.d/dancer
+else
+	say "no sudo in this image; the agent cannot install packages itself"
+fi
 
 # The workdir is bind-mounted from the host and owned by the host user; git
 # refuses to touch a repo it thinks belongs to someone else.

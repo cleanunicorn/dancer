@@ -79,7 +79,12 @@ type Env struct {
 	gid   int
 	state string
 
+	// key is the reuse scope's identity ("" = throwaway).
+	key string
 	// name is the container name for a reused environment ("" = throwaway).
+	// It is only known after Start has resolved the image, because a
+	// rebuilt image has to mean a new container rather than an adopted one
+	// still running the old build.
 	name string
 	// volume is the persistent $HOME volume for a reused environment.
 	volume string
@@ -175,8 +180,7 @@ func (f Factory) New(spec environment.Spec) (environment.Environment, error) {
 		image: spec.Image,
 	}
 	if key := reuseKey(spec); key != "" {
-		h := hash(spec.Image, key, spec.Workdir, user, strings.Join(f.ExtraRunArgs, " "), envFingerprint(spec.Env))
-		e.name = "dancer-" + slug(key) + "-" + h
+		e.key = key
 		// The home volume deliberately leaves the image out of its name:
 		// upgrading the image must not throw away the agent's login.
 		e.volume = "dancer-home-" + slug(key) + "-" + hash(key)
@@ -215,6 +219,8 @@ func (e *Env) Start(ctx context.Context) error {
 		home = imageHome(ctx, e.bin, image)
 	}
 	e.home = home
+
+	e.name = e.nameFor(image)
 
 	if e.name != "" {
 		id, err := e.adopt(ctx)
@@ -287,6 +293,18 @@ func (e *Env) Start(ctx context.Context) error {
 	hold(e.name)
 	e.touch()
 	return nil
+}
+
+// nameFor is the container name this environment shares under, given the
+// image it ended up with. The resolved image is part of the name on purpose:
+// when provisioning rebuilds — a new agent CLI, changed packages, a newer
+// dancer — the next task must get a container built from the new image
+// instead of adopting the one still running the old one.
+func (e *Env) nameFor(image string) string {
+	if e.key == "" {
+		return ""
+	}
+	return "dancer-" + slug(e.key) + "-" + hash(image, e.key, e.spec.Workdir, e.user, strings.Join(e.extra, " "), envFingerprint(e.spec.Env))
 }
 
 // adopt returns the id of an existing reusable container, starting it again

@@ -314,7 +314,9 @@ throwaway container started from `image`:
 - `ca-certificates`, `curl`, `git`, and `ripgrep` if the distro has it
 - Node 18+ if the image has none
 - the agent CLI for the definition's `kind` — `claude` or `codex`
-- a user with your uid/gid and a writable `$HOME` at `/home/dancer`
+- a user with your uid/gid and a writable `$HOME` at `/home/dancer`, with
+  passwordless `sudo`, so the agent can install whatever it turns out to need
+  mid-task (what it may actually run is still gated by its permission mode)
 - `git config --system safe.directory '*'`, so git will touch the mounted
   workdir even though it belongs to a different uid
 

@@ -88,6 +88,7 @@ func TestProvisionScriptContents(t *testing.T) {
 		"'postgresql-client'",
 		"pip install ruff",
 		"safe.directory",
+		"/etc/sudoers.d/dancer",
 		homeSkeleton,
 	} {
 		if !strings.Contains(s, want) {
@@ -101,6 +102,11 @@ func TestProvisionScriptContents(t *testing.T) {
 	}
 	if strings.Contains(s, "@openai/codex") {
 		t.Error("installed codex without being asked")
+	}
+	// The sudoers rule must name the uid, not a user name: on an image that
+	// already had a user at that uid we keep its name, whatever it is.
+	if !strings.Contains(s, `printf '#%s ALL=(ALL) NOPASSWD:ALL\n' "$DANCER_UID"`) {
+		t.Errorf("sudoers rule is not keyed to the uid:\n%s", s)
 	}
 }
 

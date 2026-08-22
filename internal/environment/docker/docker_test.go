@@ -120,33 +120,37 @@ func TestContainerNaming(t *testing.T) {
 		return e.(*Env)
 	}
 	a := mk(base)
-	if a.name == "" || a.volume == "" {
+	if a.nameFor("alpine:3.20") == "" || a.volume == "" {
 		t.Fatal("a reused environment needs a container and volume name")
 	}
-	if b := mk(base); b.name != a.name || b.volume != a.volume {
-		t.Fatalf("same spec gave different names: %s/%s vs %s/%s", a.name, a.volume, b.name, b.volume)
+	if b := mk(base); b.nameFor("alpine:3.20") != a.nameFor("alpine:3.20") || b.volume != a.volume {
+		t.Fatal("same spec gave different names")
+	}
+
+	// Provisioning rebuilding the image must not adopt the container still
+	// running the old build.
+	if a.nameFor("dancer-env:aaaa") == a.nameFor("dancer-env:bbbb") {
+		t.Error("a rebuilt image reused the container name")
 	}
 
 	changed := base
 	changed.Image = "alpine:3.19"
 	c := mk(changed)
-	if c.name == a.name {
-		t.Error("changing the image reused the container name")
-	}
 	if c.volume != a.volume {
 		t.Error("changing the image threw away the home volume")
 	}
 
 	other := base
 	other.ReuseKey = "C1/99.9"
-	if d := mk(other); d.name == a.name || d.volume == a.volume {
+	d := mk(other)
+	if d.nameFor("alpine:3.20") == a.nameFor("alpine:3.20") || d.volume == a.volume {
 		t.Error("a different thread shared the container or volume")
 	}
 
 	throwaway := base
 	throwaway.Reuse = environment.ReuseTask
-	if e := mk(throwaway); e.name != "" || e.volume != "" {
-		t.Errorf("a per-task environment should not be named: %q/%q", e.name, e.volume)
+	if e := mk(throwaway); e.nameFor("alpine:3.20") != "" || e.volume != "" {
+		t.Errorf("a per-task environment should not be named: %q/%q", e.nameFor("alpine:3.20"), e.volume)
 	}
 }
 
