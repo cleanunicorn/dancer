@@ -1,0 +1,25 @@
+# Oneshot updater for dancer: fetch origin/main, rebuild, restart the service.
+# Fired by dancer-update.timer. Install both with `make update-install`.
+#
+# Runs as root: it writes /usr/local/bin/dancer and restarts dancer.service.
+# The deploy checkout (DANCER_SRC) is root-owned and separate from any dev
+# checkout — the script hard-resets it on every run.
+[Unit]
+Description=dancer — pull origin/main, rebuild, restart
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DANCER_REPO=__REPO__
+Environment=DANCER_BRANCH=__BRANCH__
+Environment=DANCER_SRC=__SRC__
+Environment=DANCER_BIN=__BIN__
+Environment=DANCER_SERVICE=dancer.service
+Environment=GO=__GO__
+Environment=DANCER_UPDATE_STATE=/var/lib/dancer/deployed.sha
+Environment=HOME=/root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=__UPDATER__
+# A build plus a drain-aware restart: generous, but never hang the timer forever.
+TimeoutStartSec=900

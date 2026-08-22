@@ -12,9 +12,20 @@ HOME_   ?= $(shell getent passwd $(USER_) | cut -d: -f6)
 UNIT    ?= /etc/systemd/system/dancer.service
 GO      ?= go
 
+# auto-update: a root-owned deploy clone, polled by a systemd timer
+REPO       ?= $(shell git remote get-url origin)
+BRANCH     ?= main
+SRC        ?= /opt/dancer/src
+INTERVAL   ?= 5min
+UPDATER    ?= /usr/local/lib/dancer/dancer-update.sh
+UPDATE_UNIT ?= /etc/systemd/system/dancer-update.service
+UPDATE_TIMER ?= /etc/systemd/system/dancer-update.timer
+GO_BIN     ?= $(shell command -v $(GO))
+
 .DEFAULT_GOAL := help
 .PHONY: help build run run-terminal setup doctor test test-race test-live e2e restart-drill auto-resume-drill lint fmt tidy clean \
-        install uninstall service-install service-uninstall service-restart service-status service-logs
+        install uninstall service-install service-uninstall service-restart service-status service-logs \
+        update-install update-uninstall update-now update-status update-logs
 
 ## ---- build -----------------------------------------------------------------
 
@@ -99,6 +110,36 @@ service-status: ## Show service status
 
 service-logs: ## Follow service logs
 	journalctl -u dancer -f
+
+## ---- auto-update from git ---------------------------------------------------
+
+update-install: ## Poll REPO for new commits every INTERVAL=$(INTERVAL), rebuild, restart (SRC=$(SRC))
+	@test -n "$(GO_BIN)" || { echo "go not found on PATH; pass GO_BIN=/path/to/go"; exit 1; }
+	sudo install -d $(dir $(UPDATER))
+	sudo install -m 0755 scripts/dancer-update.sh $(UPDATER)
+	sed -e 's|__REPO__|$(REPO)|g' -e 's|__BRANCH__|$(BRANCH)|g' -e 's|__SRC__|$(SRC)|g' \
+		-e 's|__BIN__|$(BIN)|g' -e 's|__GO__|$(GO_BIN)|g' -e 's|__UPDATER__|$(UPDATER)|g' \
+		deploy/dancer-update.service | sudo tee $(UPDATE_UNIT) > /dev/null
+	sed -e 's|__INTERVAL__|$(INTERVAL)|g' deploy/dancer-update.timer | sudo tee $(UPDATE_TIMER) > /dev/null
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now dancer-update.timer
+	@$(MAKE) --no-print-directory update-status
+
+update-uninstall: ## Stop the timer and remove the updater (leaves SRC and the binary)
+	-sudo systemctl disable --now dancer-update.timer
+	-sudo rm -f $(UPDATE_UNIT) $(UPDATE_TIMER) $(UPDATER)
+	sudo systemctl daemon-reload
+
+update-now: ## Run one update immediately instead of waiting for the timer
+	sudo systemctl start dancer-update.service
+	@journalctl -u dancer-update.service -n 20 --no-pager
+
+update-status: ## Show when the update timer last ran and next fires
+	systemctl list-timers dancer-update.timer --no-pager
+	@systemctl status dancer-update.service --no-pager | head -6
+
+update-logs: ## Follow updater logs
+	journalctl -u dancer-update.service -f
 
 ## ---- help -------------------------------------------------------------------
 

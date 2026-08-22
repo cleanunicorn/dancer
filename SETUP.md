@@ -139,6 +139,58 @@ user so it finds your Claude Code login and ssh/docker config. Edit
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
 
+## 7. Keep it up to date automatically
+
+```sh
+make update-install    # poll origin/main every 5 minutes; rebuild and restart on a new commit
+make update-status     # when it last ran, when it fires next
+make update-logs
+```
+
+This installs two more system units and a copy of `scripts/dancer-update.sh`:
+
+- `dancer-update.timer` — fires 2 minutes after boot, then every `INTERVAL`
+  (default `5min`). `Persistent=true`, so a tick missed while the machine was
+  off runs once on the next boot.
+- `dancer-update.service` — a oneshot that does the work, as root.
+
+Each run: `git fetch` into a **deploy checkout** at `SRC` (default
+`/opt/dancer/src`, cloned on the first run), compare `HEAD` with
+`origin/main`, and stop there if they match. Otherwise hard-reset the checkout
+to `origin/main`, build into a scratch directory, smoke-test the new binary,
+replace `/usr/local/bin/dancer` with an atomic rename, and
+`systemctl restart dancer`.
+
+The deploy checkout is root-owned and separate from any checkout you edit in —
+it is reset on every run, so never work in it. If the build or the smoke test
+fails, the old binary keeps running and the failure is in
+`journalctl -u dancer-update.service`.
+
+Restarts go through the same drain path as everything else (see *Restarting
+dancer* below): live threads are notified, in-flight tool calls get
+`drain_timeout` to finish, and interrupted tasks resume themselves after the
+new binary starts. A deploy that lands mid-task is not a lost task.
+
+Overridable on install:
+
+| variable   | default                    | what it is                          |
+|------------|----------------------------|-------------------------------------|
+| `REPO`     | this clone's `origin` URL  | what to pull from                   |
+| `BRANCH`   | `main`                     | branch to track                     |
+| `INTERVAL` | `5min`                     | poll period                         |
+| `SRC`      | `/opt/dancer/src`          | the deploy checkout                 |
+| `BIN`      | `/usr/local/bin/dancer`    | where the binary is installed       |
+
+```sh
+make update-install BRANCH=release INTERVAL=15min SRC=/opt/dancer/src
+make update-now          # deploy right now instead of waiting for the tick
+make update-uninstall    # stop and remove the timer; the binary stays
+```
+
+A private repo needs credentials root can use non-interactively — a deploy key
+plus `REPO=git@github.com:you/dancer.git` and a `/root/.ssh/config` entry, or a
+token in the URL.
+
 ## Files from the agent
 
 When the agent mentions a file path in its reply (`/tmp/settings-top.png`,

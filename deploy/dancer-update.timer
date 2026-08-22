@@ -1,0 +1,18 @@
+# Poll origin/main for new commits. Install with `make update-install`.
+#   systemctl list-timers dancer-update.timer     when it next fires
+#   journalctl -u dancer-update.service -f        what it did
+[Unit]
+Description=dancer — periodic check for new commits on origin/main
+
+[Timer]
+# First check shortly after boot, then every interval.
+OnBootSec=2min
+OnUnitActiveSec=__INTERVAL__
+# Spread the load off exact minute boundaries.
+RandomizedDelaySec=30
+# If the machine was off when a tick was due, run once on the next boot.
+Persistent=true
+Unit=dancer-update.service
+
+[Install]
+WantedBy=timers.target

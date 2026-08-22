@@ -58,6 +58,9 @@ Milestone 5 — deploy-ready on Linux
 - [ ] Live drill of automatic resume against Slack (restart mid-task, thread continues untouched)
 - [x] File attachments: paths mentioned by the agent are uploaded into the thread (live-verified, 3 screenshots)
 - [x] Refuse to start a second instance on the same database (advisory lock)
+- [x] Auto-update: `dancer-update.timer` polls `origin/main`, rebuilds into a root-owned
+      deploy checkout, smoke-tests, installs atomically and restarts (`make update-install`)
+- [ ] Live drill of an auto-update deploy landing mid-task (thread drains, resumes on the new binary)
 - [ ] `make service-install` and run as a systemd unit
 
 Deferred
@@ -137,6 +140,16 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
     seen the thread and are dropped by the `known(th)` check — the bot appears to go
     deaf mid-conversation. The thread set is per-process memory, so the only fix that
     holds is to keep the second process from starting.
+13. **Auto-update polls; it does not listen.** A systemd timer fetches `origin/main`
+    every 5 minutes into a root-owned deploy checkout (`/opt/dancer/src`), separate
+    from any checkout a human edits, and rebuilds only when the sha moved. A webhook
+    would be faster but needs a public endpoint and a shared secret on a box that
+    otherwise makes only outbound connections; `Persistent=true` covers the downtime
+    case a webhook would miss entirely. The new binary is built and smoke-tested in a
+    scratch dir and installed with an atomic rename, so a broken `main` leaves the
+    running binary untouched, and the restart is a plain `systemctl restart` — the
+    drain-and-auto-resume path in decisions 10 and 11 is what makes a mid-task deploy
+    safe, so the updater needs no task awareness of its own.
 
 ## Claude stream-json mapping
 
@@ -165,6 +178,7 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | Slack wire                             | real workspace, mention in channel              | pass   |
 | graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |
 | automatic resume after restart         | `go test ./internal/coordinator -run AutoResume` | pass   |
+| auto-update updater script             | dry run against a scratch clone + `make update-install` on this host | see log |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
 | single instance per database           | `go test ./cmd/dancer`; second `dancer run` on the live config refused with the holder's pid | pass   |
 | agent edit / delete from chat          | `go test -race ./internal/config ./internal/coordinator`; terminal run against a temp config: edit rewrites the block in place, delete keeps neighbouring comments, default refused | pass |
