@@ -153,7 +153,8 @@ func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string
 		seen := 0
 		for _, o := range f.out {
 			if o.Thread == th && strings.Contains(o.Text, sub) {
-				if seen++; seen == n {
+				seen++
+				if seen == n {
 					f.mu.Unlock()
 					return o
 				}
@@ -164,7 +165,7 @@ func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	t.Fatalf("no outbound on %s containing %q; got %+v", th, sub, f.out)
+	t.Fatalf("fewer than %d outbounds on %s containing %q; got %+v", n, th, sub, f.out)
 	return transport.Outbound{}
 }
 
