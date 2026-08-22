@@ -406,6 +406,19 @@ func TestMentionStaysWithRequester(t *testing.T) {
 	if ts, err := st.GetTask(ctx, id); err != nil || ts.Requester != "u1" {
 		t.Errorf("requester = %q err=%v, want u1", ts.Requester, err)
 	}
+
+	// A new task on the same thread, started by u2, is u2's.
+	deadline = time.Now().Add(3 * time.Second)
+	for ex.IsRunning(id) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	tr.sayAs(th, "u2", "run coder other thing")
+	if o := tr.waitForN(t, th, "wants to run", 2); o.Mention != "u2" {
+		t.Errorf("u2's own task addressed to %q, want u2", o.Mention)
+	}
+	if ts, err := st.LatestTaskForThread(ctx, th); err != nil || ts.ID == id || ts.Requester != "u2" {
+		t.Errorf("u2's task = %+v err=%v, want a new task with requester u2", ts, err)
+	}
 }
 
 func TestGracefulRestart(t *testing.T) {
