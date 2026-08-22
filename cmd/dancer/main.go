@@ -73,6 +73,12 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	if err := os.MkdirAll(cfg.Server.WorkdirRoot, 0o755); err != nil {
 		return err
 	}
+	unlock, err := lockInstance(cfg.Server.DB)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	st, err := sqlite.Open(cfg.Server.DB)
 	if err != nil {
 		return err

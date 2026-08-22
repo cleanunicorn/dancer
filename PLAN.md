@@ -57,6 +57,7 @@ Milestone 5 — deploy-ready on Linux
 - [x] Automatic resume after a restart: sessions cut mid-execution continue by themselves, never-started tasks re-run, finished turns stay idle, with staleness and restart-loop guards (coordinator tests)
 - [ ] Live drill of automatic resume against Slack (restart mid-task, thread continues untouched)
 - [x] File attachments: paths mentioned by the agent are uploaded into the thread (live-verified, 3 screenshots)
+- [x] Refuse to start a second instance on the same database (advisory lock)
 - [ ] `make service-install` and run as a systemd unit
 
 Deferred
@@ -129,6 +130,13 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
     Guards keep that safe: `auto_resume_within` (12h) ignores stale work, and
     `max_auto_resumes` (3, cleared by any turn that completes) stops a task that keeps
     taking dancer down from restart-looping.
+12. **One dancer per database.** `runServer` takes an exclusive `flock` on
+    `<db>.lock` and refuses to start otherwise, naming the holder's pid. Two
+    instances on one config both connect to Slack, and Socket Mode hands each event
+    to only one connection, so replies land at random on an instance that has never
+    seen the thread and are dropped by the `known(th)` check — the bot appears to go
+    deaf mid-conversation. The thread set is per-process memory, so the only fix that
+    holds is to keep the second process from starting.
 
 ## Claude stream-json mapping
 
@@ -158,4 +166,5 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |
 | automatic resume after restart         | `go test ./internal/coordinator -run AutoResume` | pass   |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
+| single instance per database           | `go test ./cmd/dancer`; second `dancer run` on the live config refused with the holder's pid | pass   |
 | agent edit / delete from chat          | `go test -race ./internal/config ./internal/coordinator`; terminal run against a temp config: edit rewrites the block in place, delete keeps neighbouring comments, default refused | pass |
