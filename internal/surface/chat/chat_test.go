@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
@@ -123,6 +124,17 @@ func TestRenderMentionsRequester(t *testing.T) {
 		if out[0].Mention != "" && out[0].Markdown {
 			t.Errorf("%s: a mention on Markdown text, which Slack's markdown block does not render", c.name)
 		}
+	}
+}
+
+func TestPermissionPromptIsCutWithItsFenceClosed(t *testing.T) {
+	s := New("chat", "slack", false)
+	task := &store.TaskState{ID: "t1", Requester: "U42", Definition: agent.Definition{Name: "coder"}}
+	ev := surface.Event{Kind: surface.EventPermission, Thread: "C1/1.0", TaskID: "t1", Task: task, PromptID: "p1",
+		Agent: &agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolInput: map[string]any{"command": strings.Repeat("中", 3000)}}}
+	out := lines(s.Render(ev))
+	if len(out) != 1 || !strings.HasSuffix(out[0].Text, "…```") || !utf8.ValidString(out[0].Text) || len(out[0].Text) > 2600 {
+		t.Fatalf("cut prompt = %d bytes, valid=%v, tail %q", len(out[0].Text), utf8.ValidString(out[0].Text), out[0].Text[len(out[0].Text)-12:])
 	}
 }
 

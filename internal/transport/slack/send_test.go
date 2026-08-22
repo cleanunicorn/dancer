@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -120,7 +121,26 @@ func interactive(cb slack.InteractionCallback) socketmode.Event {
 	return socketmode.Event{Type: socketmode.EventTypeInteractive, Data: cb}
 }
 
+// allowDeny is the permission prompt the chat surface posts.
 var allowDeny = &transport.Prompt{ID: "chat:p1", Choices: []string{"allow", "deny"}}
+
+// assertAllowDeny checks that a posted prompt carries its two buttons.
+func assertAllowDeny(t *testing.T, form url.Values) {
+	t.Helper()
+	ab := actionBlock(t, form)
+	if ab.BlockID != "chat:p1" || len(ab.Elements.ElementSet) != 2 {
+		t.Fatalf("actions block = %+v", ab)
+	}
+	for i, want := range []struct {
+		id, value string
+		style     slack.Style
+	}{{"decision:0", "allow", slack.StylePrimary}, {"decision:1", "deny", slack.StyleDanger}} {
+		btn, ok := ab.Elements.ElementSet[i].(*slack.ButtonBlockElement)
+		if !ok || btn.ActionID != want.id || btn.Value != want.value || btn.Style != want.style {
+			t.Errorf("button %d = %+v, want %+v", i, ab.Elements.ElementSet[i], want)
+		}
+	}
+}
 
 func TestSendMention(t *testing.T) {
 	f, c := newFakeSlack(t)
@@ -131,14 +151,15 @@ func TestSendMention(t *testing.T) {
 		{Thread: "C1/1.0", Text: "🔐 run?", Mention: "U42", Prompt: allowDeny},
 		{Thread: "C1/1.0", Key: "status", Text: "⏳ thinking", Mention: "U42"},
 		{Thread: "C1/1.0", Text: strings.Repeat("x", 4000), Mention: "U42", Prompt: allowDeny},
+		{Thread: "C1/1.0", Text: "ab" + strings.Repeat("中", 2000), Mention: "U42", Prompt: allowDeny},
 	} {
 		if err := c.Send(ctx, m); err != nil {
 			t.Fatal(err)
 		}
 	}
 	posts := f.of("chat.postMessage")
-	if len(posts) != 5 {
-		t.Fatalf("posted %d messages, want 5: %+v", len(posts), posts)
+	if len(posts) != 6 {
+		t.Fatalf("posted %d messages, want 6: %+v", len(posts), posts)
 	}
 	if got := posts[0].Get("text"); got != "<@U42> ✅ done" {
 		t.Errorf("addressed text = %q", got)
@@ -152,25 +173,23 @@ func TestSendMention(t *testing.T) {
 	if got := sectionText(t, posts[2]); got != "<@U42> 🔐 run?" {
 		t.Errorf("prompt section text = %q", got)
 	}
-	ab := actionBlock(t, posts[2])
-	if ab.BlockID != "chat:p1" || len(ab.Elements.ElementSet) != 2 {
-		t.Fatalf("actions block = %+v", ab)
-	}
-	for i, want := range []struct {
-		id, value string
-		style     slack.Style
-	}{{"decision:0", "allow", slack.StylePrimary}, {"decision:1", "deny", slack.StyleDanger}} {
-		btn, ok := ab.Elements.ElementSet[i].(*slack.ButtonBlockElement)
-		if !ok || btn.ActionID != want.id || btn.Value != want.value || btn.Style != want.style {
-			t.Errorf("button %d = %+v, want %+v", i, ab.Elements.ElementSet[i], want)
-		}
-	}
+	assertAllowDeny(t, posts[2])
 	if got := posts[3].Get("text"); got != "⏳ thinking" {
 		t.Errorf("keyed message addressed: %q", got)
 	}
-	if got := sectionText(t, posts[4]); len(got) > 3000 {
-		t.Errorf("section text is %d chars, over Slack's 3000", len(got))
+	// An over-long prompt is cut, and still ships its buttons.
+	if got := sectionText(t, posts[4]); got != "<@U42> "+strings.Repeat("x", 2892)+"…" {
+		t.Errorf("long section text = %d bytes, %q…", len(got), got[:20])
 	}
+	if got := posts[4].Get("text"); len(got) > 4000 {
+		t.Errorf("long fallback text is %d bytes", len(got))
+	}
+	assertAllowDeny(t, posts[4])
+	// ...on a rune boundary.
+	if got := sectionText(t, posts[5]); !utf8.ValidString(got) || utf8.RuneCountInString(got) > 3000 {
+		t.Errorf("multi-byte cut: valid=%v runes=%d", utf8.ValidString(got), utf8.RuneCountInString(got))
+	}
+	assertAllowDeny(t, posts[5])
 }
 
 func TestSettledPromptDropsLeadingMention(t *testing.T) {
