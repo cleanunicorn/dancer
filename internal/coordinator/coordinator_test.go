@@ -28,11 +28,17 @@ type fakeTransport struct {
 	inbox chan<- transport.Inbound
 	ready chan struct{}
 
-	mu  sync.Mutex
-	out []transport.Outbound
+	mu         sync.Mutex
+	out        []transport.Outbound
+	remembered []transport.ThreadID
 }
 
 func (f *fakeTransport) Name() string { return f.name }
+func (f *fakeTransport) Remember(th transport.ThreadID) {
+	f.mu.Lock()
+	f.remembered = append(f.remembered, th)
+	f.mu.Unlock()
+}
 func (f *fakeTransport) Run(ctx context.Context, inbox chan<- transport.Inbound) error {
 	f.inbox = inbox
 	close(f.ready)
@@ -77,6 +83,22 @@ type fakeAgent struct{}
 func (fakeAgent) Kind() agent.Kind { return "fake" }
 func (fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
 	r := newFakeRun()
+	if strings.HasPrefix(prompt, "ask") {
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: "sess-q"})
+			r.emit(agent.Event{Type: agent.EventQuestion, Tool: "AskUserQuestion", ToolID: "q-1", Questions: []agent.Question{
+				{Header: "Fruit", Text: "Apple or Banana?", Options: []agent.Option{{Label: "Apple"}, {Label: "Banana", Description: "long"}}},
+				{Header: "Size", Text: "Big or small?", Options: []agent.Option{{Label: "Big"}, {Label: "Small"}}},
+			}})
+			select {
+			case d := <-r.decided:
+				r.emit(agent.Event{Type: agent.EventText, Text: fmt.Sprintf("answers=%s|%s", d.Answers["Apple or Banana?"], d.Answers["Big or small?"])})
+				r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-q"})
+			case <-r.done:
+			}
+		}()
+		return r, nil
+	}
 	go func() {
 		r.emit(agent.Event{Type: agent.EventInit, Session: "sess-1"})
 		r.emit(agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolID: "tool-1", ToolInput: map[string]any{"command": "ls"}})
@@ -232,6 +254,81 @@ func TestTwoSurfacesOneTransport(t *testing.T) {
 	th2 := transport.ThreadID("C-dev/2.0")
 	tr.say(th2, "just do the thing")
 	tr.waitFor(t, th2, "started with agent *coder*")
+
+	// Questions: first answered with a button, second with a typed reply.
+	th3 := transport.ThreadID("C-dev/3.0")
+	tr.say(th3, "ask me things")
+	q1 := tr.waitFor(t, th3, "Apple or Banana?")
+	if q1.Prompt == nil || len(q1.Prompt.Options) != 2 || !q1.Prompt.FreeText {
+		t.Fatalf("question prompt = %+v", q1.Prompt)
+	}
+	tr.decide(th3, q1.Prompt.ID, "Banana")
+	tr.waitFor(t, th3, "Big or small?")
+	tr.say(th3, "medium, actually")
+	tr.waitFor(t, th3, "answers=Banana|medium, actually")
+}
+
+func TestGracefulRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "c.db")
+	st, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	c.DefaultDefinition = "coder"
+	c.DrainTimeout = time.Second
+	runDone := make(chan error, 1)
+	go func() { runDone <- c.Run(ctx) }()
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/9.0")
+	tr.say(th, "run coder do it")
+	tr.waitFor(t, th, "wants to run") // task is live, waiting on a permission
+
+	cancel() // SIGTERM
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("coordinator did not stop")
+	}
+	tr.waitFor(t, th, "dancer is restarting")
+	id := firstTask(t, st)
+	ts, _ := st.GetTask(context.Background(), id)
+	if ts.Status != store.StatusInterrupted || ts.Session != "sess-1" || ts.Transport != "slack" {
+		t.Fatalf("task after shutdown = %+v", ts)
+	}
+	st.Close()
+
+	// Restart: recovered task gets a "back" notice and the next reply resumes it.
+	st2, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	tr2 := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c2 := New(st2, ex, []transport.Transport{tr2}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c2.DefaultDefinition = "coder"
+	go c2.Run(ctx2)
+	<-tr2.ready
+	tr2.waitFor(t, th, "dancer is back")
+	tr2.mu.Lock()
+	seeded := len(tr2.remembered) == 1 && tr2.remembered[0] == th
+	tr2.mu.Unlock()
+	if !seeded {
+		t.Fatalf("transport not re-seeded with task thread: %v", tr2.remembered)
+	}
+	tr2.say(th, "carry on")
+	tr2.waitFor(t, th, "resuming session")
+	tr2.waitFor(t, th, "echo:carry on")
 }
 
 func firstTask(t *testing.T, st store.Store) executor.TaskID {

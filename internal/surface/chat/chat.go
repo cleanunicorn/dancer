@@ -37,7 +37,8 @@ const help = "Commands:\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
-	"• `agents` — list agent definitions"
+	"• `agents` — list agent definitions\n" +
+	"• `add agent` — define a new agent, question by question"
 
 func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.Intent, bool) {
 	if in.Decision != nil {
@@ -66,6 +67,10 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Cancel{Thread: in.Thread}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
+	case "add", "new", "create", "define":
+		if w, _ := splitWord(rest); strings.EqualFold(w, "agent") || strings.EqualFold(w, "definition") {
+			return []surface.Intent{surface.AddAgent{Thread: in.Thread}}, true
+		}
 	}
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text}}, true
 }
@@ -82,6 +87,8 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	case surface.EventPermission:
 		text := fmt.Sprintf("🔐 *%s* wants to run:\n```%s```", ev.Agent.Tool, describeInput(ev.Agent))
 		return []transport.Outbound{{Thread: ev.Thread, Text: text, Prompt: &transport.Prompt{ID: s.name + ":" + ev.PromptID, Choices: []string{"allow", "deny"}}}}
+	case surface.EventQuestion:
+		return []transport.Outbound{{Thread: ev.Thread, Text: questionText(ev.Question), Prompt: questionPrompt(s.name+":"+ev.PromptID, ev.Question)}}
 	case surface.EventAgent:
 		return s.renderAgent(ev)
 	case surface.EventFinished:
@@ -133,6 +140,34 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 		return nil
 	}
 	return []transport.Outbound{{Thread: ev.Thread, Text: text}}
+}
+
+// questionText renders a question with its numbered options.
+func questionText(q *agent.Question) string {
+	var b strings.Builder
+	if q.Header != "" {
+		fmt.Fprintf(&b, "❓ *%s* — ", q.Header)
+	} else {
+		b.WriteString("❓ ")
+	}
+	b.WriteString(q.Text)
+	for i, o := range q.Options {
+		fmt.Fprintf(&b, "\n%d. *%s*", i+1, o.Label)
+		if o.Description != "" {
+			fmt.Fprintf(&b, " — %s", o.Description)
+		}
+	}
+	b.WriteString("\n_Pick an option or reply in this thread with your own answer._")
+	return b.String()
+}
+
+// questionPrompt builds the transport prompt for a question.
+func questionPrompt(id string, q *agent.Question) *transport.Prompt {
+	p := &transport.Prompt{ID: id, Question: q.Text, FreeText: true}
+	for _, o := range q.Options {
+		p.Options = append(p.Options, transport.Option{Value: o.Label, Label: o.Label, Description: o.Description})
+	}
+	return p
 }
 
 func describeInput(ev *agent.Event) string {

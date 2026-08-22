@@ -57,6 +57,10 @@ type Status struct{ Thread transport.ThreadID }
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
+// AddAgent starts the guided "add agent" flow on Thread: the coordinator
+// asks for each setting in turn and saves the new definition.
+type AddAgent struct{ Thread transport.ThreadID }
+
 // Decide answers a permission prompt.
 type Decide struct {
 	PromptID string
@@ -74,6 +78,7 @@ func (FollowUp) isIntent()   {}
 func (Cancel) isIntent()     {}
 func (Status) isIntent()     {}
 func (ListAgents) isIntent() {}
+func (AddAgent) isIntent()   {}
 func (Decide) isIntent()     {}
 func (Say) isIntent()        {}
 
@@ -85,6 +90,7 @@ const (
 	EventResumed    EventKind = "resumed"    // idle session picked up again
 	EventAgent      EventKind = "agent"      // Agent carries the agent event
 	EventPermission EventKind = "permission" // Agent is a needs_permission; PromptID set
+	EventQuestion   EventKind = "question"   // Agent is a question; Question + PromptID set
 	EventFinished   EventKind = "finished"   // process exited; Task.Status is final
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
 	EventError      EventKind = "error"      // Text explains a failure
@@ -96,7 +102,8 @@ type Event struct {
 	Thread   transport.ThreadID
 	Task     *store.TaskState // nil for Reply/Error without a task
 	TaskID   executor.TaskID
-	Agent    *agent.Event // EventAgent, EventPermission
-	PromptID string       // EventPermission: id the Decide intent must echo
-	Text     string       // EventReply, EventError
+	Agent    *agent.Event    // EventAgent, EventPermission
+	PromptID string          // EventPermission/EventQuestion: id the Decide intent must echo
+	Question *agent.Question // EventQuestion: the single question this event carries
+	Text     string          // EventReply, EventError
 }

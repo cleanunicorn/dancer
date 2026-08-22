@@ -49,6 +49,9 @@ runs `dancer doctor`. Fix anything marked ✘ and re-run `bin/dancer doctor`.
 You can edit the file by hand afterwards — `deploy/config.example.toml` shows
 every option, including docker and ssh environments and a second surface.
 
+More agents can be added later from Slack (or the terminal) without a
+restart: see [Adding agents from chat](#adding-agents-from-chat).
+
 ## 5. Try it
 
 Terminal first (no Slack needed):
@@ -72,10 +75,37 @@ In the channel you invited the bot to:
 ```
 
 dancer answers **in a thread under your message** (look for "1 reply"), using the
-default agent; `run <agent> <prompt>` picks a specific one. When the agent wants to run
+default agent; `run <agent> <prompt>` picks a specific one.
+
+When the agent asks a question (Claude Code's `AskUserQuestion`), the thread
+shows the options as buttons; click one, or reply in the thread with your own
+answer. Multi-select questions are answered one option at a time for now. When the agent wants to run
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
 thread to continue the conversation; `status`, `cancel`, `agents`, `help` work
 anywhere. DMs to the bot work the same way without the mention.
+
+## Adding agents from chat
+
+```
+@dancer add agent
+```
+
+dancer asks, one question per message in the thread: name, model, where it
+runs (local / docker / ssh and the image, host or directory that goes with
+it), permission mode, pre-approved tools (presets or a comma-separated list)
+and an optional system prompt, then shows a summary with **Save / Cancel**.
+Click a button or type the answer; `cancel` at any point abandons the flow.
+Type paths in backticks (`` `/home/me/app` ``): Slack refuses to send a
+message that starts with `/` because it looks like a slash command.
+Answers are saved as you go, so a dancer restart mid-way re-asks the next
+question when it is back.
+
+Saving appends a `[[definitions]]` block to `config.toml` (the rest of the
+file is left untouched) and registers the agent immediately — `agents` lists
+it and `run <name> <prompt>` works without a restart. Settings the flow does
+not ask for (`sub_agents`, `mcp_config`, `key_path`, container `env`) can be
+added to that block by hand afterwards. Editing or removing an agent is still
+done in the file.
 
 ## 6. Install as a service
 
@@ -90,6 +120,21 @@ user so it finds your Claude Code login and ssh/docker config. Edit
 `/etc/systemd/system/dancer.service` if the binary or config live elsewhere.
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
+
+## Restarting dancer
+
+`make service-restart` (or Ctrl-C / `systemctl restart dancer`) is safe while
+agents run:
+
+1. Every live thread gets "⏸️ dancer is restarting — reply in this thread to resume".
+2. Agents that are in the middle of a tool call (a test run, a build) are given
+   `drain_timeout` (default 2m) to finish that call; then their processes stop.
+   Files in the workdir stay.
+3. On start, those threads get "▶️ dancer is back"; your next reply resumes the
+   Claude session (`--resume`) where it left off.
+
+`status` shows such tasks as *interrupted* until resumed. `cancel` is still
+immediate. The systemd unit's `TimeoutStopSec` is set above `drain_timeout`.
 
 ## Environments
 

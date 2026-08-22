@@ -13,7 +13,7 @@ UNIT    ?= /etc/systemd/system/dancer.service
 GO      ?= go
 
 .DEFAULT_GOAL := help
-.PHONY: help build run run-terminal setup doctor test test-race test-live e2e lint fmt tidy clean \
+.PHONY: help build run run-terminal setup doctor test test-race test-live e2e restart-drill lint fmt tidy clean \
         install uninstall service-install service-uninstall service-restart service-status service-logs
 
 ## ---- build -----------------------------------------------------------------
@@ -48,6 +48,9 @@ test-race: ## Unit tests with the race detector
 
 test-live: ## Also drive the real claude CLI (haiku, a few cents)
 	DANCER_LIVE=1 $(GO) test -count=1 ./...
+
+restart-drill: build ## SIGTERM mid-tool-call: drain, notify, restart, resume (needs logged-in claude)
+	python3 scripts/restart-drill.py bin/dancer
 
 e2e: build ## Whole binary through the terminal transport (needs logged-in claude)
 	python3 scripts/e2e.py bin/dancer

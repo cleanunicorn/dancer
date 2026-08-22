@@ -44,6 +44,12 @@ CREATE TABLE IF NOT EXISTS definitions (
 	name TEXT PRIMARY KEY,
 	body BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS flows (
+	thread     TEXT PRIMARY KEY,
+	body       BLOB NOT NULL,
+	updated_at TEXT NOT NULL
+);
 `
 
 // Store is a SQLite-backed store.Store.
@@ -62,7 +68,38 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("sqlite: schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("sqlite: migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate adds columns introduced after the first release.
+func migrate(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(tasks)`)
+	if err != nil {
+		return err
+	}
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		cols[name] = true
+	}
+	rows.Close()
+	if !cols["transport"] {
+		if _, err := db.Exec(`ALTER TABLE tasks ADD COLUMN transport TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close closes the database.
@@ -108,16 +145,16 @@ func (s *Store) PutTask(ctx context.Context, t store.TaskState) error {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO tasks(id, thread, definition, session, status, last_seq, updated_at)
-		VALUES(?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET thread=excluded.thread, definition=excluded.definition,
+		INSERT INTO tasks(id, transport, thread, definition, session, status, last_seq, updated_at)
+		VALUES(?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET transport=excluded.transport, thread=excluded.thread, definition=excluded.definition,
 			session=excluded.session, status=excluded.status, last_seq=excluded.last_seq, updated_at=excluded.updated_at`,
-		string(t.ID), string(t.Thread), def, t.Session, t.Status, t.LastSeq, time.Now().UTC().Format(time.RFC3339Nano))
+		string(t.ID), t.Transport, string(t.Thread), def, t.Session, t.Status, t.LastSeq, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
 func (s *Store) GetTask(ctx context.Context, id executor.TaskID) (store.TaskState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, thread, definition, session, status, last_seq FROM tasks WHERE id = ?`, string(id))
+	row := s.db.QueryRowContext(ctx, `SELECT id, transport, thread, definition, session, status, last_seq FROM tasks WHERE id = ?`, string(id))
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, store.ErrNotFound
@@ -126,7 +163,7 @@ func (s *Store) GetTask(ctx context.Context, id executor.TaskID) (store.TaskStat
 }
 
 func (s *Store) ListTasks(ctx context.Context, status string) ([]store.TaskState, error) {
-	q := `SELECT id, thread, definition, session, status, last_seq FROM tasks`
+	q := `SELECT id, transport, thread, definition, session, status, last_seq FROM tasks`
 	var args []any
 	if status != "" {
 		q += ` WHERE status = ?`
@@ -151,7 +188,7 @@ func (s *Store) ListTasks(ctx context.Context, status string) ([]store.TaskState
 
 // LatestTaskForThread returns the most recently updated task on a thread.
 func (s *Store) LatestTaskForThread(ctx context.Context, thread transport.ThreadID) (store.TaskState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, thread, definition, session, status, last_seq FROM tasks WHERE thread = ? ORDER BY updated_at DESC LIMIT 1`, string(thread))
+	row := s.db.QueryRowContext(ctx, `SELECT id, transport, thread, definition, session, status, last_seq FROM tasks WHERE thread = ? ORDER BY updated_at DESC LIMIT 1`, string(thread))
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, store.ErrNotFound
@@ -165,7 +202,7 @@ func scanTask(sc scanner) (store.TaskState, error) {
 	var t store.TaskState
 	var id, thread string
 	var def []byte
-	if err := sc.Scan(&id, &thread, &def, &t.Session, &t.Status, &t.LastSeq); err != nil {
+	if err := sc.Scan(&id, &t.Transport, &thread, &def, &t.Session, &t.Status, &t.LastSeq); err != nil {
 		return t, err
 	}
 	t.ID, t.Thread = executor.TaskID(id), transport.ThreadID(thread)
@@ -224,5 +261,45 @@ func (s *Store) ListDefinitions(ctx context.Context) ([]agent.Definition, error)
 // DeleteDefinition removes a definition by name.
 func (s *Store) DeleteDefinition(ctx context.Context, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM definitions WHERE name = ?`, name)
+	return err
+}
+
+func (s *Store) PutFlow(ctx context.Context, f store.FlowState) error {
+	if f.Thread == "" {
+		return fmt.Errorf("sqlite: flow thread is required")
+	}
+	body, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO flows(thread, body, updated_at) VALUES(?,?,?) ON CONFLICT(thread) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at`,
+		string(f.Thread), body, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ListFlows(ctx context.Context) ([]store.FlowState, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT body FROM flows ORDER BY updated_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.FlowState
+	for rows.Next() {
+		var body []byte
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		var f store.FlowState
+		if err := json.Unmarshal(body, &f); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteFlow(ctx context.Context, thread transport.ThreadID) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM flows WHERE thread = ?`, string(thread))
 	return err
 }

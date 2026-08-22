@@ -38,7 +38,8 @@ Milestone 4 — definitions and instances
 - [x] Definitions seeded from config into the store; `agents` lists them
 - [x] Sub-agents passed through as `--agents` JSON (`sub_agents` in config; untested live)
 - [x] Multiple instances of one definition run concurrently (one task per thread)
-- [ ] Edit definitions from Slack (currently config-file only)
+- [x] Add definitions from chat: `add agent` asks name/model/environment/permissions/tools/prompt, appends to config.toml and the store (coordinator + config tests)
+- [ ] Edit or remove definitions from chat (still config-file only)
 
 Milestone 5 — deploy-ready on Linux
 - [x] `dancer setup` wizard: storage, claude check, Slack tokens, first definition, then runs doctor
@@ -46,6 +47,8 @@ Milestone 5 — deploy-ready on Linux
 - [x] `deploy/dancer.service` + `make service-install`
 - [x] `SETUP.md`: Slack app manifest, install steps, first run, docker/ssh notes
 - [x] Wizard → `make run` → Slack message → task runs (2026-08-22)
+- [x] Questions (`AskUserQuestion`) relayed as buttons / typed replies (live-verified)
+- [x] Graceful restart: notify, drain in-flight tool calls, resume after start (unit + live drill)
 - [ ] `make service-install` and run as a systemd unit
 
 Deferred
@@ -105,6 +108,10 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
    interaction style on Slack is a new surface, not a new Slack client.
 9. **A finished turn keeps its process alive for `idle_timeout`** (default 10m) so
    follow-ups are instant; after that the session is resumed with `--resume`.
+10. **Graceful restart.** On SIGTERM the coordinator notifies live threads, executors
+    drain in-flight tool calls for up to `drain_timeout`, final state is persisted with
+    a non-cancelled context as `interrupted`, and `recover()` posts "back" notices.
+    `cancel` stays immediate.
 
 ## Claude stream-json mapping
 
@@ -131,3 +138,4 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | two surfaces on one transport          | `go test -race ./internal/coordinator`          | pass   |
 | whole binary via terminal              | `scripts/e2e.py` (run→allow→done→status→follow-up) | pass |
 | Slack wire                             | real workspace, mention in channel              | pass   |
+| graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |

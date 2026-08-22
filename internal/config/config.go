@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,9 @@ type Server struct {
 	DB          string   `toml:"db"`
 	WorkdirRoot string   `toml:"workdir_root"`
 	IdleTimeout Duration `toml:"idle_timeout"`
-	Verbose     bool     `toml:"verbose"`
+	// DrainTimeout: on shutdown, how long to let in-flight tool calls finish.
+	DrainTimeout Duration `toml:"drain_timeout"`
+	Verbose      bool     `toml:"verbose"`
 	// DefaultAgent is used by `run <prompt>` without an agent name.
 	DefaultAgent string `toml:"default_agent"`
 	// Transports to start: "slack", "terminal". Defaults to slack when
@@ -62,22 +65,22 @@ type Slack struct {
 type Definition struct {
 	Name           string            `toml:"name"`
 	Kind           string            `toml:"kind"`
-	Model          string            `toml:"model"`
-	SystemPrompt   string            `toml:"system_prompt"`
-	AllowedTools   []string          `toml:"allowed_tools"`
-	PermissionMode string            `toml:"permission_mode"`
-	MCPConfig      string            `toml:"mcp_config"`
-	SubAgents      map[string]any    `toml:"sub_agents"`
+	Model          string            `toml:"model,omitempty"`
+	SystemPrompt   string            `toml:"system_prompt,omitempty"`
+	AllowedTools   []string          `toml:"allowed_tools,omitempty"`
+	PermissionMode string            `toml:"permission_mode,omitempty"`
+	MCPConfig      string            `toml:"mcp_config,omitempty"`
+	SubAgents      map[string]any    `toml:"sub_agents,omitempty"`
 	Environment    EnvironmentConfig `toml:"environment"`
 }
 
 type EnvironmentConfig struct {
 	Kind    string            `toml:"kind"`
-	Workdir string            `toml:"workdir"`
-	Image   string            `toml:"image"`
-	Host    string            `toml:"host"`
-	KeyPath string            `toml:"key_path"`
-	Env     map[string]string `toml:"env"`
+	Workdir string            `toml:"workdir,omitempty"`
+	Image   string            `toml:"image,omitempty"`
+	Host    string            `toml:"host,omitempty"`
+	KeyPath string            `toml:"key_path,omitempty"`
+	Env     map[string]string `toml:"env,omitempty"`
 }
 
 // Duration is a TOML-friendly time.Duration ("10m").
@@ -124,6 +127,9 @@ func (c *Config) applyDefaults(path string) {
 	}
 	if c.Server.IdleTimeout.Duration == 0 {
 		c.Server.IdleTimeout.Duration = 10 * time.Minute
+	}
+	if c.Server.DrainTimeout.Duration == 0 {
+		c.Server.DrainTimeout.Duration = 2 * time.Minute
 	}
 	if c.Claude.Binary == "" {
 		c.Claude.Binary = "claude"
@@ -254,6 +260,73 @@ func (c *Config) AgentDefinitions() []agent.Definition {
 		})
 	}
 	return out
+}
+
+// DefinitionFromAgent converts a stored definition back to its config form.
+func DefinitionFromAgent(d agent.Definition) Definition {
+	return Definition{
+		Name:           d.Name,
+		Kind:           string(d.Kind),
+		Model:          d.Model,
+		SystemPrompt:   d.SystemPrompt,
+		AllowedTools:   d.AllowedTools,
+		PermissionMode: string(d.PermissionMode),
+		MCPConfig:      d.MCPConfig,
+		SubAgents:      d.SubAgents,
+		Environment: EnvironmentConfig{
+			Kind:    string(d.Environment.Kind),
+			Workdir: d.Environment.Workdir,
+			Image:   d.Environment.Image,
+			Host:    d.Environment.Host,
+			KeyPath: d.Environment.KeyPath,
+			Env:     d.Environment.Env,
+		},
+	}
+}
+
+// AppendDefinition adds a definition to the config file at path without
+// rewriting what is already there (comments and formatting survive). The
+// result is validated as a whole before the file is touched, and the
+// original is restored if the new file fails to load.
+func AppendDefinition(path string, d Definition) error {
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	cfg.Definitions = append(cfg.Definitions, d)
+	cfg.applyDefaults(path)
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+
+	var snippet bytes.Buffer
+	enc := toml.NewEncoder(&snippet)
+	enc.Indent = ""
+	if err := enc.Encode(struct {
+		Definitions []Definition `toml:"definitions"`
+	}{[]Definition{d}}); err != nil {
+		return err
+	}
+
+	orig, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	out.Write(orig)
+	if len(orig) > 0 && orig[len(orig)-1] != '\n' {
+		out.WriteByte('\n')
+	}
+	fmt.Fprintf(&out, "\n# added from chat on %s\n", time.Now().Format("2006-01-02"))
+	out.Write(snippet.Bytes())
+	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+		return err
+	}
+	if _, err := Load(path); err != nil {
+		_ = os.WriteFile(path, orig, 0o600)
+		return fmt.Errorf("appended config does not load, restored original: %w", err)
+	}
+	return nil
 }
 
 // Save writes the config to path, creating parent directories.

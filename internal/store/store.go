@@ -29,6 +29,7 @@ type Record struct {
 // TaskState is the projection the coordinator reads.
 type TaskState struct {
 	ID         executor.TaskID
+	Transport  string // transport the thread belongs to ("slack", "terminal")
 	Thread     transport.ThreadID
 	Definition agent.Definition
 	Session    string
@@ -52,6 +53,22 @@ type Store interface {
 	GetDefinition(ctx context.Context, name string) (agent.Definition, error)
 	ListDefinitions(ctx context.Context) ([]agent.Definition, error)
 	DeleteDefinition(ctx context.Context, name string) error
+
+	// Flows: one per thread; PutFlow replaces an existing one.
+	PutFlow(ctx context.Context, f FlowState) error
+	ListFlows(ctx context.Context) ([]FlowState, error)
+	DeleteFlow(ctx context.Context, thread transport.ThreadID) error
+}
+
+// FlowState is a multi-step conversation with a human (e.g. "add agent")
+// in progress on a thread. The answers given so far are kept so a restart
+// can replay them and continue with the next question.
+type FlowState struct {
+	Thread    transport.ThreadID
+	Transport string
+	Surface   string // surface that runs the flow
+	Kind      string // "add_agent"
+	Answers   []string
 }
 
 // Task statuses.
@@ -59,7 +76,8 @@ const (
 	StatusQueued            = "queued"
 	StatusRunning           = "running"
 	StatusWaitingPermission = "waiting_permission"
-	StatusIdle              = "idle" // turn finished, session resumable
+	StatusIdle              = "idle"        // turn finished, session resumable
+	StatusInterrupted       = "interrupted" // stopped by a dancer shutdown, session resumable
 	StatusDone              = "done"
 	StatusFailed            = "failed"
 	StatusCancelled         = "cancelled"

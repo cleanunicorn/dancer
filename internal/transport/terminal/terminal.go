@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -53,10 +54,12 @@ func (c *Transport) Run(ctx context.Context, inbox chan<- transport.Inbound) err
 			}
 			in := transport.Inbound{Transport: "terminal", Thread: Thread, UserID: "local", Text: line}
 			c.mu.Lock()
-			if p := c.prompt; p != nil && isChoice(p, line) {
-				in.Decision = &transport.Decision{PromptID: p.ID, Choice: strings.ToLower(strings.TrimSpace(line))}
-				in.Text = ""
-				c.prompt = nil
+			if p := c.prompt; p != nil {
+				if choice, ok := answer(p, line); ok {
+					in.Decision = &transport.Decision{PromptID: p.ID, Choice: choice}
+					in.Text = ""
+					c.prompt = nil
+				}
 			}
 			c.mu.Unlock()
 			select {
@@ -74,17 +77,44 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	fmt.Fprintln(c.Out, msg.Text)
 	if msg.Prompt != nil {
 		c.prompt = msg.Prompt
-		fmt.Fprintf(c.Out, "[%s] > ", strings.Join(msg.Prompt.Choices, "/"))
+		switch {
+		case len(msg.Prompt.Options) > 0:
+			fmt.Fprintf(c.Out, "[1-%d or text] > ", len(msg.Prompt.Options))
+		case len(msg.Prompt.Choices) > 0:
+			fmt.Fprintf(c.Out, "[%s] > ", strings.Join(msg.Prompt.Choices, "/"))
+		default:
+			fmt.Fprint(c.Out, "> ")
+		}
 	}
 	return nil
 }
 
-func isChoice(p *transport.Prompt, line string) bool {
-	line = strings.ToLower(strings.TrimSpace(line))
-	for _, ch := range p.Choices {
-		if ch == line {
-			return true
+// answer maps a typed line to a decision value: a choice name, an option
+// number or label, or free text when the prompt allows it.
+func answer(p *transport.Prompt, line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", false
+	}
+	if len(p.Options) == 0 {
+		if len(p.Choices) == 0 {
+			return line, p.FreeText
+		}
+		l := strings.ToLower(line)
+		for _, ch := range p.Choices {
+			if ch == l {
+				return ch, true
+			}
+		}
+		return "", false
+	}
+	if n, err := strconv.Atoi(line); err == nil && n >= 1 && n <= len(p.Options) {
+		return p.Options[n-1].Value, true
+	}
+	for _, o := range p.Options {
+		if strings.EqualFold(o.Label, line) || strings.EqualFold(o.Value, line) {
+			return o.Value, true
 		}
 	}
-	return false
+	return line, p.FreeText
 }

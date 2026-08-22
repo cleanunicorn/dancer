@@ -47,7 +47,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 
-	ts := store.TaskState{ID: "t1", Thread: "th1", Definition: def, Status: store.StatusRunning, LastSeq: seq2}
+	ts := store.TaskState{ID: "t1", Transport: "slack", Thread: "th1", Definition: def, Status: store.StatusRunning, LastSeq: seq2}
 	if err := s.PutTask(ctx, ts); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	back, err := s.GetTask(ctx, "t1")
-	if err != nil || back.Session != "sess" || back.Status != store.StatusIdle || back.Definition.Name != "coder" {
+	if err != nil || back.Session != "sess" || back.Status != store.StatusIdle || back.Definition.Name != "coder" || back.Transport != "slack" {
 		t.Fatalf("get task = %+v err=%v", back, err)
 	}
 	latest, err := s.LatestTaskForThread(ctx, "th1")
@@ -73,5 +73,24 @@ func TestStore(t *testing.T) {
 	}
 	if defs, _ := s.ListDefinitions(ctx); len(defs) != 0 {
 		t.Fatalf("defs = %d", len(defs))
+	}
+
+	flow := store.FlowState{Thread: "th9", Transport: "slack", Surface: "chat", Kind: "add_agent", Answers: []string{"reviewer"}}
+	if err := s.PutFlow(ctx, flow); err != nil {
+		t.Fatal(err)
+	}
+	flow.Answers = append(flow.Answers, "opus")
+	if err := s.PutFlow(ctx, flow); err != nil {
+		t.Fatal(err)
+	}
+	flows, err := s.ListFlows(ctx)
+	if err != nil || len(flows) != 1 || flows[0].Surface != "chat" || len(flows[0].Answers) != 2 || flows[0].Answers[1] != "opus" {
+		t.Fatalf("flows = %+v err=%v", flows, err)
+	}
+	if err := s.DeleteFlow(ctx, "th9"); err != nil {
+		t.Fatal(err)
+	}
+	if flows, _ := s.ListFlows(ctx); len(flows) != 0 {
+		t.Fatalf("flows after delete = %+v", flows)
 	}
 }

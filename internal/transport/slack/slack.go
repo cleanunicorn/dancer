@@ -126,7 +126,7 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 				continue
 			}
 			promptID := a.BlockID
-			choice := strings.TrimPrefix(a.ActionID, "decision:")
+			choice := a.Value
 			thread := threadID(cb.Channel.ID, cb.Message.ThreadTimestamp, cb.Message.Timestamp)
 			// Replace the buttons with the outcome so they cannot be clicked twice.
 			_, _, _, err := c.api.UpdateMessageContext(ctx, cb.Channel.ID, cb.Message.Timestamp,
@@ -168,11 +168,11 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	}
 	c.remember(msg.Thread)
 	opts := []slack.MsgOption{slack.MsgOptionTS(ts)}
-	if msg.Prompt != nil {
+	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
 		var buttons []slack.BlockElement
-		for _, choice := range msg.Prompt.Choices {
-			btn := slack.NewButtonBlockElement("decision:"+choice, choice, slack.NewTextBlockObject(slack.PlainTextType, strings.Title(choice), false, false))
-			switch choice {
+		for i, o := range promptOptions(msg.Prompt) {
+			btn := slack.NewButtonBlockElement(fmt.Sprintf("decision:%d", i), o.Value, slack.NewTextBlockObject(slack.PlainTextType, truncate(o.Label, 75), false, false))
+			switch o.Value {
 			case "allow":
 				btn.Style = slack.StylePrimary
 			case "deny":
@@ -197,9 +197,32 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	return nil
 }
 
+// promptOptions normalizes a prompt into labelled options.
+func promptOptions(p *transport.Prompt) []transport.Option {
+	if len(p.Options) > 0 {
+		return p.Options
+	}
+	out := make([]transport.Option, 0, len(p.Choices))
+	for _, ch := range p.Choices {
+		out = append(out, transport.Option{Value: ch, Label: strings.ToUpper(ch[:1]) + ch[1:]})
+	}
+	return out
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
 func (c *Transport) allowed(user string) bool {
 	return len(c.allowedUsers) == 0 || c.allowedUsers[user]
 }
+
+// Remember marks a thread as one the bot takes part in, so plain replies
+// there are forwarded. Implements transport.ThreadTracker.
+func (c *Transport) Remember(th transport.ThreadID) { c.remember(th) }
 
 func (c *Transport) known(th transport.ThreadID) bool {
 	c.mu.Lock()

@@ -105,4 +105,43 @@ func TestLivePermissionRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLiveQuestion checks AskUserQuestion answers travel back through
+// updatedInput.answers. Run with DANCER_LIVE=1.
+func TestLiveQuestion(t *testing.T) {
+	if os.Getenv("DANCER_LIVE") == "" {
+		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	}
+	env, _ := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	def := agent.Definition{Kind: agent.KindClaude, Model: "haiku", PermissionMode: agent.PermissionManual}
+	run, err := New().Start(ctx, env, def, "Use the AskUserQuestion tool to ask whether I prefer Apple or Banana (header Fruit). After I answer, reply with exactly: CHOSEN=<label>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Stop()
+	var answer string
+	for ev := range run.Events() {
+		switch ev.Type {
+		case agent.EventQuestion:
+			if len(ev.Questions) == 0 || len(ev.Questions[0].Options) < 2 {
+				t.Fatalf("questions = %+v", ev.Questions)
+			}
+			if err := run.Decide(ctx, agent.PermissionDecision{ToolID: ev.ToolID, Allow: true, Answers: map[string]string{ev.Questions[0].Text: "Banana"}}); err != nil {
+				t.Fatal(err)
+			}
+		case agent.EventError:
+			t.Fatalf("agent error: %s", ev.Text)
+		case agent.EventResult:
+			answer = ev.Text
+		}
+		if answer != "" {
+			break
+		}
+	}
+	if !containsStr(answer, "Banana") {
+		t.Fatalf("answer = %q", answer)
+	}
+}
+
 func containsStr(s, sub string) bool { return indexOf(s, sub) >= 0 }
