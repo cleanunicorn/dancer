@@ -201,17 +201,18 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	if msg.Key != "" {
 		return c.sendKeyed(ctx, chID, opts, msg)
 	}
+	text := address(msg.Text, msg.Mention)
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
 		opts = append(opts,
-			slack.MsgOptionText(msg.Text, false),
+			slack.MsgOptionText(text, false),
 			slack.MsgOptionBlocks(
-				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, msg.Text, false, false), nil, nil),
+				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, text, false, false), nil, nil),
 				slack.NewActionBlock(msg.Prompt.ID, promptElements(msg.Prompt)...),
 			))
 		_, _, err := c.api.PostMessageContext(ctx, chID, opts...)
 		return err
 	}
-	for _, chunk := range chunks(msg.Text, 3900) {
+	for _, chunk := range chunks(text, 3900) {
 		if chunk == "" {
 			continue
 		}
@@ -311,6 +312,17 @@ func (c *Transport) setStatus(ctx context.Context, chID, ts, text string) {
 	c.noAssistant = true
 	c.mu.Unlock()
 	c.log.Info("slack assistant status unavailable; the status line in the thread still works (enable Agents & AI Apps and the assistant:write scope to get it)", "err", err)
+}
+
+// address puts a mention of user in front of text, so Slack notifies
+// them even with the thread muted. The mention is ordinary mrkdwn, which
+// the markdown block for agent text does not render, so surfaces only set
+// it on dancer's own lines.
+func address(text, user string) string {
+	if user == "" {
+		return text
+	}
+	return "<@" + user + "> " + text
 }
 
 // threadTS is the root message ts of a thread id, "" at top level.

@@ -10,15 +10,17 @@ restarts — a restarted dancer resumes the tasks it cut short by itself.
 @dancer add retries to the HTTP client and run the tests          ⏳
   ▶️ task `a1b2c3d4` started with agent *coder* (local)
   🤖 `claude-sonnet-4-5` · acceptEdits · claude 2.1.239 · subscription · local /srv/work/a1b2c3d4
-  🔐 Bash wants to run: go test ./...        [Allow] [Deny]
+  @you 🔐 Bash wants to run: go test ./...        [Allow] [Deny]
   Added exponential backoff in client.go; 12 tests pass.
-  ✅ done · 2m13s · 7 tool calls · $0.31
+  @you ✅ done · 2m13s · 7 tool calls · $0.31
 ```
 
 While the agent works, the last message in the thread is a live status line
 (`🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls`) that is edited in place
 every few seconds, and your message carries ⏳ — ✋ while the agent waits for
-your answer. Both go away when the turn ends.
+your answer. Both go away when the turn ends. The lines that need you — a
+permission or question prompt, the closing line, an error — mention whoever
+started the task, so you can mute the thread and still be told when to look.
 
 - **Transports**: Slack (Socket Mode, no public URL), terminal. Telegram later.
 - **Surfaces**: `chat` (threads, commands, approvals), `feed` (ops channel mirror). Several per transport.

@@ -150,8 +150,8 @@ func (c *Coordinator) inUse(name string) string {
 }
 
 // startPick runs the `run` picker on a thread: choose the agent (unless
-// given), then type the prompt, then start the task.
-func (c *Coordinator) startPick(ctx context.Context, s surface.Surface, th transport.ThreadID, agentName string) {
+// given), then type the prompt, then start the task on behalf of user.
+func (c *Coordinator) startPick(ctx context.Context, s surface.Surface, th transport.ThreadID, agentName, user string) {
 	c.startFlow(ctx, s, th, flowRun, nil, func(ctx context.Context, w *wizard) (string, error) {
 		def, err := w.pickAgent(ctx, agentName, "Run", "Which agent?")
 		if err != nil {
@@ -163,7 +163,7 @@ func (c *Coordinator) startPick(ctx context.Context, s surface.Surface, th trans
 			return "", err
 		}
 		w.then = func(ctx context.Context) {
-			w.c.runTask(ctx, w.s, surface.RunTask{Thread: th, Agent: name, Prompt: prompt})
+			w.c.runTask(ctx, w.s, surface.RunTask{Thread: th, Agent: name, Prompt: prompt, User: user})
 		}
 		return "", nil
 	})

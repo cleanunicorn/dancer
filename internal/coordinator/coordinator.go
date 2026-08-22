@@ -729,7 +729,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if it.Agent == "" && strings.TrimSpace(it.Prompt) == "" {
 		// Bare `run`: ask for the agent and the prompt on the thread.
-		c.startPick(ctx, s, it.Thread, "")
+		c.startPick(ctx, s, it.Thread, "", it.User)
 		return
 	}
 	def, err := c.Store.GetDefinition(ctx, it.Agent)
@@ -744,7 +744,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if strings.TrimSpace(prompt) == "" {
 		// `run <agent>` without a prompt: ask for it.
-		c.startPick(ctx, s, it.Thread, def.Name)
+		c.startPick(ctx, s, it.Thread, def.Name, it.User)
 		return
 	}
 	id := executor.TaskID(newID())
@@ -752,7 +752,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 		def.Environment.Kind = environment.KindLocal
 	}
 	def.Environment = c.resolveEnv(def.Environment, def.Name, string(it.Thread), string(id))
-	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Status: store.StatusQueued}
+	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Requester: it.User, Status: store.StatusQueued}
 	if err := c.Store.PutTask(ctx, st); err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "store: " + err.Error()}, s)
 		return
@@ -833,7 +833,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
 	if def := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
 		// A fresh thread with plain text: start a task with the channel's default agent.
-		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text})
+		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User})
 		return
 	}
 	if err != nil {
