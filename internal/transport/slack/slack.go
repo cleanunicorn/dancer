@@ -7,10 +7,14 @@
 //
 // Keyed messages (Outbound.Key) are edited in place with chat.update and
 // removed with chat.delete, so a surface can keep one live status line per
-// task instead of posting a new message for every change. Agent text
-// (Outbound.Markdown) goes out as a Block Kit "markdown" block, which
-// renders standard Markdown; Slack's own mrkdwn would show **bold** and
-// # headings literally.
+// task instead of posting a new message for every change. The same text is
+// mirrored into the thread's assistant status ("dancer ⏳ thinking · 4s"
+// above the composer) with assistant.threads.setStatus, which works once
+// the app has the Agents & AI Apps feature and the assistant:write scope;
+// without them the first failure turns the mirror off for the process.
+// Agent text (Outbound.Markdown) goes out as a Block Kit "markdown" block,
+// which renders standard Markdown; Slack's own mrkdwn would show **bold**
+// and # headings literally.
 package slack
 
 import (
@@ -41,6 +45,10 @@ type Transport struct {
 	mu      sync.Mutex
 	threads map[transport.ThreadID]bool // threads the bot has posted in
 	keyed   map[string]string           // "<thread>\x00<key>" -> ts of the message posted under that key
+	// noAssistant is set after assistant.threads.setStatus failed: the
+	// app lacks the feature or the scope, and every keyed update would
+	// fail the same way.
+	noAssistant bool
 }
 
 // New builds a Socket Mode Slack transport. allowedUsers may be empty.
@@ -250,6 +258,7 @@ func (c *Transport) sendKeyed(ctx context.Context, chID string, opts []slack.Msg
 		c.mu.Lock()
 		delete(c.keyed, k)
 		c.mu.Unlock()
+		c.setStatus(ctx, chID, threadTS(msg.Thread), "")
 		if _, _, err := c.api.DeleteMessageContext(ctx, chID, ts); err != nil {
 			// Already gone (deleted by hand, or a restart in between) is
 			// the outcome we wanted anyway.
@@ -261,6 +270,7 @@ func (c *Transport) sendKeyed(ctx context.Context, chID string, opts []slack.Msg
 	case have:
 		_, _, _, err := c.api.UpdateMessageContext(ctx, chID, ts, textOptions(text, msg.Markdown)...)
 		if err == nil {
+			c.setStatus(ctx, chID, threadTS(msg.Thread), text)
 			return nil
 		}
 		if !strings.Contains(err.Error(), "message_not_found") {
@@ -275,7 +285,38 @@ func (c *Transport) sendKeyed(ctx context.Context, chID string, opts []slack.Msg
 	c.mu.Lock()
 	c.keyed[k] = newTS
 	c.mu.Unlock()
+	// After the post: Slack clears the status whenever the app posts in
+	// the thread, so it has to be set again each time.
+	c.setStatus(ctx, chID, threadTS(msg.Thread), text)
 	return nil
+}
+
+// setStatus mirrors the live line into the thread's assistant status, or
+// clears it with an empty text. Best effort: the first failure (no Agents
+// & AI Apps feature, no assistant:write scope, a thread Slack will not
+// show a status in) switches the mirror off instead of failing every
+// update the same way.
+func (c *Transport) setStatus(ctx context.Context, chID, ts, text string) {
+	c.mu.Lock()
+	off := c.noAssistant
+	c.mu.Unlock()
+	if off || ts == "" {
+		return
+	}
+	err := c.api.SetAssistantThreadsStatusContext(ctx, slack.AssistantThreadsSetStatusParameters{ChannelID: chID, ThreadTS: ts, Status: text})
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	c.noAssistant = true
+	c.mu.Unlock()
+	c.log.Info("slack assistant status unavailable; the status line in the thread still works (enable Agents & AI Apps and the assistant:write scope to get it)", "err", err)
+}
+
+// threadTS is the root message ts of a thread id, "" at top level.
+func threadTS(th transport.ThreadID) string {
+	_, ts, _ := strings.Cut(string(th), "/")
+	return ts
 }
 
 // textOptions renders text either as Slack mrkdwn (our own lines) or as a
