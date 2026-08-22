@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
@@ -96,7 +97,7 @@ func TestRenderInit(t *testing.T) {
 	}
 	for _, c := range cases {
 		s := New("chat", "slack", c.verbose)
-		out := s.Render(surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Task: task, Agent: c.agent})
+		out := lines(s.Render(surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Task: task, Agent: c.agent}))
 		got := ""
 		if len(out) > 1 {
 			t.Fatalf("%s: got %d messages", c.name, len(out))
@@ -115,18 +116,138 @@ func TestRenderInitOncePerThread(t *testing.T) {
 	init := func(thread transport.ThreadID, model string) surface.Event {
 		return surface.Event{Kind: surface.EventAgent, Thread: thread, Task: task, Agent: &agent.Event{Type: agent.EventInit, Model: model, Mode: agent.PermissionManual}}
 	}
-	if got := s.Render(init("C1/1.0", "m1")); len(got) != 1 {
+	if got := lines(s.Render(init("C1/1.0", "m1"))); len(got) != 1 {
 		t.Fatalf("first init: %d messages", len(got))
 	}
 	// An idle resume reports the same details: nothing new to say.
-	if got := s.Render(init("C1/1.0", "m1")); got != nil {
+	if got := lines(s.Render(init("C1/1.0", "m1"))); got != nil {
 		t.Errorf("repeat init posted again: %q", got[0].Text)
 	}
 	// A change is news; another thread has not seen it at all.
-	if got := s.Render(init("C1/1.0", "m2")); len(got) != 1 {
+	if got := lines(s.Render(init("C1/1.0", "m2"))); len(got) != 1 {
 		t.Errorf("changed init not posted")
 	}
-	if got := s.Render(init("C2/1.0", "m1")); len(got) != 1 {
+	if got := lines(s.Render(init("C2/1.0", "m1"))); len(got) != 1 {
 		t.Errorf("other thread not posted")
+	}
+}
+
+// lines drops the status line (keyed messages) from rendered output.
+func lines(out []transport.Outbound) []transport.Outbound {
+	var kept []transport.Outbound
+	for _, o := range out {
+		if o.Key == "" {
+			kept = append(kept, o)
+		}
+	}
+	return kept
+}
+
+// TestStatusLine follows one turn: the live line appears with the start,
+// follows tool calls (throttled; heartbeats always redraw it), moves below
+// every ordinary message, leaves while a prompt is open, comes back on the
+// heartbeat that follows the answer, and ends in the closing line.
+func TestStatusLine(t *testing.T) {
+	s := New("chat", "slack", false)
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	th := transport.ThreadID("C1/1.0")
+	task := &store.TaskState{ID: "t1", Thread: th, Status: store.StatusRunning, Definition: agent.Definition{Name: "coder", Kind: agent.KindClaude, Environment: environment.Spec{Kind: environment.KindLocal}}}
+	agentEv := func(a agent.Event) surface.Event {
+		return surface.Event{Kind: surface.EventAgent, Thread: th, TaskID: task.ID, Task: task, Agent: &a}
+	}
+	texts := func(out []transport.Outbound) []string {
+		var got []string
+		for _, o := range out {
+			switch {
+			case o.Key != "" && o.Text == "":
+				got = append(got, "[remove "+o.Key+"]")
+			case o.Key != "":
+				got = append(got, "["+o.Key+"] "+o.Text)
+			default:
+				got = append(got, o.Text)
+			}
+		}
+		return got
+	}
+	check := func(name string, out []transport.Outbound, want ...string) {
+		t.Helper()
+		got := texts(out)
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("%s:\n got %q\nwant %q", name, got, want)
+		}
+	}
+
+	check("started", s.Render(surface.Event{Kind: surface.EventStarted, Thread: th, TaskID: task.ID, Task: task}),
+		"▶️ task `t1` started with agent *coder* (local)", "[status] ⏳ starting · 0s")
+	now = now.Add(4 * time.Second)
+	check("init", s.Render(agentEv(agent.Event{Type: agent.EventInit, Model: "m", Mode: agent.PermissionManual})),
+		"[remove status]", "🤖 `m` · manual · local", "[status] ⏳ thinking · 4s")
+	now = now.Add(time.Second)
+	// A tool call right after a redraw waits for the next heartbeat.
+	check("tool throttled", s.Render(agentEv(agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "1", ToolInput: map[string]any{"command": "go test ./...\nand more"}})))
+	now = now.Add(5 * time.Second)
+	check("heartbeat", s.Render(surface.Event{Kind: surface.EventHeartbeat, Thread: th, TaskID: task.ID, Task: task}),
+		"[status] 🔧 Bash `go test ./...…` · 10s · 1 tool call")
+	now = now.Add(5 * time.Second)
+	check("tool result", s.Render(agentEv(agent.Event{Type: agent.EventToolResult, ToolID: "1", Text: "ok"})),
+		"[status] ⏳ thinking · 15s · 1 tool call")
+	out := s.Render(agentEv(agent.Event{Type: agent.EventText, Text: "**Looking** at it"}))
+	check("text", out, "[remove status]", "**Looking** at it", "[status] ⏳ thinking · 15s · 1 tool call")
+	if !out[1].Markdown {
+		t.Error("agent text not flagged as Markdown")
+	}
+	perm := agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolID: "2", ToolInput: map[string]any{"command": "rm -rf build"}}
+	check("permission", s.Render(surface.Event{Kind: surface.EventPermission, Thread: th, TaskID: task.ID, Task: task, Agent: &perm, PromptID: "t1:2"}),
+		"[remove status]", "🔐 *Bash* wants to run:\n```rm -rf build```")
+	waiting := *task
+	waiting.Status = store.StatusWaitingPermission
+	check("heartbeat while waiting", s.Render(surface.Event{Kind: surface.EventHeartbeat, Thread: th, TaskID: task.ID, Task: &waiting}))
+	check("status reply while waiting", s.Render(surface.Event{Kind: surface.EventReply, Thread: th, Text: "task `t1`"}), "task `t1`")
+	now = now.Add(30 * time.Second)
+	// The answer came: the coordinator's heartbeat brings the line back,
+	// showing the tool that was approved.
+	check("heartbeat after answer", s.Render(surface.Event{Kind: surface.EventHeartbeat, Thread: th, TaskID: task.ID, Task: task}),
+		"[status] 🔧 Bash `rm -rf build` · 45s · 1 tool call")
+	now = now.Add(20 * time.Second)
+	check("result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.0125, Billing: agent.BillingAPIKey})),
+		"[remove status]", "✅ done · 1m05s · 1 tool call · $0.013")
+	check("finished", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusIdle}}))
+
+	// A follow-up to the live process has no started event: the first
+	// agent event opens the next turn.
+	now = now.Add(time.Minute)
+	check("follow-up tool", s.Render(agentEv(agent.Event{Type: agent.EventToolUse, Tool: "Read", ToolID: "3", ToolInput: map[string]any{"file_path": "/a.go"}})),
+		"[status] 🔧 Read `/a.go` · 0s · 1 tool call")
+	now = now.Add(3 * time.Second)
+	check("follow-up error", s.Render(agentEv(agent.Event{Type: agent.EventError, Text: "boom"})), "[remove status]", "❌ boom")
+
+	// A task that dies outside the agent: the coordinator's error line
+	// explains it, the finished event only takes the status line down.
+	check("next turn", s.Render(surface.Event{Kind: surface.EventStarted, Thread: th, TaskID: task.ID, Task: task}),
+		"▶️ task `t1` started with agent *coder* (local)", "[status] ⏳ starting · 0s")
+	check("error", s.Render(surface.Event{Kind: surface.EventError, Thread: th, TaskID: task.ID, Task: task, Text: "start environment: no docker"}),
+		"[remove status]", "❌ start environment: no docker", "[status] ⏳ starting · 0s")
+	check("failed after error", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusFailed}}),
+		"[remove status]")
+
+	// Cancelled mid-turn: the line goes, the outcome stays.
+	check("third turn", s.Render(surface.Event{Kind: surface.EventResumed, Thread: th, TaskID: task.ID, Task: task}),
+		"⏯️ resuming session with agent *coder*", "[status] ⏳ starting · 0s")
+	check("cancelled", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusCancelled}}),
+		"[remove status]", "⏹️ cancelled")
+}
+
+func TestFormatDuration(t *testing.T) {
+	cases := map[time.Duration]string{
+		400 * time.Millisecond: "0s",
+		12 * time.Second:       "12s",
+		65 * time.Second:       "1m05s",
+		62 * time.Minute:       "1h02m",
+	}
+	for d, want := range cases {
+		if got := formatDuration(d); got != want {
+			t.Errorf("%s: got %q want %q", d, got, want)
+		}
 	}
 }

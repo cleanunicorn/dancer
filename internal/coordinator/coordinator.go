@@ -9,6 +9,12 @@
 // It also owns which conversations are still open: a closed thread (see
 // CloseThread) is not re-seeded on the transport, not resumed on a restart
 // and not spoken to, until a human brings work back to it.
+//
+// And it keeps humans told that a task is alive: every Heartbeat while a
+// turn runs it broadcasts surface.EventHeartbeat (the chat surface's
+// status line lives on it), and on a transport that can react it marks
+// the thread's root message ⏳ while the agent works and ✋ while the
+// agent waits for an answer, clearing the mark when the turn ends.
 package coordinator
 
 import (
@@ -79,6 +85,9 @@ type Coordinator struct {
 	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
 	// task that keeps taking dancer down cannot restart-loop (default 3).
 	MaxAutoResumes int
+	// Heartbeat is how often surfaces hear that a running turn is still
+	// going (default 10s). Negative turns heartbeats off.
+	Heartbeat time.Duration
 
 	drives sync.WaitGroup
 
@@ -91,6 +100,9 @@ type Coordinator struct {
 	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
 	wizards map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
 	closed  map[transport.ThreadID]bool               // threads a human ended; projection of the store
+	sinks   map[executor.TaskID]*taskSink             // live tasks, for follow-up heartbeats
+	marks   map[transport.ThreadID]string             // reaction currently on a thread's root message
+	outMu   map[transport.ThreadID]*sync.Mutex        // serializes render+send per thread (keyed messages need order)
 }
 
 // New returns a Coordinator.
@@ -107,6 +119,9 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		askText:    map[transport.ThreadID]string{},
 		wizards:    map[transport.ThreadID]context.CancelFunc{},
 		closed:     map[transport.ThreadID]bool{},
+		sinks:      map[executor.TaskID]*taskSink{},
+		marks:      map[transport.ThreadID]string{},
+		outMu:      map[transport.ThreadID]*sync.Mutex{},
 	}
 	for _, t := range transports {
 		c.transports[t.Name()] = t
@@ -250,6 +265,7 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				c.Log.Info("recovered task on a closed thread", "task", t.ID, "thread", t.Thread)
 				continue
 			}
+			c.unmark(ctx, t.Transport, t.Thread) // a mark the previous process left
 			auto := c.autoResumable(t)
 			switch {
 			case auto:
@@ -721,6 +737,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	id, ok := c.lookup(it.Thread)
 	if ok {
 		if err := c.Executor.Send(ctx, id, it.Text); err == nil {
+			c.wake(ctx, id)
 			return
 		} else if !errors.Is(err, execlocal.ErrNotRunning) {
 			c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, TaskID: id, Text: "send: " + err.Error()}, s)
@@ -757,7 +774,16 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	st.Prompt = prompt
 	_ = c.Store.PutTask(ctx, st)
 	sink := &taskSink{c: c, state: st}
+	c.mu.Lock()
+	c.sinks[st.ID] = sink
+	c.mu.Unlock()
+	c.mark(ctx, st.Transport, st.Thread, store.StatusRunning)
+	stopBeat := c.beat(ctx, sink)
 	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session}, sink)
+	stopBeat()
+	c.mu.Lock()
+	delete(c.sinks, st.ID)
+	c.mu.Unlock()
 	final := sink.snapshot()
 	// The run may have ended because ctx was cancelled (shutdown); persist
 	// and notify with a context that still works.
@@ -790,16 +816,136 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	if err := c.Store.PutTask(pctx, final); err != nil {
 		c.Log.Error("persist final task state", "task", st.ID, "err", err)
 	}
+	c.mark(pctx, st.Transport, st.Thread, final.Status)
+	// The last heartbeat takes down whatever liveness display a surface
+	// still has up — on a shutdown there is no finished event to do it.
+	c.broadcast(pctx, heartbeat(final))
 	c.unbind(st.Thread, st.ID)
 	if ctx.Err() == nil {
 		c.broadcast(pctx, surface.Event{Kind: surface.EventFinished, Thread: st.Thread, TaskID: st.ID, Task: &final})
 	}
 }
 
+// heartbeat is the event that says where a task stands right now.
+func heartbeat(st store.TaskState) surface.Event {
+	return surface.Event{Kind: surface.EventHeartbeat, Thread: st.Thread, TaskID: st.ID, Task: &st}
+}
+
+// beat broadcasts a heartbeat every Heartbeat while the task is running,
+// until the returned stop is called.
+func (c *Coordinator) beat(ctx context.Context, sink *taskSink) (stop func()) {
+	every := c.Heartbeat
+	if every == 0 {
+		every = defaultHeartbeat
+	}
+	if every < 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if st := sink.snapshot(); st.Status == store.StatusRunning {
+					c.broadcast(ctx, heartbeat(st))
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// defaultHeartbeat is the heartbeat period when Heartbeat is unset.
+const defaultHeartbeat = 10 * time.Second
+
+// wake records that a live task got a follow-up: it is running again
+// before its first event says so, and surfaces hear it right away.
+func (c *Coordinator) wake(ctx context.Context, id executor.TaskID) {
+	c.mu.Lock()
+	sink := c.sinks[id]
+	c.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	st, changed := sink.setStatus(ctx, store.StatusIdle, store.StatusRunning)
+	if !changed {
+		return
+	}
+	c.mark(ctx, st.Transport, st.Thread, st.Status)
+	c.broadcast(ctx, heartbeat(st))
+}
+
+// mark shows a task's state on its thread's root message: ⏳ while the
+// agent works, ✋ while it waits for a human, nothing otherwise. Best
+// effort, on transports that can react; a mark is only touched when the
+// state changes.
+func (c *Coordinator) mark(ctx context.Context, transportName string, th transport.ThreadID, status string) {
+	r, ok := c.transports[transportName].(transport.Reactor)
+	if !ok {
+		return
+	}
+	want := ""
+	switch status {
+	case store.StatusRunning:
+		want = workingReaction
+	case store.StatusWaitingPermission:
+		want = waitingReaction
+	}
+	c.mu.Lock()
+	have := c.marks[th]
+	if have == want {
+		c.mu.Unlock()
+		return
+	}
+	c.marks[th] = want
+	c.mu.Unlock()
+	if have != "" {
+		if err := r.Unreact(ctx, th, have); err != nil {
+			c.Log.Warn("mark: removing reaction failed", "thread", th, "emoji", have, "err", err)
+		}
+	}
+	if want != "" {
+		if err := r.React(ctx, th, want); err != nil {
+			c.Log.Warn("mark: reaction failed (needs reactions:write scope?)", "thread", th, "emoji", want, "err", err)
+		}
+	}
+}
+
+// unmark removes the state marks a previous dancer process may have left
+// on a thread it was working in when it stopped.
+func (c *Coordinator) unmark(ctx context.Context, transportName string, th transport.ThreadID) {
+	r, ok := c.transports[transportName].(transport.Reactor)
+	if !ok {
+		return
+	}
+	for _, emoji := range []string{workingReaction, waitingReaction} {
+		if err := r.Unreact(ctx, th, emoji); err != nil {
+			c.Log.Debug("unmark: removing reaction failed", "thread", th, "emoji", emoji, "err", err)
+		}
+	}
+}
+
+const (
+	workingReaction = "hourglass_flowing_sand" // the agent is working
+	waitingReaction = "raised_hand"            // the agent waits for a human
+)
+
 // taskSink implements executor.Sink for one task.
 type taskSink struct {
 	c *Coordinator
 
+	// putMu orders writes of the projection: it is taken before mu by
+	// everything that changes state and held until the change is stored,
+	// so a change made later cannot be written earlier. OnEvent runs on
+	// the executor's goroutine, setStatus on whichever delivered the
+	// follow-up or decision.
+	putMu sync.Mutex
 	mu    sync.Mutex
 	state store.TaskState
 	// answered is true while the agent's last word was a completed turn
@@ -816,6 +962,36 @@ func (s *taskSink) snapshot() store.TaskState {
 	return s.state
 }
 
+// setStatus records a status change that did not come from the agent (a
+// follow-up sent, a decision delivered) and persists it. It only applies
+// when the task is still in the state from: the agent may already have
+// moved on (a denied tool can end the turn at once), and its word wins.
+func (s *taskSink) setStatus(ctx context.Context, from, to string) (st store.TaskState, changed bool) {
+	s.putMu.Lock()
+	defer s.putMu.Unlock()
+	s.mu.Lock()
+	if s.state.Status != from {
+		st = s.state
+		s.mu.Unlock()
+		return st, false
+	}
+	s.state.Status = to
+	if to == store.StatusRunning {
+		s.answered = false
+	}
+	st = s.state
+	s.mu.Unlock()
+	s.persist(ctx, st)
+	return st, true
+}
+
+// persist writes the projection; the caller holds putMu.
+func (s *taskSink) persist(ctx context.Context, st store.TaskState) {
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	_ = s.c.Store.PutTask(pctx, st)
+}
+
 // turnFinished reports whether the agent completed its turn before the stop.
 func (s *taskSink) turnFinished() bool {
 	s.mu.Lock()
@@ -825,13 +1001,14 @@ func (s *taskSink) turnFinished() bool {
 
 func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Event) {
 	seq := s.c.append(ctx, id, s.state.Thread, "agent", ev)
+	s.putMu.Lock()
 	s.mu.Lock()
 	s.state.LastSeq = seq
 	if ev.Session != "" {
 		s.state.Session = ev.Session
 	}
 	switch ev.Type {
-	case agent.EventNeedsPermission:
+	case agent.EventNeedsPermission, agent.EventQuestion:
 		s.state.Status = store.StatusWaitingPermission
 		s.answered = false
 	case agent.EventResult, agent.EventError:
@@ -846,9 +1023,9 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	}
 	st := s.state
 	s.mu.Unlock()
-	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	_ = s.c.Store.PutTask(pctx, st)
-	cancel()
+	s.persist(ctx, st)
+	s.putMu.Unlock()
+	s.c.mark(ctx, st.Transport, st.Thread, st.Status)
 	if ev.Type == agent.EventNeedsPermission {
 		return // rendered by AwaitDecision with its prompt id
 	}
@@ -877,10 +1054,22 @@ func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev age
 	select {
 	case d := <-ch:
 		s.c.append(ctx, id, st.Thread, "decision", d)
+		s.resume(ctx)
 		return agent.PermissionDecision{ToolID: ev.ToolID, Allow: d.Choice == "allow", Reason: "operator chose " + d.Choice}, nil
 	case <-ctx.Done():
 		return agent.PermissionDecision{}, ctx.Err()
 	}
+}
+
+// resume records that the human answered and the agent is working again,
+// and tells surfaces so their liveness display comes back.
+func (s *taskSink) resume(ctx context.Context) {
+	st, changed := s.setStatus(ctx, store.StatusWaitingPermission, store.StatusRunning)
+	if !changed {
+		return
+	}
+	s.c.mark(ctx, st.Transport, st.Thread, st.Status)
+	s.c.broadcast(ctx, heartbeat(st))
 }
 
 // awaitAnswers asks each question in turn and returns the answers as an
@@ -911,6 +1100,7 @@ func (s *taskSink) awaitAnswers(ctx context.Context, id executor.TaskID, ev agen
 		s.c.append(ctx, id, st.Thread, "decision", d)
 		answers[q.Text] = d.Choice
 	}
+	s.resume(ctx)
 	return agent.PermissionDecision{ToolID: ev.ToolID, Allow: true, Answers: answers}, nil
 }
 
@@ -949,15 +1139,35 @@ func (c *Coordinator) deliver(base string, d transport.Decision) {
 	}
 }
 
-// emit renders an event through one surface.
+// emit renders an event through one surface. Render and send happen under
+// the thread's lock: a surface that edits a keyed message in place relies
+// on its messages reaching the transport in the order it rendered them,
+// and a heartbeat and an agent event can arrive from different goroutines.
 func (c *Coordinator) emit(ctx context.Context, ev surface.Event, s surface.Surface) {
+	mu := c.threadLock(ev.Thread)
+	mu.Lock()
+	defer mu.Unlock()
 	t := c.transports[s.Transport()]
 	for _, out := range s.Render(ev) {
-		c.append(ctx, ev.TaskID, out.Thread, "outbound", out)
+		if ev.Kind != surface.EventHeartbeat {
+			c.append(ctx, ev.TaskID, out.Thread, "outbound", out)
+		}
 		if err := t.Send(ctx, out); err != nil {
 			c.Log.Error("send failed", "transport", t.Name(), "surface", s.Name(), "err", err)
 		}
 	}
+}
+
+// threadLock returns the lock that orders output on th.
+func (c *Coordinator) threadLock(th transport.ThreadID) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	mu, ok := c.outMu[th]
+	if !ok {
+		mu = &sync.Mutex{}
+		c.outMu[th] = mu
+	}
+	return mu
 }
 
 // emitTo renders an event through every surface bound to a transport

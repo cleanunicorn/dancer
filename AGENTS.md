@@ -112,10 +112,15 @@ files first — they carry the contract, the concrete packages under them are im
 - **`surface`** (chat, feed) — everything about *how* humans interact. `Handle` turns an inbound
   message into `[]Intent` (returning `ok=false` passes it to the next surface on that transport);
   `Render` turns a coordinator `Event` into outbound messages. Several surfaces share one transport,
-  so a new interaction style on Slack is a **new surface, not a new Slack client**.
+  so a new interaction style on Slack is a **new surface, not a new Slack client**. The chat surface
+  keeps one live status line per running turn (what tool, for how long, how many calls) as a *keyed*
+  message (`Outbound.Key`): the transport edits it in place, and the surface moves it below every
+  ordinary message and takes it down when the turn ends or a prompt is open.
 - **`coordinator`** — the only stateful brain: intents → tasks, event fan-out to every surface,
   permission/question decision relay (`pending`/`askText` maps keyed by prompt id), guided wizards
-  (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), restart recovery.
+  (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), restart recovery. It is also
+  the clock: every `Heartbeat` (10s) while a turn runs it broadcasts `EventHeartbeat`, and on a
+  `transport.Reactor` it marks the thread's root message ⏳ (working) / ✋ (waiting for a human).
 - **`executor`** (local) — one worker per task: provisions the environment, starts the agent,
   keeps a finished turn's process alive for `idle_timeout` so follow-ups are instant, then resumes
   the session with `--resume`.
@@ -140,6 +145,13 @@ files first — they carry the contract, the concrete packages under them are im
   → `agent.PermissionDecision`. Any surface that rendered a prompt may answer it, so prompt ids are
   namespaced per surface and resolved on a base id in the coordinator.
 - **`AskUserQuestion` reuses the same path** as permissions, via `EventQuestion` + `Question.Answers`.
+- **Output on a thread is ordered, and keyed messages depend on it.** `emit` renders and sends under
+  a per-thread lock, because a heartbeat (ticker goroutine) and an agent event (executor goroutine)
+  can both touch the status line; a surface that posts `[remove status, text, status]` needs those
+  to reach the transport in that order. Heartbeat output is not written to the event log.
+- **Agent text is Markdown, ours is transport markup.** `Outbound.Markdown` is set only on what the
+  agent wrote; Slack renders it through a Block Kit `markdown` block (falling back to plain text)
+  while dancer's own lines stay mrkdwn (`*bold*`, backticks).
 - **The Claude handshake is protocol-sensitive** (`internal/agent/claude`): spawn with
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
   `can_use_tool` with a `control_response`. Verified against claude 2.1.239; `parse_test.go` fixtures
