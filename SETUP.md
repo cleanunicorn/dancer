@@ -95,6 +95,8 @@ runs (local / docker / ssh and the image, host or directory that goes with
 it), permission mode, pre-approved tools (presets or a comma-separated list)
 and an optional system prompt, then shows a summary with **Save / Cancel**.
 Click a button or type the answer; `cancel` at any point abandons the flow.
+Type paths in backticks (`` `/home/me/app` ``): Slack refuses to send a
+message that starts with `/` because it looks like a slash command.
 
 Saving appends a `[[definitions]]` block to `config.toml` (the rest of the
 file is left untouched) and registers the agent immediately — `agents` lists

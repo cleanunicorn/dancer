@@ -124,7 +124,7 @@ func (w *wizard) ask(ctx context.Context, q agent.Question) (string, error) {
 	select {
 	case d := <-ch:
 		w.c.append(ctx, "", w.thread, "decision", d)
-		return strings.TrimSpace(d.Choice), nil
+		return unquote(d.Choice), nil
 	case <-time.After(wizardTimeout):
 		return "", context.DeadlineExceeded
 	case <-ctx.Done():
@@ -150,6 +150,22 @@ func (w *wizard) askUntil(ctx context.Context, q agent.Question, validate func(s
 		q.Text = "⚠️ " + verr.Error() + "\n" + orig
 	}
 }
+
+// unquote strips the backticks or quotes people wrap answers in. Slack in
+// particular refuses to send a message that starts with "/" (it looks like
+// a slash command), so paths arrive as `/home/me/app`.
+func unquote(a string) string {
+	a = strings.TrimSpace(a)
+	for _, q := range []string{"`", "\"", "'"} {
+		if len(a) >= 2 && strings.HasPrefix(a, q) && strings.HasSuffix(a, q) {
+			return strings.TrimSpace(a[1 : len(a)-1])
+		}
+	}
+	return a
+}
+
+// pathHint tells Slack users how to send a path.
+const pathHint = " Wrap it in backticks (Slack drops messages that start with `/`)."
 
 func options(pairs ...string) []agent.Option {
 	var out []agent.Option
@@ -213,18 +229,19 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 
 	switch def.Environment.Kind {
 	case environment.KindLocal:
-		def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task.",
+		def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task." + pathHint,
 			Options: options("none", "fresh directory per task")}, validateLocalDir)
 	case environment.KindDocker:
 		def.Environment.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? It must contain the `claude` binary."}, nonEmpty("image"))
 		if err == nil {
-			def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a fresh directory per task.",
+			def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a fresh directory per task." + pathHint,
 				Options: options("none", "fresh directory per task")}, validateLocalDir)
 		}
 	case environment.KindSSH:
 		def.Environment.Host, err = w.askUntil(ctx, agent.Question{Header: "Host", Text: "SSH host? `user@host` or an alias from `~/.ssh/config`."}, nonEmpty("host"))
 		if err == nil {
-			def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Remote working directory? `none` = a fresh directory per task."}, func(a string) (string, error) {
+			def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Remote working directory? `none` = a fresh directory per task." + pathHint,
+				Options: options("none", "fresh directory per task")}, func(a string) (string, error) {
 				if isNone(a) {
 					return "", nil
 				}

@@ -96,7 +96,7 @@ func TestAddAgentFlow(t *testing.T) {
 	tr.waitFor(t, th, "Absolute path")
 	tr.say(th, "relative/dir")
 	tr.waitFor(t, th, "not an absolute path")
-	tr.say(th, workdir)
+	tr.say(th, "`"+workdir+"`") // as Slack users must send paths
 	tr.waitFor(t, th, "Permission mode?")
 	tr.say(th, "acceptEdits")
 	tr.waitFor(t, th, "Pre-approved tools")
