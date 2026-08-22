@@ -341,9 +341,12 @@ definition pre-approved, so the decider needs permission you wrote down
 yourself: `auto_allow` (same syntax as `allowed_tools` — `Read`,
 `Read(/repo/*)`, `Bash(go test:*)`, `Bash(*)`). A command is matched the way a
 shell reads it, so `Bash(go test:*)` covers `go test ./... && go test ./cmd`
-but not `go test ./... && rm -rf .git`, and not `go test $(something)`. A call outside that list goes straight to the
-buttons without asking the decider anything; a call inside it may be approved,
-and the thread is told:
+and `go test ./... 2>&1`, but not `go test ./... && rm -rf .git`, not
+`go test ./... > somefile`, and not `go test $(something)`. Paths are cleaned
+first, so `Read(/repo/*)` does not cover `/repo/../etc/shadow`. A pattern that
+does not parse (`Bash(`, `Bash()`) is a config error, never "every call". A
+call outside that list goes straight to the buttons without asking the decider
+anything; a call inside it may be approved, and the thread is told:
 
 ```
 🔓 allowed automatically: `Bash go test ./...` — Run all tests; explicitly requested.
