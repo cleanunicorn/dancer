@@ -15,7 +15,9 @@
 // permission or question prompt, a notice that a restart left the task
 // for them to pick up — address the task's requester
 // (transport.Outbound.Mention), so whoever started the task is notified
-// even with the thread muted, and nobody else is.
+// even with the thread muted, and nobody else is. "⏹️ cancelled" is the
+// exception: the human who asked for it is already there. Lines without
+// a task (help, a wizard's questions) have nobody to address.
 package chat
 
 import (
