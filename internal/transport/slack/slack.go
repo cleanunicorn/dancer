@@ -64,11 +64,16 @@ func New(appToken, botToken string, allowedUsers []string, log *slog.Logger) (*T
 	if err != nil {
 		return nil, fmt.Errorf("slack: auth test: %w", err)
 	}
+	return newTransport(api, auth.UserID, allowedUsers, log), nil
+}
+
+// newTransport wires a transport to a Web API client; tests hand it a fake.
+func newTransport(api *slack.Client, botUserID string, allowedUsers []string, log *slog.Logger) *Transport {
 	c := &Transport{
 		api:          api,
 		sm:           socketmode.New(api),
 		log:          log,
-		botUserID:    auth.UserID,
+		botUserID:    botUserID,
 		allowedUsers: map[string]bool{},
 		threads:      map[transport.ThreadID]bool{},
 		keyed:        map[string]string{},
@@ -76,7 +81,7 @@ func New(appToken, botToken string, allowedUsers []string, log *slog.Logger) (*T
 	for _, u := range allowedUsers {
 		c.allowedUsers[u] = true
 	}
-	return c, nil
+	return c
 }
 
 func (c *Transport) Name() string { return "slack" }
