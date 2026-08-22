@@ -5,6 +5,10 @@
 //
 //	transports --Inbound--> surfaces --Intent--> Coordinator --Task--> Executor
 //	transports <--Outbound-- surfaces <--Event-- Coordinator <--agent.Event--
+//
+// It also owns which conversations are still open: a closed thread (see
+// CloseThread) is not re-seeded on the transport, not resumed on a restart
+// and not spoken to, until a human brings work back to it.
 package coordinator
 
 import (
@@ -86,6 +90,7 @@ type Coordinator struct {
 	pending map[string]chan transport.Decision        // prompt base id -> waiter
 	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
 	wizards map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
+	closed  map[transport.ThreadID]bool               // threads a human ended; projection of the store
 }
 
 // New returns a Coordinator.
@@ -101,6 +106,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		pending:    map[string]chan transport.Decision{},
 		askText:    map[transport.ThreadID]string{},
 		wizards:    map[transport.ThreadID]context.CancelFunc{},
+		closed:     map[transport.ThreadID]bool{},
 	}
 	for _, t := range transports {
 		c.transports[t.Name()] = t
@@ -114,6 +120,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		if _, ok := c.transports[s.Transport()]; !ok {
 			return fmt.Errorf("coordinator: surface %q bound to unknown transport %q", s.Name(), s.Transport())
 		}
+	}
+	if err := c.loadClosed(ctx); err != nil {
+		return err
 	}
 	if err := c.recover(ctx); err != nil {
 		return err
@@ -194,6 +203,9 @@ func (c *Coordinator) seedThreads(ctx context.Context) {
 	}
 	n := 0
 	for _, t := range tasks {
+		if c.threadClosed(t.Thread) {
+			continue // closed on purpose: stay deaf until someone speaks up
+		}
 		for name, tr := range c.transports {
 			if t.Transport != "" && t.Transport != name {
 				continue
@@ -228,6 +240,16 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			return err
 		}
 		for _, t := range tasks {
+			if c.threadClosed(t.Thread) {
+				// A closed thread has no listener: mark the task idle so it
+				// is not reported as live, but neither resume nor announce it.
+				t.Status = store.StatusIdle
+				if err := c.Store.PutTask(ctx, t); err != nil {
+					return err
+				}
+				c.Log.Info("recovered task on a closed thread", "task", t.ID, "thread", t.Thread)
+				continue
+			}
 			auto := c.autoResumable(t)
 			switch {
 			case auto:
@@ -344,14 +366,25 @@ func (c *Coordinator) handle(ctx context.Context, in transport.Inbound) {
 }
 
 func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transport.Inbound, it surface.Intent) {
+	// Addressing the bot lifts the transport's tombstone before the
+	// coordinator sees the message — that is how reopening works. If the
+	// intent did not actually reopen the thread (`close` again, `status`,
+	// a wizard step), put the tombstone back so plain replies stay ignored.
+	defer func() {
+		if in.Thread != "" && c.threadClosed(in.Thread) {
+			c.forget(s.Transport(), in.Thread)
+		}
+	}()
 	switch it := it.(type) {
 	case surface.Say:
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: it.Text}, s)
 	case surface.Decide:
 		c.resolveDecision(ctx, it)
 	case surface.RunTask:
+		c.reopenThread(ctx, s, it.Thread)
 		c.runTask(ctx, s, it)
 	case surface.FollowUp:
+		c.reopenThread(ctx, s, it.Thread)
 		c.followUp(ctx, s, it)
 	case surface.Status:
 		st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
@@ -373,6 +406,8 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		if err := c.Executor.Cancel(ctx, id); err != nil {
 			c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, TaskID: id, Text: "cancel: " + err.Error()}, s)
 		}
+	case surface.CloseThread:
+		c.closeThread(ctx, s, it)
 	case surface.ListAgents:
 		defs, err := c.Store.ListDefinitions(ctx)
 		if err != nil || len(defs) == 0 {
@@ -412,6 +447,124 @@ func channelOf(th transport.ThreadID) string {
 func channelKey(s surface.Surface, th transport.ThreadID) string {
 	return s.Transport() + "/" + channelOf(th)
 }
+
+// loadClosed reads the closed threads into memory once at startup; every
+// later change goes through closeThread/reopenThread, which write both.
+func (c *Coordinator) loadClosed(ctx context.Context) error {
+	threads, err := c.Store.ClosedThreads(ctx)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	for _, th := range threads {
+		c.closed[th] = true
+	}
+	n := len(c.closed)
+	c.mu.Unlock()
+	c.Log.Info("loaded closed threads", "threads", n)
+	return nil
+}
+
+func (c *Coordinator) threadClosed(th transport.ThreadID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed[th]
+}
+
+func (c *Coordinator) setClosed(th transport.ThreadID, closed bool) {
+	c.mu.Lock()
+	if closed {
+		c.closed[th] = true
+	} else {
+		delete(c.closed, th)
+	}
+	c.mu.Unlock()
+}
+
+// closeThread ends the conversation on a thread: the open wizard and the
+// running task are stopped, the thread is marked closed, and the transport
+// is told to stop following it. The order matters — the notice and the
+// reaction go out while the transport still follows the thread.
+func (c *Coordinator) closeThread(ctx context.Context, s surface.Surface, it surface.CloseThread) {
+	if c.threadClosed(it.Thread) {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "this thread is already closed"}, s)
+		return
+	}
+	c.cancelWizard(it.Thread)
+	id, running := c.lookup(it.Thread)
+	if running {
+		if err := c.Executor.Cancel(ctx, id); err != nil && !errors.Is(err, execlocal.ErrNotRunning) {
+			c.Log.Warn("close: cancel failed", "task", id, "err", err)
+		}
+		c.awaitStopped(it.Thread, id)
+	}
+	if err := c.Store.SetThreadClosed(ctx, it.Thread, true); err != nil {
+		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "close: " + err.Error()}, s)
+		return
+	}
+	c.setClosed(it.Thread, true)
+	c.append(ctx, id, it.Thread, "closed", map[string]any{"thread": it.Thread, "task": id})
+	c.Log.Info("thread closed", "thread", it.Thread, "task", id, "was_running", running)
+	c.emit(ctx, surface.Event{Kind: surface.EventClosed, Thread: it.Thread, TaskID: id}, s)
+	c.markClosed(ctx, s.Transport(), it.Thread)
+	c.forget(s.Transport(), it.Thread)
+}
+
+// awaitStopped waits (briefly) for the cancelled task to let go of the
+// thread. Without it a message that reopens the thread right away would be
+// sent into the dying process, and the unbind the finishing task does last
+// would drop the reopened conversation's own binding.
+func (c *Coordinator) awaitStopped(th transport.ThreadID, id executor.TaskID) {
+	deadline := time.Now().Add(closeDrainTimeout)
+	for time.Now().Before(deadline) {
+		if cur, ok := c.lookup(th); !ok || cur != id {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	c.Log.Warn("close: task did not stop in time, unbinding it", "task", id, "thread", th)
+	c.unbind(th, id)
+}
+
+// closeDrainTimeout bounds how long close waits for a cancelled task.
+const closeDrainTimeout = 3 * time.Second
+
+// reopenThread lifts the closed mark when a human brings work back to the
+// thread. Nothing happens on a thread that was never closed.
+func (c *Coordinator) reopenThread(ctx context.Context, s surface.Surface, th transport.ThreadID) {
+	if !c.threadClosed(th) {
+		return
+	}
+	if err := c.Store.SetThreadClosed(ctx, th, false); err != nil {
+		c.Log.Error("reopen thread", "thread", th, "err", err)
+		return
+	}
+	c.setClosed(th, false)
+	c.Log.Info("thread reopened", "thread", th)
+	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "♻️ thread reopened"}, s)
+}
+
+// markClosed puts a ✅ on the thread's root message. Best-effort: the
+// transport may not support reactions or lack the permission.
+func (c *Coordinator) markClosed(ctx context.Context, transportName string, th transport.ThreadID) {
+	r, ok := c.transports[transportName].(transport.Reactor)
+	if !ok {
+		return
+	}
+	if err := r.React(ctx, th, closedReaction); err != nil {
+		c.Log.Warn("close: reaction failed (needs reactions:write scope?)", "thread", th, "err", err)
+	}
+}
+
+// forget tells a thread-tracking transport to stop following a thread.
+func (c *Coordinator) forget(transportName string, th transport.ThreadID) {
+	if tc, ok := c.transports[transportName].(transport.ThreadCloser); ok {
+		tc.Forget(th)
+	}
+}
+
+// closedReaction marks a closed thread's root message.
+const closedReaction = "white_check_mark"
 
 // defaultAgent is the definition used on th when none is named: the
 // channel's default if one is set, else DefaultDefinition.

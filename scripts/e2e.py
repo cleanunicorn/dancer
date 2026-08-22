@@ -4,8 +4,9 @@
     scripts/e2e.py bin/dancer [model]
 
 Starts dancer with a throwaway config, runs a task that needs a permission,
-allows it, checks the result, status, and a follow-up turn. Costs a few
-cents (haiku by default). Requires a logged-in `claude`.
+allows it, checks the result, status, a follow-up turn, and closing and
+reopening the thread. Costs a few cents (haiku by default). Requires a
+logged-in `claude`.
 """
 import os, select, subprocess, sys, tempfile, time
 
@@ -63,6 +64,10 @@ ok &= wait_for("[allow/deny] >")
 send("allow");                                    ok &= wait_for("✅ done")
 send("status");                                   ok &= wait_for("status *idle*")
 send("Reply with exactly: SECOND");               ok &= wait_for("✅ done")
+send("close");                                    ok &= wait_for("thread closed")
+send("close");                                    ok &= wait_for("already closed")
+send("Reply with exactly: THIRD");                ok &= wait_for("thread reopened")
+ok &= wait_for("✅ done")
 p.terminate()
 try:
     p.wait(10)

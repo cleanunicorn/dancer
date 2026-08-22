@@ -145,6 +145,11 @@ files first — they carry the contract, the concrete packages under them are im
   `RemoveDefinition` / `AppendChannel` edit `config.toml` textually so comments and formatting
   survive, validate the whole result, and restore the original if it fails to load. Use those helpers
   rather than `config.Save` for chat-driven changes.
+- **Closing a thread is thread state, not task state.** `close` writes the `closed_threads`
+  table (`store.SetThreadClosed`), which the coordinator mirrors in memory. A closed thread is
+  skipped by `seedThreads` and `recover`, and `transport.ThreadCloser.Forget` tombstones it on
+  Slack so a late "cancelled" notice cannot resurrect it. Any message a human addresses to the
+  bot there reopens it. Nothing is ever deleted.
 - **Graceful restart is a tested contract.** On SIGTERM: notify live threads, drain in-flight tool
   calls for `drain_timeout`, persist final state with a *non-cancelled* context, post "back" notices
   in `recover()`. `cancel` stays immediate. `make restart-drill` guards this.

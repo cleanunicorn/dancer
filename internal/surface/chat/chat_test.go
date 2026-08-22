@@ -23,6 +23,12 @@ func TestFormatCost(t *testing.T) {
 	}
 }
 
+func TestHelpListsClose(t *testing.T) {
+	if !strings.Contains(help, "`close`") {
+		t.Fatal("help does not mention close")
+	}
+}
+
 func TestHandleCommands(t *testing.T) {
 	s := New("chat", "slack", false)
 	th := transport.ThreadID("C1/1.0")
@@ -36,6 +42,9 @@ func TestHandleCommands(t *testing.T) {
 		{"default", surface.SetDefault{Thread: th}},
 		{"default coder", surface.SetDefault{Thread: th, Agent: "coder"}},
 		{"fix the build", surface.FollowUp{Thread: th, Text: "fix the build"}},
+		{"close", surface.CloseThread{Thread: th}},
+		{"Close", surface.CloseThread{Thread: th}},
+		{"cancel", surface.Cancel{Thread: th}},
 		{"agent", surface.ListAgents{Thread: th}},
 		{"agent list", surface.ListAgents{Thread: th}},
 		{"agent add", surface.AddAgent{Thread: th}},
