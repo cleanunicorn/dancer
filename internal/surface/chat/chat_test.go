@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/surface"
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
@@ -68,5 +70,34 @@ func TestHandleCommands(t *testing.T) {
 		if say, ok := got[0].(surface.Say); !ok || !strings.Contains(say.Text, "usage") {
 			t.Errorf("%q → %+v", text, got)
 		}
+	}
+}
+
+func TestRenderInit(t *testing.T) {
+	s := New("chat", "slack", true)
+	task := &store.TaskState{Definition: agent.Definition{Name: "coder", Environment: environment.Spec{Kind: environment.KindDocker, Image: "dancer/dev", Workdir: "/cfg"}}}
+	ev := surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Task: task, Agent: &agent.Event{
+		Type: agent.EventInit, Model: "claude-haiku-4-5-20251001", Mode: agent.PermissionAcceptEdits,
+		Version: "2.1.239", Billing: agent.BillingSubscription, Workdir: "/work",
+	}}
+	out := s.Render(ev)
+	if len(out) != 1 {
+		t.Fatalf("got %d messages, want 1", len(out))
+	}
+	want := "🤖 *coder* · `claude-haiku-4-5-20251001` · acceptEdits · claude 2.1.239 · subscription · docker dancer/dev /work"
+	if out[0].Text != want {
+		t.Errorf("got  %q\nwant %q", out[0].Text, want)
+	}
+
+	// The line shows on a quiet surface too: it is the answer to "what am I talking to".
+	s.Verbose = false
+	if got := s.Render(ev); len(got) != 1 {
+		t.Fatalf("non-verbose: got %d messages, want 1", len(got))
+	}
+
+	// Sparse init (no task, no version) still reads.
+	bare := surface.Event{Kind: surface.EventAgent, Thread: "C1/1.0", Agent: &agent.Event{Type: agent.EventInit, Model: "m", Mode: agent.PermissionManual}}
+	if got := s.Render(bare)[0].Text; got != "🤖 `m` · manual" {
+		t.Errorf("bare: got %q", got)
 	}
 }

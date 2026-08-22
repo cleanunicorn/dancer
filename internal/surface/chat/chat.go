@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dancer/internal/environment"
 	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/surface"
 	"github.com/cleanunicorn/dancer/internal/transport"
@@ -132,6 +133,8 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 	}
 	var text string
 	switch a.Type {
+	case agent.EventInit:
+		text = describeInit(ev)
 	case agent.EventText:
 		if a.ParentID != "" && !s.Verbose {
 			return nil
@@ -162,6 +165,66 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 		return nil
 	}
 	return []transport.Outbound{{Thread: ev.Thread, Text: text, Files: files}}
+}
+
+// describeInit renders the session details an agent reports when it starts
+// or resumes: the model it actually runs (the definition may leave it to the
+// CLI's default), its permission mode, CLI version, billing and where it runs.
+func describeInit(ev surface.Event) string {
+	a := ev.Agent
+	var parts []string
+	if ev.Task != nil {
+		parts = append(parts, fmt.Sprintf("*%s*", ev.Task.Definition.Name))
+	}
+	if a.Model != "" {
+		parts = append(parts, "`"+a.Model+"`")
+	}
+	if a.Mode != "" {
+		parts = append(parts, string(a.Mode))
+	}
+	if a.Version != "" {
+		parts = append(parts, "claude "+a.Version)
+	}
+	switch a.Billing {
+	case agent.BillingSubscription:
+		parts = append(parts, "subscription")
+	case agent.BillingAPIKey:
+		parts = append(parts, "API key")
+	}
+	if ev.Task != nil {
+		parts = append(parts, describeEnvironment(ev.Task.Definition.Environment, a.Workdir))
+	} else if a.Workdir != "" {
+		parts = append(parts, a.Workdir)
+	}
+	return "🤖 " + strings.Join(parts, " · ")
+}
+
+// describeEnvironment names where the agent runs: kind, then the docker
+// image or ssh host, then the working directory (the one the agent reports,
+// falling back to the definition's).
+func describeEnvironment(spec environment.Spec, workdir string) string {
+	kind := string(spec.Kind)
+	if kind == "" {
+		kind = string(environment.KindLocal)
+	}
+	s := kind
+	switch spec.Kind {
+	case environment.KindDocker:
+		if spec.Image != "" {
+			s += " " + spec.Image
+		}
+	case environment.KindSSH:
+		if spec.Host != "" {
+			s += " " + spec.Host
+		}
+	}
+	if workdir == "" {
+		workdir = spec.Workdir
+	}
+	if workdir != "" {
+		s += " " + workdir
+	}
+	return s
 }
 
 // FormatCost renders a result's cost: a plain charge for API-key runs, an
