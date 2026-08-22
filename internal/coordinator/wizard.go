@@ -560,7 +560,7 @@ func (w *wizard) edit(ctx context.Context, def *agent.Definition) (changed bool,
 func (w *wizard) askModel(ctx context.Context, def *agent.Definition) error {
 	var err error
 	def.Model, err = w.askUntil(ctx, agent.Question{Header: "Model", Text: "Which model? Pick one or type a full model id.",
-		Options: options("sonnet", "balanced", "opus", "most capable", "haiku", "fastest")}, nonEmpty("model"))
+		Options: options("sonnet", "balanced", "opus", "frontier default", "fable", "most capable", "haiku", "fastest")}, nonEmpty("model"))
 	return err
 }
 

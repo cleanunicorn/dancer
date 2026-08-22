@@ -85,7 +85,7 @@ func runSetup(cfgPath string) error {
 
 	fmt.Println("\n4/4  First agent definition")
 	name := ask("Agent name", "coder")
-	model := ask("Model (haiku/sonnet/opus or full id)", "sonnet")
+	model := ask("Model (haiku/sonnet/opus/fable or full id)", "sonnet")
 	envKind := strings.ToLower(ask("Environment kind (local/docker/ssh)", "local"))
 	def := config.Definition{Name: name, Kind: "claude", Model: model}
 	def.Environment.Kind = envKind
