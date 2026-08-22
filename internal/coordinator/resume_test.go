@@ -85,6 +85,77 @@ func TestAutoResumeAfterRestart(t *testing.T) {
 	t.Fatalf("task after auto-resume = %+v", ts)
 }
 
+// TestFinishedTurnIsNotResumed: stopping dancer while a process is only
+// being kept alive for a follow-up cuts nothing short, so that task stays
+// idle and waits for a human instead of being continued.
+func TestFinishedTurnIsNotResumed(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "c.db")
+	st, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	c.DefaultDefinition = "coder"
+	c.AutoResume = true
+	c.DrainTimeout = time.Second
+	runDone := make(chan error, 1)
+	go func() { runDone <- c.Run(ctx) }()
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/12.0")
+	tr.say(th, "run coder do it")
+	p := tr.waitFor(t, th, "wants to run")
+	tr.decide(th, p.Prompt.ID, "allow")
+	tr.waitFor(t, th, "allowed=true") // the turn is done; the process idles
+
+	// The restart notice says so, and the task is not marked interrupted.
+	cancel()
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("coordinator did not stop")
+	}
+	tr.waitFor(t, th, "reply in this thread to resume")
+	id := firstTask(t, st)
+	ts, _ := st.GetTask(context.Background(), id)
+	if ts.Status != store.StatusIdle {
+		t.Fatalf("finished turn should stay idle, got %+v", ts)
+	}
+	st.Close()
+
+	st2, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	tr2 := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c2 := New(st2, ex, []transport.Transport{tr2}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c2.DefaultDefinition = "coder"
+	c2.AutoResume = true
+	go c2.Run(ctx2)
+	<-tr2.ready
+
+	// Nothing is resumed: the thread stays quiet until someone replies.
+	time.Sleep(300 * time.Millisecond)
+	tr2.mu.Lock()
+	out := append([]transport.Outbound(nil), tr2.out...)
+	tr2.mu.Unlock()
+	if len(out) != 0 {
+		t.Fatalf("idle task should not be picked up, got %+v", out)
+	}
+	tr2.say(th, "carry on")
+	tr2.waitFor(t, th, "echo:carry on")
+}
+
 // TestAutoResumeGuards: a task that never reached a session runs again from
 // its prompt; stale tasks and restart-loopers fall back to waiting.
 func TestAutoResumeGuards(t *testing.T) {

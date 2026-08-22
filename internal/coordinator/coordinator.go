@@ -153,16 +153,18 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 		live[th] = id
 	}
 	c.mu.Unlock()
-	tail := "reply in this thread to resume"
-	if c.AutoResume {
-		tail = "it continues on its own when dancer is back"
-	}
 	for th, id := range live {
 		st, err := c.Store.GetTask(sctx, id)
 		if err != nil {
 			continue
 		}
-		c.Log.Info("shutdown: notifying live task", "task", id, "thread", th)
+		// A task whose turn is done is only holding its process open for a
+		// follow-up; stopping it cuts nothing short.
+		tail := "reply in this thread to resume"
+		if c.AutoResume && st.Status != store.StatusIdle {
+			tail = "it continues on its own when dancer is back"
+		}
+		c.Log.Info("shutdown: notifying live task", "task", id, "thread", th, "status", st.Status)
 		c.emitTo(sctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: th, TaskID: id, Task: &st,
 			Text: "⏸️ dancer is restarting — the agent finishes its current step and stops; " + tail})
 	}
@@ -204,9 +206,13 @@ func (c *Coordinator) seedThreads(ctx context.Context) {
 // message of the resumed session.
 const defaultResumePrompt = "dancer restarted and cut your last turn short. Continue the work in progress from where it stopped, without waiting for further instructions. If the task was already finished, say so in one line instead of redoing it."
 
-// recover picks up the tasks that a restart cut short. With AutoResume
-// each of them continues on its own — resumed from its session, or started
-// again when it never got one — so nobody has to type in the thread; the
+// recover picks up the tasks that were mid-execution when dancer stopped:
+// interrupted (the stop cut the turn short), running or waiting_permission
+// (dancer died before it could write anything else), and queued (never
+// started). A task that had finished its turn is idle and is left alone —
+// it was waiting for a human, not for dancer. With AutoResume the picked-up
+// tasks continue on their own — resumed from their session, or started
+// again when they never got one — so nobody has to type in the thread; the
 // rest are marked idle and resume with the next message.
 func (c *Coordinator) recover(ctx context.Context) error {
 	var resume []store.TaskState
@@ -551,10 +557,17 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	defer cancel()
 	switch {
 	case err != nil && errors.Is(err, context.Canceled) && ctx.Err() != nil:
-		// Shutdown: the session is resumable; recover() notifies the thread.
-		final.Status = store.StatusInterrupted
-		if final.Session == "" {
+		// Shutdown. Only a turn that was still going is "interrupted" —
+		// that is what recover() picks up again. A process that had
+		// finished its turn and was only being kept alive for a follow-up
+		// stays idle: nothing was cut short, so nothing has to continue.
+		switch {
+		case final.Session == "":
 			final.Status = store.StatusFailed
+		case sink.turnFinished():
+			final.Status = store.StatusIdle
+		default:
+			final.Status = store.StatusInterrupted
 		}
 	case err != nil && errors.Is(err, context.Canceled):
 		final.Status = store.StatusCancelled
@@ -581,12 +594,25 @@ type taskSink struct {
 
 	mu    sync.Mutex
 	state store.TaskState
+	// answered is true while the agent's last word was a completed turn
+	// that arrived before any shutdown. Events seen while the context is
+	// already cancelled are the stop's own fallout (an agent that is being
+	// drained still reports a result as it exits) and do not count, which
+	// is what keeps a cut-short turn from looking finished.
+	answered bool
 }
 
 func (s *taskSink) snapshot() store.TaskState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// turnFinished reports whether the agent completed its turn before the stop.
+func (s *taskSink) turnFinished() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.answered
 }
 
 func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Event) {
@@ -599,11 +625,16 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	switch ev.Type {
 	case agent.EventNeedsPermission:
 		s.state.Status = store.StatusWaitingPermission
+		s.answered = false
 	case agent.EventResult, agent.EventError:
 		s.state.Status = store.StatusIdle
-		s.state.Resumes = 0 // the agent got through a turn; not a restart loop
+		s.answered = ctx.Err() == nil // false while draining a stop
+		if s.answered {
+			s.state.Resumes = 0 // got through a turn; not a restart loop
+		}
 	default:
 		s.state.Status = store.StatusRunning
+		s.answered = false
 	}
 	st := s.state
 	s.mu.Unlock()

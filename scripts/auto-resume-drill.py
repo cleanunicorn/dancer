@@ -55,7 +55,18 @@ ok&=wait_for(p,"picking up this task")
 ok&=wait_for(p,"✅ done",180)
 done = any(os.path.exists(os.path.join(r,"done.txt")) for r,_,_ in os.walk(tmp))
 print("done.txt exists:", done)
+
+# Phase 2: a turn that had finished before the stop must NOT be continued —
+# its process was only being kept alive for a follow-up.
+send(p,"Reply with exactly: HELLO")   # follow-up on the same live session
+ok&=wait_for(p,"HELLO",120); ok&=wait_for(p,"✅ done",60)
+print(">>> SIGTERM (agent idle, not mid-turn)"); p.send_signal(signal.SIGTERM)
+ok&=wait_for(p,"dancer is restarting"); p.wait(90)
+p=start(); ok&=wait_for(p,"type `help`")
+time.sleep(5)
+quiet = not wait_for(p,"picking up this task",timeout=5)
+print("idle task left alone:", quiet)
 p.terminate(); p.wait(30)
-ok = ok and done
+ok = ok and done and quiet
 print("AUTO_RESUME_OK" if ok else "AUTO_RESUME_FAIL")
 sys.exit(0 if ok else 1)

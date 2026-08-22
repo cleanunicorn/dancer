@@ -150,9 +150,13 @@ agents run:
 2. Agents that are in the middle of a tool call (a test run, a build) are given
    `drain_timeout` (default 2m) to finish that call; then their processes stop.
    Files in the workdir stay.
-3. On start, each of those sessions is resumed (`--resume`) on its own and told
-   to carry on — you do not have to type anything in the threads. A task that
-   never got as far as a session is simply run again from its original message.
+3. On start, every task that was *mid-execution* is resumed (`--resume`) on its
+   own and told to carry on — you do not have to type anything in the threads. A
+   task that never got as far as a session is simply run again from its original
+   message.
+4. A task whose agent had already answered is left alone: its process was only
+   being kept alive for a follow-up (`idle_timeout`), so the stop cut nothing
+   short and the thread is still waiting for you, not for dancer.
 
 `status` shows such tasks as *interrupted* until they are picked up. `cancel` is
 still immediate. The systemd unit's `TimeoutStopSec` is set above `drain_timeout`.
