@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,9 +18,10 @@ import (
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
 
-// The "add agent" flow asks for one setting at a time on the thread that
-// requested it, reusing the question machinery agents use: every step is
-// an EventQuestion with a prompt id, answered by a button or a typed reply.
+// The "agent add", "agent edit" and "agent delete" flows ask for one
+// setting at a time on the thread that requested them, reusing the question
+// machinery agents use: every step is an EventQuestion with a prompt id,
+// answered by a button or a typed reply.
 
 // wizardTimeout is how long one question waits for an answer.
 const wizardTimeout = 15 * time.Minute
@@ -39,59 +41,122 @@ var toolPresets = []struct {
 	{"None", "ask for every tool", nil},
 }
 
+// threadFree reports whether a flow may start on th, telling the thread
+// why not otherwise.
+func (c *Coordinator) threadFree(ctx context.Context, s surface.Surface, th transport.ThreadID, what string) bool {
+	if _, busy := c.lookup(th); busy {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("a task is running on this thread — start `%s` in a new thread", what)}, s)
+		return false
+	}
+	if c.wizardOpen(th) {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "questions are already open on this thread — answer the one above or `cancel`"}, s)
+		return false
+	}
+	return true
+}
+
 // addAgent starts the flow on a thread.
 func (c *Coordinator) addAgent(ctx context.Context, s surface.Surface, it surface.AddAgent) {
-	if _, busy := c.lookup(it.Thread); busy {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is running on this thread — start `add agent` in a new thread"}, s)
+	if !c.threadFree(ctx, s, it.Thread, "agent add") {
 		return
 	}
-	if c.wizardOpen(it.Thread) {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "already adding an agent on this thread — answer the question above or `cancel`"}, s)
+	c.startWizard(ctx, s, it.Thread, nil)
+}
+
+// editAgent changes one definition field at a time until the user saves.
+// Tasks already running keep the settings they started with.
+func (c *Coordinator) editAgent(ctx context.Context, s surface.Surface, it surface.EditAgent) {
+	if !c.threadFree(ctx, s, it.Thread, "agent edit") {
 		return
 	}
-	c.startFlow(ctx, s, it.Thread, flowAddAgent, nil, func(ctx context.Context, w *wizard) (string, error) {
-		def, err := w.run(ctx)
+	c.startFlow(ctx, s, it.Thread, flowEditAgent, nil, func(ctx context.Context, w *wizard) (string, error) {
+		def, err := w.pickAgent(ctx, it.Agent, "Edit", "Which agent do you want to edit?")
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("✅ agent *%s* saved — try `run %s <prompt>`", def.Name, def.Name), nil
+		changed, err := w.edit(ctx, &def)
+		if err != nil {
+			return "", err
+		}
+		if !changed {
+			return fmt.Sprintf("nothing changed on *%s*", def.Name), nil
+		}
+		if w.c.UpdateDefinition != nil {
+			if err := w.c.UpdateDefinition(ctx, def); err != nil {
+				return "", fmt.Errorf("writing config: %w", err)
+			}
+		}
+		if err := w.c.Store.PutDefinition(ctx, def); err != nil {
+			return "", fmt.Errorf("store: %w", err)
+		}
+		w.c.Log.Info("definition updated from chat", "name", def.Name, "thread", w.thread)
+		return fmt.Sprintf("✅ agent *%s* updated — new tasks use the new settings; running ones keep the old", def.Name), nil
 	})
+}
+
+// deleteAgent removes a definition after a confirmation. A definition that
+// is the global or a channel default is refused: point the default elsewhere first.
+func (c *Coordinator) deleteAgent(ctx context.Context, s surface.Surface, it surface.DeleteAgent) {
+	if !c.threadFree(ctx, s, it.Thread, "agent delete") {
+		return
+	}
+	c.startFlow(ctx, s, it.Thread, flowDeleteAgent, nil, func(ctx context.Context, w *wizard) (string, error) {
+		def, err := w.pickAgent(ctx, it.Agent, "Delete", "Which agent do you want to delete?")
+		if err != nil {
+			return "", err
+		}
+		if why := w.c.inUse(def.Name); why != "" {
+			return "", errors.New(why)
+		}
+		ok, err := w.confirm(ctx, "Delete?", fmt.Sprintf("Delete agent *%s* (%s)? It is removed from the config; running tasks are not affected.", def.Name, describeDefinition(def)), "Delete", "remove it")
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", errWizardCancelled
+		}
+		if w.c.DeleteDefinition != nil {
+			if err := w.c.DeleteDefinition(ctx, def.Name); err != nil {
+				return "", fmt.Errorf("writing config: %w", err)
+			}
+		}
+		if err := w.c.Store.DeleteDefinition(ctx, def.Name); err != nil {
+			return "", fmt.Errorf("store: %w", err)
+		}
+		w.c.Log.Info("definition deleted from chat", "name", def.Name, "thread", w.thread)
+		return fmt.Sprintf("🗑️ agent *%s* deleted", def.Name), nil
+	})
+}
+
+// inUse explains why name cannot be deleted, or returns "".
+func (c *Coordinator) inUse(name string) string {
+	if name == c.DefaultDefinition {
+		return fmt.Sprintf("*%s* is the global default agent (`default_agent` in config.toml) — change that first", name)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var channels []string
+	for key, a := range c.ChannelAgents {
+		if a == name {
+			channels = append(channels, key)
+		}
+	}
+	if len(channels) > 0 {
+		sort.Strings(channels)
+		return fmt.Sprintf("*%s* is the default agent on %s — say `default <agent>` there first", name, strings.Join(channels, ", "))
+	}
+	return ""
 }
 
 // startPick runs the `run` picker on a thread: choose the agent (unless
 // given), then type the prompt, then start the task.
 func (c *Coordinator) startPick(ctx context.Context, s surface.Surface, th transport.ThreadID, agentName string) {
 	c.startFlow(ctx, s, th, flowRun, nil, func(ctx context.Context, w *wizard) (string, error) {
-		name := agentName
-		if name == "" {
-			defs, err := w.c.Store.ListDefinitions(ctx)
-			if err != nil {
-				return "", err
-			}
-			if len(defs) == 0 {
-				return "", errors.New("no agent definitions — say `add agent` first")
-			}
-			q := agent.Question{Header: "Run", Text: "Which agent?"}
-			def := w.c.defaultAgent(w.s, th)
-			for _, d := range defs {
-				desc := describeDefinition(d)
-				if d.Name == def {
-					desc = "default here · " + desc
-				}
-				q.Options = append(q.Options, agent.Option{Label: d.Name, Description: desc})
-			}
-			name, err = w.askUntil(ctx, q, func(a string) (string, error) {
-				for _, d := range defs {
-					if strings.EqualFold(a, d.Name) {
-						return d.Name, nil
-					}
-				}
-				return "", fmt.Errorf("no agent named %q", a)
-			})
-			if err != nil {
-				return "", err
-			}
+		def, err := w.pickAgent(ctx, agentName, "Run", "Which agent?")
+		if err != nil {
+			return "", err
 		}
+		name := def.Name
 		prompt, err := w.askUntil(ctx, agent.Question{Header: "Prompt", Text: fmt.Sprintf("What should *%s* do? Reply in this thread.", name)}, nonEmpty("prompt"))
 		if err != nil {
 			return "", err
@@ -129,19 +194,18 @@ func (c *Coordinator) resumeFlows(ctx context.Context) {
 	}
 }
 
-// Flow kinds. Only add_agent is persisted and resumed after a restart; the
-// run picker is short-lived and simply asked again.
+// Flow kinds. Only agent_add is persisted and resumed after a restart; the
+// others are short-lived and simply asked again.
 const (
-	flowAddAgent = "add_agent"
-	flowRun      = "run"
+	flowAddAgent    = "agent_add"
+	flowEditAgent   = "agent_edit"
+	flowDeleteAgent = "agent_delete"
+	flowRun         = "run"
 )
 
 // flowLabel names a flow in messages.
 func flowLabel(kind string) string {
-	if kind == flowAddAgent {
-		return "add agent"
-	}
-	return kind
+	return strings.ReplaceAll(kind, "_", " ")
 }
 
 // startWizard resumes an add-agent flow with saved answers.
@@ -327,7 +391,67 @@ func isNone(a string) bool {
 	return false
 }
 
-// run drives the questions and saves the result.
+// pickAgent resolves name to a stored definition, asking with a list of
+// all definitions when name is empty.
+func (w *wizard) pickAgent(ctx context.Context, name, header, text string) (agent.Definition, error) {
+	if name != "" {
+		def, err := w.c.Store.GetDefinition(ctx, name)
+		if errors.Is(err, store.ErrNotFound) {
+			return def, fmt.Errorf("unknown agent %q — try `agents`", name)
+		}
+		return def, err
+	}
+	defs, err := w.c.Store.ListDefinitions(ctx)
+	if err != nil {
+		return agent.Definition{}, err
+	}
+	if len(defs) == 0 {
+		return agent.Definition{}, errors.New("no agent definitions — say `agent add` first")
+	}
+	q := agent.Question{Header: header, Text: text}
+	def := w.c.defaultAgent(w.s, w.thread)
+	for _, d := range defs {
+		desc := describeDefinition(d)
+		if d.Name == def {
+			desc = "default here · " + desc
+		}
+		q.Options = append(q.Options, agent.Option{Label: d.Name, Description: desc})
+	}
+	name, err = w.askUntil(ctx, q, func(a string) (string, error) {
+		for _, d := range defs {
+			if strings.EqualFold(a, d.Name) {
+				return d.Name, nil
+			}
+		}
+		return "", fmt.Errorf("no agent named %q", a)
+	})
+	if err != nil {
+		return agent.Definition{}, err
+	}
+	for _, d := range defs {
+		if d.Name == name {
+			return d, nil
+		}
+	}
+	return agent.Definition{}, store.ErrNotFound
+}
+
+// confirm asks a yes/no question; yes is the label of the affirmative button.
+func (w *wizard) confirm(ctx context.Context, header, text, yes, yesDesc string) (bool, error) {
+	a, err := w.askUntil(ctx, agent.Question{Header: header, Text: text, Options: options(yes, yesDesc, "Cancel", "keep everything as it is")},
+		func(a string) (string, error) {
+			switch strings.ToLower(a) {
+			case strings.ToLower(yes), "yes", "y", "ok":
+				return "yes", nil
+			case "cancel", "no", "n", "discard", "keep":
+				return "no", nil
+			}
+			return "", fmt.Errorf("answer %s or Cancel", yes)
+		})
+	return a == "yes", err
+}
+
+// run drives the add-agent questions and saves the result.
 func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 	def := agent.Definition{Kind: agent.KindClaude}
 	var err error
@@ -346,18 +470,104 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 	if err != nil {
 		return def, err
 	}
-
-	def.Model, err = w.askUntil(ctx, agent.Question{Header: "Model", Text: "Which model? Pick one or type a full model id.",
-		Options: options("sonnet", "balanced", "opus", "most capable", "haiku", "fastest")}, func(a string) (string, error) {
-		if a == "" {
-			return "", errors.New("model cannot be empty")
+	for _, f := range editFields {
+		if err := f.ask(w, ctx, &def); err != nil {
+			return def, err
 		}
-		return a, nil
-	})
+	}
+
+	ok, err := w.confirm(ctx, "Save?", summarize("Save this agent?", def), "Save", "write it to the config and enable it now")
 	if err != nil {
 		return def, err
 	}
+	if !ok {
+		return def, errWizardCancelled
+	}
 
+	if w.c.SaveDefinition != nil {
+		if err := w.c.SaveDefinition(ctx, def); err != nil {
+			return def, fmt.Errorf("writing config: %w", err)
+		}
+	}
+	if err := w.c.Store.PutDefinition(ctx, def); err != nil {
+		return def, fmt.Errorf("store: %w", err)
+	}
+	w.c.Log.Info("definition added from chat", "name", def.Name, "thread", w.thread)
+	return def, nil
+}
+
+// editFields are the choices of the edit menu, in order.
+var editFields = []struct {
+	label string
+	ask   func(*wizard, context.Context, *agent.Definition) error
+	show  func(agent.Definition) string
+}{
+	{"Model", (*wizard).askModel, func(d agent.Definition) string { return d.Model }},
+	{"Environment", (*wizard).askEnvironment, describeEnvironment},
+	{"Permissions", (*wizard).askPermissions, func(d agent.Definition) string { return string(d.PermissionMode) }},
+	{"Tools", (*wizard).askTools, func(d agent.Definition) string {
+		if len(d.AllowedTools) == 0 {
+			return "none"
+		}
+		return strings.Join(d.AllowedTools, ", ")
+	}},
+	{"System prompt", (*wizard).askSystemPrompt, func(d agent.Definition) string {
+		if d.SystemPrompt == "" {
+			return "none"
+		}
+		return truncate(d.SystemPrompt, 60)
+	}},
+}
+
+// edit shows the definition and a menu of fields; each pick re-asks that
+// field's question(s), until Save (or Cancel, which returns
+// errWizardCancelled). def is updated in place; nothing is persisted here.
+// changed is false when Save was picked without touching a field.
+func (w *wizard) edit(ctx context.Context, def *agent.Definition) (changed bool, err error) {
+	for {
+		q := agent.Question{Header: "Edit " + def.Name, Text: summarize("What do you want to change?", *def)}
+		for _, f := range editFields {
+			q.Options = append(q.Options, agent.Option{Label: f.label, Description: truncate(f.show(*def), 70)})
+		}
+		q.Options = append(q.Options,
+			agent.Option{Label: "Save", Description: "write the changes to the config and use them from now on"},
+			agent.Option{Label: "Cancel", Description: "discard the changes"})
+		pick, err := w.askUntil(ctx, q, func(a string) (string, error) {
+			for _, o := range q.Options {
+				if strings.EqualFold(a, o.Label) {
+					return o.Label, nil
+				}
+			}
+			return "", fmt.Errorf("pick one of the listed fields, Save or Cancel")
+		})
+		if err != nil {
+			return false, err
+		}
+		switch pick {
+		case "Save":
+			return changed, nil
+		case "Cancel":
+			return false, errWizardCancelled
+		}
+		for _, f := range editFields {
+			if f.label == pick {
+				if err := f.ask(w, ctx, def); err != nil {
+					return false, err
+				}
+				changed = true
+			}
+		}
+	}
+}
+
+func (w *wizard) askModel(ctx context.Context, def *agent.Definition) error {
+	var err error
+	def.Model, err = w.askUntil(ctx, agent.Question{Header: "Model", Text: "Which model? Pick one or type a full model id.",
+		Options: options("sonnet", "balanced", "opus", "most capable", "haiku", "fastest")}, nonEmpty("model"))
+	return err
+}
+
+func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) error {
 	kind, err := w.askUntil(ctx, agent.Question{Header: "Environment", Text: "Where does it run?",
 		Options: options("local", "on the dancer host", "docker", "a container per task", "ssh", "on a remote host")}, func(a string) (string, error) {
 		switch k := strings.ToLower(a); environment.Kind(k) {
@@ -367,24 +577,23 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 		return "", fmt.Errorf("pick local, docker or ssh")
 	})
 	if err != nil {
-		return def, err
+		return err
 	}
-	def.Environment.Kind = environment.Kind(kind)
-
-	switch def.Environment.Kind {
+	env := environment.Spec{Kind: environment.Kind(kind), KeyPath: def.Environment.KeyPath, Env: def.Environment.Env}
+	switch env.Kind {
 	case environment.KindLocal:
-		def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task." + pathHint,
+		env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task." + pathHint,
 			Options: options("none", "fresh directory per task")}, validateLocalDir)
 	case environment.KindDocker:
-		def.Environment.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? It must contain the `claude` binary."}, nonEmpty("image"))
+		env.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? It must contain the `claude` binary."}, nonEmpty("image"))
 		if err == nil {
-			def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a fresh directory per task." + pathHint,
+			env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a fresh directory per task." + pathHint,
 				Options: options("none", "fresh directory per task")}, validateLocalDir)
 		}
 	case environment.KindSSH:
-		def.Environment.Host, err = w.askUntil(ctx, agent.Question{Header: "Host", Text: "SSH host? `user@host` or an alias from `~/.ssh/config`."}, nonEmpty("host"))
+		env.Host, err = w.askUntil(ctx, agent.Question{Header: "Host", Text: "SSH host? `user@host` or an alias from `~/.ssh/config`."}, nonEmpty("host"))
 		if err == nil {
-			def.Environment.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Remote working directory? `none` = a fresh directory per task." + pathHint,
+			env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Remote working directory? `none` = a fresh directory per task." + pathHint,
 				Options: options("none", "fresh directory per task")}, func(a string) (string, error) {
 				if isNone(a) {
 					return "", nil
@@ -394,9 +603,13 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 		}
 	}
 	if err != nil {
-		return def, err
+		return err
 	}
+	def.Environment = env
+	return nil
+}
 
+func (w *wizard) askPermissions(ctx context.Context, def *agent.Definition) error {
 	mode, err := w.askUntil(ctx, agent.Question{Header: "Permissions", Text: "Permission mode?",
 		Options: options(
 			string(agent.PermissionManual), "ask before every tool not pre-approved",
@@ -412,10 +625,13 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 		return "", fmt.Errorf("pick one of the listed modes")
 	})
 	if err != nil {
-		return def, err
+		return err
 	}
 	def.PermissionMode = agent.PermissionMode(mode)
+	return nil
+}
 
+func (w *wizard) askTools(ctx context.Context, def *agent.Definition) error {
 	var toolOpts []string
 	for _, p := range toolPresets {
 		toolOpts = append(toolOpts, p.label, p.desc)
@@ -423,10 +639,14 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 	tools, err := w.askUntil(ctx, agent.Question{Header: "Tools", Text: "Pre-approved tools? Pick a preset or type a comma-separated list (e.g. `Read,Edit,Bash(npm test:*)`).",
 		Options: options(toolOpts...)}, func(a string) (string, error) { return a, nil })
 	if err != nil {
-		return def, err
+		return err
 	}
 	def.AllowedTools = parseTools(tools)
+	return nil
+}
 
+func (w *wizard) askSystemPrompt(ctx context.Context, def *agent.Definition) error {
+	var err error
 	def.SystemPrompt, err = w.askUntil(ctx, agent.Question{Header: "System prompt", Text: "Extra instructions for the agent? Type them, or skip.",
 		Options: options("Skip", "no extra instructions")}, func(a string) (string, error) {
 		if isNone(a) {
@@ -434,37 +654,7 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 		}
 		return a, nil
 	})
-	if err != nil {
-		return def, err
-	}
-
-	ok, err := w.askUntil(ctx, agent.Question{Header: "Save?", Text: summarize(def), Options: options("Save", "write it to the config and enable it now", "Cancel", "discard")},
-		func(a string) (string, error) {
-			switch strings.ToLower(a) {
-			case "save", "yes", "y", "ok":
-				return "save", nil
-			case "cancel", "no", "n", "discard":
-				return "cancel", nil
-			}
-			return "", fmt.Errorf("answer Save or Cancel")
-		})
-	if err != nil {
-		return def, err
-	}
-	if ok != "save" {
-		return def, errWizardCancelled
-	}
-
-	if w.c.SaveDefinition != nil {
-		if err := w.c.SaveDefinition(ctx, def); err != nil {
-			return def, fmt.Errorf("writing config: %w", err)
-		}
-	}
-	if err := w.c.Store.PutDefinition(ctx, def); err != nil {
-		return def, fmt.Errorf("store: %w", err)
-	}
-	w.c.Log.Info("definition added from chat", "name", def.Name, "thread", w.thread)
-	return def, nil
+	return err
 }
 
 func nonEmpty(what string) func(string) (string, error) {
@@ -510,9 +700,10 @@ func parseTools(a string) []string {
 	return out
 }
 
-func summarize(d agent.Definition) string {
+// describeEnvironment renders the environment on one line.
+func describeEnvironment(d agent.Definition) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Save this agent?\n• name: *%s*\n• model: %s\n• environment: %s", d.Name, d.Model, d.Environment.Kind)
+	b.WriteString(string(d.Environment.Kind))
 	switch d.Environment.Kind {
 	case environment.KindDocker:
 		fmt.Fprintf(&b, " · image `%s`", d.Environment.Image)
@@ -520,10 +711,16 @@ func summarize(d agent.Definition) string {
 		fmt.Fprintf(&b, " · host `%s`", d.Environment.Host)
 	}
 	if d.Environment.Workdir != "" {
-		fmt.Fprintf(&b, "\n• workdir: `%s`", d.Environment.Workdir)
+		fmt.Fprintf(&b, " · workdir `%s`", d.Environment.Workdir)
 	} else {
-		b.WriteString("\n• workdir: fresh directory per task")
+		b.WriteString(" · fresh directory per task")
 	}
+	return b.String()
+}
+
+func summarize(title string, d agent.Definition) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n• name: *%s*\n• model: %s\n• environment: %s", title, d.Name, d.Model, describeEnvironment(d))
 	fmt.Fprintf(&b, "\n• permission mode: %s", d.PermissionMode)
 	if len(d.AllowedTools) > 0 {
 		fmt.Fprintf(&b, "\n• pre-approved tools: %s", strings.Join(d.AllowedTools, ", "))
