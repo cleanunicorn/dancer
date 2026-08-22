@@ -1,4 +1,4 @@
-{"type": "system", "subtype": "init", "cwd": "/work", "session_id": "aa5eb505-f118-4d9b-b86b-624b0c1735fc", "tools": ["Bash", "Read", "Edit", "Write"], "model": "claude-haiku-4-5-20251001", "permissionMode": "default", "uuid": "2f9f958f-b4d8-4a8b-b1a0-75ea56c2825a"}
+{"type": "system", "subtype": "init", "cwd": "/work", "session_id": "aa5eb505-f118-4d9b-b86b-624b0c1735fc", "tools": ["Bash", "Read", "Edit", "Write"], "model": "claude-haiku-4-5-20251001", "permissionMode": "default", "uuid": "2f9f958f-b4d8-4a8b-b1a0-75ea56c2825a", "apiKeySource": "none"}
 {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 4, "estimated_tokens_delta": 4, "uuid": "e6a5aad7-c618-4787-9a94-dc8e007688a2", "session_id": "aa5eb505-f118-4d9b-b86b-624b0c1735fc"}
 {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 29, "estimated_tokens_delta": 25, "uuid": "c74e3b1b-083f-49ff-87f8-7291420d4752", "session_id": "aa5eb505-f118-4d9b-b86b-624b0c1735fc"}
 {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 49, "estimated_tokens_delta": 20, "uuid": "84346904-1ba8-414f-af0d-79c9fe1e93e4", "session_id": "aa5eb505-f118-4d9b-b86b-624b0c1735fc"}

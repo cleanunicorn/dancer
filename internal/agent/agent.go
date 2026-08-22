@@ -72,9 +72,19 @@ type Event struct {
 	Partial   bool       // EventText: true for streaming deltas
 	Questions []Question // EventQuestion
 	Files     []File     // files the agent referred to, fetched from its environment
-	Cost      float64
-	Raw       []byte // vendor message, kept for the event log
+	Cost      float64    // EventResult: USD at API list prices (see Billing)
+	Billing   Billing    // EventInit, EventResult: how this session is paid for
+	Raw       []byte     // vendor message, kept for the event log
 }
+
+// Billing says whether Cost is a real charge or an API-equivalent estimate.
+type Billing string
+
+const (
+	BillingUnknown      Billing = ""
+	BillingAPIKey       Billing = "api_key"      // metered; Cost is what was charged
+	BillingSubscription Billing = "subscription" // flat plan; Cost is what it would have cost at API rates
+)
 
 // File is an attachment pulled out of the agent's environment.
 type File struct {

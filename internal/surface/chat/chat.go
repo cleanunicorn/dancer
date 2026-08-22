@@ -130,7 +130,7 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 		}
 		text = "⚠️ tool error: " + truncate(a.Text, 300)
 	case agent.EventResult:
-		text = fmt.Sprintf("✅ done · $%.3f", a.Cost)
+		text = "✅ done · " + FormatCost(a)
 	case agent.EventError:
 		text = "❌ " + a.Text
 	default:
@@ -144,6 +144,18 @@ func (s *Surface) renderAgent(ev surface.Event) []transport.Outbound {
 		return nil
 	}
 	return []transport.Outbound{{Thread: ev.Thread, Text: text, Files: files}}
+}
+
+// FormatCost renders a result's cost: a plain charge for API-key runs, an
+// API-equivalent estimate for subscription logins.
+func FormatCost(a *agent.Event) string {
+	switch a.Billing {
+	case agent.BillingSubscription:
+		return fmt.Sprintf("≈$%.2f API-equiv", a.Cost)
+	case agent.BillingAPIKey:
+		return fmt.Sprintf("$%.3f", a.Cost)
+	}
+	return fmt.Sprintf("$%.3f", a.Cost)
 }
 
 // questionText renders a question with its numbered options.

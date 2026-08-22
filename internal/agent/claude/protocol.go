@@ -18,6 +18,7 @@ type line struct {
 	// type=system subtype=init
 	Model          string `json:"model,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
+	APIKeySource   string `json:"apiKeySource,omitempty"` // "none" = OAuth/subscription login
 
 	// type=result
 	IsError      bool    `json:"is_error,omitempty"`

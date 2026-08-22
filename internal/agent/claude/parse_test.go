@@ -32,6 +32,9 @@ func TestTranslateFixture(t *testing.T) {
 				if ev.Text == "" {
 					t.Error("init: model empty")
 				}
+				if ev.Billing != agent.BillingSubscription {
+					t.Errorf("init: billing = %q, want subscription (apiKeySource none)", ev.Billing)
+				}
 			}
 			if ev.Type == agent.EventToolUse && ev.Tool != "Bash" {
 				t.Errorf("tool_use tool = %q", ev.Tool)

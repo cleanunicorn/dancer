@@ -13,6 +13,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/surface"
+	"github.com/cleanunicorn/dancer/internal/surface/chat"
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
 
@@ -73,7 +74,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		}
 		switch ev.Agent.Type {
 		case agent.EventResult:
-			return out(fmt.Sprintf("✅ `%s` done · $%.3f — %s", ev.TaskID, ev.Agent.Cost, truncate(ev.Agent.Text, 300)))
+			return out(fmt.Sprintf("✅ `%s` done · %s — %s", ev.TaskID, chat.FormatCost(ev.Agent), truncate(ev.Agent.Text, 300)))
 		case agent.EventError:
 			return out(fmt.Sprintf("❌ `%s` — %s", ev.TaskID, truncate(ev.Agent.Text, 300)))
 		}

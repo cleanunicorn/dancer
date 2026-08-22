@@ -39,6 +39,14 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			ev := base
 			ev.Type = agent.EventInit
 			ev.Text = l.Model
+			switch l.APIKeySource {
+			case "none":
+				ev.Billing = agent.BillingSubscription
+			case "":
+				ev.Billing = agent.BillingUnknown
+			default:
+				ev.Billing = agent.BillingAPIKey
+			}
 			emit(ev)
 		}
 	case "assistant":

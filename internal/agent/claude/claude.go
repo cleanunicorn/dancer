@@ -131,6 +131,7 @@ type run struct {
 	pending map[string]pendingPerm // tool_use_id -> control request
 	stderr  strings.Builder
 	done    chan struct{}
+	billing agent.Billing // learned from init, stamped on results
 }
 
 func (r *run) Events() <-chan agent.Event { return r.events }
@@ -228,8 +229,12 @@ func (r *run) loop() {
 			continue
 		}
 		for _, ev := range p.Events {
-			if ev.Type == agent.EventResult || ev.Type == agent.EventError {
+			switch ev.Type {
+			case agent.EventInit:
+				r.billing = ev.Billing
+			case agent.EventResult, agent.EventError:
 				sawResult = true
+				ev.Billing = r.billing
 			}
 			r.events <- ev
 		}

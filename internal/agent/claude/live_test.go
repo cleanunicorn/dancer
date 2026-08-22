@@ -51,6 +51,9 @@ func TestLivePermissionRoundTrip(t *testing.T) {
 			t.Fatalf("agent error: %s", ev.Text)
 		case agent.EventResult:
 			sawResult = true
+			if ev.Billing == agent.BillingUnknown {
+				t.Errorf("result: billing unknown; init should have set it")
+			}
 		}
 		if sawResult {
 			break
