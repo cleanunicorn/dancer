@@ -68,6 +68,10 @@ func (c Claude) Decide(ctx context.Context, q Question) (Verdict, error) {
 		"--append-system-prompt", policy,
 	)
 	cmd.Dir = dir // empty: no project CLAUDE.md, settings or hooks
+	// On timeout Go kills the CLI, but Run still waits for its stdout to
+	// close — and a child the CLI forked holds that pipe open. WaitDelay
+	// is what makes the timeout a timeout.
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Stdin = bytes.NewReader(body)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

@@ -14,6 +14,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/cleanunicorn/dancer/internal/decider"
+
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
 )
@@ -342,6 +344,11 @@ func (c *Config) validate() error {
 		}
 	default:
 		return fmt.Errorf("config: unknown decider kind %q (off|claude|openai)", c.Decider.Kind)
+	}
+	for _, p := range c.Decider.AutoAllow {
+		if _, err := decider.ParseAllow(p); err != nil {
+			return fmt.Errorf("config: decider.%w", err)
+		}
 	}
 	for _, u := range c.Decider.Uses {
 		if u != "resume" && u != "permission" {

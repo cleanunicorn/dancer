@@ -182,6 +182,41 @@ func TestBudgetIsSpentOnlyOnQuestionsADeciderSaw(t *testing.T) {
 	}
 }
 
+// TestFailedDeciderDoesNotSpendTheBudget: a backend that is down answers
+// nothing, so nothing is charged — once it is back, it is asked again.
+func TestFailedDeciderDoesNotSpendTheBudget(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := New(st, nil, nil, nil, nil)
+	d := &stubDecider{err: errors.New("401 unauthorized")}
+	c.Decider = d
+	c.DeciderUses = []string{kindResume}
+	c.MaxDecisionsPerTask = 5
+	ctx := context.Background()
+
+	q := decider.Question{Kind: kindResume, Task: "t-1",
+		Options: []string{actionContinue, actionWait}, Static: decider.Verdict{Action: actionContinue}}
+	for i := 0; i < 20; i++ {
+		if v := c.decide(ctx, q); v.Action != actionContinue || v.By != "static" {
+			t.Fatalf("answer while the decider is down = %+v", v)
+		}
+	}
+	if spent := len(c.taskVerdicts(ctx, "t-1", 0)); spent != 0 {
+		t.Fatalf("failed calls were charged to the task: %d", spent)
+	}
+	d.err = nil
+	d.verdict = decider.Verdict{Action: actionWait}
+	if v := c.decide(ctx, q); v.Action != actionWait {
+		t.Fatalf("the decider stayed switched off after it recovered: %+v", v)
+	}
+	if spent := len(c.taskVerdicts(ctx, "t-1", 0)); spent != 1 {
+		t.Fatalf("an answered question should be the only one on the record: %d", spent)
+	}
+}
+
 func TestDecisionsAreOnTheRecord(t *testing.T) {
 	d := &stubDecider{verdict: decider.Verdict{Action: "wait", Reason: "stale request"}}
 	tr, st, th := startWithDecider(t, d, []string{kindResume})

@@ -419,6 +419,9 @@ func TestDeciderConfigValidation(t *testing.T) {
 		"openai bad url":            "kind = \"openai\"\nmodel = \"m\"\n[decider.openai]\nbase_url = \"api.openai.com/v1\"\n",
 		"openai ftp url":            "kind = \"openai\"\nmodel = \"m\"\n[decider.openai]\nbase_url = \"ftp://x/v1\"\n",
 		"kind that cannot be asked": "kind = \"openai\"\nmodel = \"m\"\nuses = [\"route\"]\n",
+		"auto_allow unclosed":       "kind = \"claude\"\nauto_allow = [\"Bash(\"]\n",
+		"auto_allow empty prefix":   "kind = \"claude\"\nauto_allow = [\"Bash()\"]\n",
+		"auto_allow no tool":        "kind = \"claude\"\nauto_allow = [\"(*)\"]\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := load(t, decider); err == nil {

@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
@@ -62,9 +63,7 @@ func (c *Coordinator) permissionFacts(ctx context.Context, st store.TaskState, e
 		Input:       truncate(oneLine(summarizeInput(ev.ToolInput)), factParagraph),
 		FullInput:   truncate(oneLine(marshalInput(ev.ToolInput)), factParagraph),
 	}
-	if p := pathArgument(ev.ToolInput); p != "" && f.Workdir != "" && !strings.HasPrefix(p, f.Workdir) {
-		f.OutsideWorkdir = true
-	}
+	f.OutsideWorkdir = outsideWorkdir(pathArgument(ev.ToolInput), f.Workdir)
 	resume := c.factsForResume(ctx, st) // the same thread tail, read once
 	f.LastHumanMessage = resume.LastHumanMessage
 	f.RecentEvents = resume.RecentEvents
@@ -108,41 +107,63 @@ func (c *Coordinator) autoAllowed(ev agent.Event) bool {
 // "go testrunner-that-deletes-things". A command is matched in every
 // segment a shell would run — `go test ./... && rm -rf /` is three words
 // of the operator's prefix followed by something they never allowed, so
-// each segment has to match, and a command that hides code in a
-// substitution matches nothing at all.
+// each segment has to match; a command that hides code in a substitution,
+// or writes somewhere through a redirection, matches nothing at all. A
+// path is cleaned first, so `/repo/../etc/shadow` is not "under /repo".
+// The pattern itself is parsed by decider.ParseAllow, the same parser
+// config validation ran; one it rejects matches nothing here.
 func matchesTool(pattern string, ev agent.Event) bool {
-	pattern = strings.TrimSpace(pattern)
-	name, rest, hasArgs := strings.Cut(pattern, "(")
-	if !strings.EqualFold(strings.TrimSpace(name), ev.Tool) {
+	a, err := decider.ParseAllow(pattern)
+	if err != nil || !strings.EqualFold(a.Tool, ev.Tool) {
 		return false
 	}
-	if !hasArgs {
+	if a.Any {
 		return true
-	}
-	arg := strings.TrimSuffix(strings.TrimSpace(rest), ")")
-	arg = strings.TrimSuffix(arg, ":*")
-	arg = strings.TrimRight(arg, "*")
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		return true // Tool(*): the operator asked for every call of it
 	}
 	raw := rawInput(ev.ToolInput) // not flattened: newlines separate commands
 	if strings.TrimSpace(raw) == "" {
 		return false
 	}
-	segments := []string{oneLine(raw)}
 	if isShellTool(ev.Tool) {
+		raw = harmlessRedirects.Replace(raw) // 2>&1 is not a second command
 		if hidesCode(raw) {
 			return false // a substitution can run anything; no prefix covers it
 		}
-		segments = shellSegments(raw)
-	}
-	for _, seg := range segments {
-		if !hasPrefixAtBoundary(seg, arg) {
-			return false
+		for _, seg := range shellSegments(raw) {
+			if !hasPrefixAtBoundary(seg, a.Arg) {
+				return false
+			}
 		}
+		return true
 	}
-	return true
+	return hasPrefixAtBoundary(cleanPath(oneLine(raw)), cleanPath(a.Arg))
+}
+
+// cleanPath normalises a path argument (or a path prefix) before it is
+// compared: `..` and doubled separators resolved, a trailing slash gone.
+// Only absolute paths are touched — a relative one cannot be resolved
+// here and is left to fail the comparison against an absolute prefix.
+func cleanPath(p string) string {
+	p = strings.TrimSpace(p)
+	if !filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Clean(p)
+}
+
+// outsideWorkdir reports whether an absolute path argument resolves to
+// somewhere outside the working directory. A relative path is not known
+// to be outside (the agent resolves it against the workdir), and a
+// sibling such as /srv/repo-other is not inside /srv/repo.
+func outsideWorkdir(p, workdir string) bool {
+	if p == "" || workdir == "" || !filepath.IsAbs(p) || !filepath.IsAbs(workdir) {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(workdir), filepath.Clean(p))
+	if err != nil {
+		return true
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // isShellTool reports whether a tool's input is a command line rather than
@@ -155,16 +176,24 @@ func isShellTool(tool string) bool {
 	return false
 }
 
-// hidesCode reports whether a command can run something the prefix cannot
-// be checked against: a substitution, an eval of piped input, a here-doc.
+// hidesCode reports whether a command can do something the prefix cannot
+// be checked against: a substitution, an eval of piped input, a here-doc,
+// or a redirection — `go test ./... > .git/HEAD` starts with the
+// operator's prefix and overwrites a file they never named. The
+// redirections that only join or discard the streams a command already
+// has (2>&1, >/dev/null) are the exception: they cannot write a file.
 func hidesCode(cmd string) bool {
 	for _, s := range []string{"$(", "`", "${", "<(", ">(", "eval "} {
 		if strings.Contains(cmd, s) {
 			return true
 		}
 	}
-	return false
+	return strings.ContainsAny(cmd, "<>")
 }
+
+var harmlessRedirects = strings.NewReplacer(
+	"2>&1", "", "1>&2", "", "&>/dev/null", "", "2>/dev/null", "", ">/dev/null", "",
+	"&> /dev/null", "", "2> /dev/null", "", "> /dev/null", "", "</dev/null", "", "< /dev/null", "")
 
 // shellSegments splits a command on the operators that start a new command.
 func shellSegments(cmd string) []string {

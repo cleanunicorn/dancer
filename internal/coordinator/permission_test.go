@@ -60,9 +60,49 @@ func TestMatchesTool(t *testing.T) {
 		{"Read(/repo/**)", read("/repo/internal/store/store.go"), true},
 		{"Read(/repo/*)", read("/etc/shadow"), false},
 		{"Read(/repo/*)", read("/repository-elsewhere/main.go"), false},
+		{"Read(/repo)", read("/repo2/x"), false},
+		{"Read(/repo/*)", read("/repo/../etc/shadow"), false}, // cleaned before it is compared
+		{"Read(/repo/*)", read("/repo/./sub/../main.go"), true},
+		{"Read(/repo/*)", read("internal/main.go"), false}, // relative: cannot be placed under /repo
+
+		// A redirection writes where the prefix never looked; joining or
+		// discarding the streams a command already has does not.
+		{"Bash(go test:*)", bash("go test ./... > /repo/.git/HEAD"), false},
+		{"Bash(go test:*)", bash("go test ./... >> notes.txt"), false},
+		{"Bash(go test:*)", bash("go test ./... < /etc/passwd"), false},
+		{"Bash(go test:*)", bash("go test ./... 2>&1"), true},
+		{"Bash(go test:*)", bash("go test ./... >/dev/null 2>&1"), true},
+		{"Bash(go test:*)", bash("go test ./... 2> /dev/null"), true},
+
+		// A pattern the parser rejects matches nothing, never everything.
+		{"Bash(", bash("rm -rf /"), false},
+		{"Bash()", bash("rm -rf /"), false},
+		{"Bash(:*)", bash("rm -rf /"), false},
+		{"(*)", bash("rm -rf /"), false},
 	} {
 		if got := matchesTool(tc.pattern, tc.ev); got != tc.want {
 			t.Errorf("matchesTool(%q, %s %v) = %v, want %v", tc.pattern, tc.ev.Tool, tc.ev.ToolInput, got, tc.want)
+		}
+	}
+}
+
+func TestOutsideWorkdir(t *testing.T) {
+	for _, tc := range []struct {
+		path, workdir string
+		want          bool
+	}{
+		{"/srv/repo/main.go", "/srv/repo", false},
+		{"/srv/repo", "/srv/repo", false},
+		{"/srv/repo/../repo/x", "/srv/repo", false},
+		{"/srv/repo/../../etc/hosts", "/srv/repo", true},
+		{"/srv/repo-other/secrets.env", "/srv/repo", true}, // a sibling, not a child
+		{"/etc/hosts", "/srv/repo", true},
+		{"main.go", "/srv/repo", false}, // relative: resolved by the agent, not known to be outside
+		{"", "/srv/repo", false},
+		{"/etc/hosts", "", false},
+	} {
+		if got := outsideWorkdir(tc.path, tc.workdir); got != tc.want {
+			t.Errorf("outsideWorkdir(%q, %q) = %v, want %v", tc.path, tc.workdir, got, tc.want)
 		}
 	}
 }

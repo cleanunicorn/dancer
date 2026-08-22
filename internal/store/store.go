@@ -55,6 +55,10 @@ type Store interface {
 	// first. It is how the coordinator reconstructs what was going on in a
 	// thread without replaying the whole log.
 	ThreadRecords(ctx context.Context, thread transport.ThreadID, limit int) ([]Record, error)
+	// ThreadRecordsOfKind is ThreadRecords for one kind: the last human
+	// message of a thread is one "inbound" record, however much the agent
+	// and dancer posted after it.
+	ThreadRecordsOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]Record, error)
 	// TaskRecords returns the last limit records of one kind about a task,
 	// oldest first. Counting and reading back a task's verdicts goes
 	// through here, so that state is a projection of the log rather than

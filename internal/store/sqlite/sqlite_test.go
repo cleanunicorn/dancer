@@ -3,8 +3,11 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/cleanunicorn/dancer/internal/transport"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/store"
@@ -126,5 +129,28 @@ func TestTaskRecords(t *testing.T) {
 	}
 	if len(last) != 1 || string(last[0].Payload) != `{"n":4}` {
 		t.Fatalf("TaskRecords(limit 1) = %+v, want only the newest", last)
+	}
+}
+
+func TestThreadRecordsOfKind(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	th := transport.ThreadID("C/1.0")
+	for i, kind := range []string{"inbound", "agent", "outbound", "agent", "outbound", "inbound", "agent", "outbound"} {
+		if _, err := s.Append(ctx, store.Record{At: time.Now(), Task: "t", Thread: th, Kind: kind, Payload: []byte(fmt.Sprintf(`{"i":%d}`, i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ThreadRecordsOfKind(ctx, th, "inbound", 1)
+	if err != nil || len(got) != 1 || string(got[0].Payload) != `{"i":5}` {
+		t.Fatalf("last inbound = %+v, %v", got, err)
+	}
+	got, err = s.ThreadRecordsOfKind(ctx, th, "inbound", 5)
+	if err != nil || len(got) != 2 || got[0].Seq > got[1].Seq {
+		t.Fatalf("inbound records = %+v, %v (want both, oldest first)", got, err)
 	}
 }

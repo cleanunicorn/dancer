@@ -64,7 +64,7 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 	q := agent.Question{Header: "dancer is back", Text: text,
 		Options: []agent.Option{
 			{Label: actionContinue, Description: "resume where the agent left off"},
-			{Label: "drop", Description: "leave it; you can still reply to pick it up"},
+			{Label: "drop", Description: "leave it; " + pickUpHint(t)},
 		}}
 	tt := t
 	c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventQuestion, Thread: t.Thread, TaskID: t.ID, Task: &tt,
@@ -85,6 +85,12 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 			return
 		}
 		c.append(ctx, t.ID, t.Thread, "decision", d)
+		if c.threadClosed(t.Thread) {
+			// `close` came after the question; a late click on its buttons
+			// must not start an agent in a thread nobody is reading.
+			c.Log.Info("resume answer ignored: the thread was closed", "task", t.ID, "choice", d.Choice)
+			return
+		}
 		if _, busy := c.lookup(t.Thread); busy {
 			// A reply already restarted this thread; the click is stale.
 			c.Log.Info("resume answer ignored: the thread moved on", "task", t.ID, "choice", d.Choice)
@@ -104,16 +110,31 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 				"status", st.Status, "was_seq", t.LastSeq, "now_seq", st.LastSeq)
 			return
 		}
-		if d.Choice != actionContinue {
+		// Two buttons, and on a transport that types its answers (the
+		// terminal) a third case: the human's own words. Those are the
+		// best answer of all — the turn to hand the agent — not a drop.
+		prompt := ""
+		switch strings.ToLower(strings.TrimSpace(d.Choice)) {
+		case actionContinue:
+		case "drop":
 			st.Status = store.StatusCancelled
 			_ = c.Store.PutTask(ctx, st)
 			c.emitTo(ctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: st.Thread, TaskID: st.ID, Task: &st,
 				Text: "⏹️ dropped — " + pickUpHint(st)})
 			return
+		default:
+			prompt = strings.TrimSpace(d.Choice)
+		}
+		if st.Session == "" {
+			// Never got a session: there is nothing to resume, and the
+			// question's own hint said so. Start it again by hand.
+			c.emitTo(ctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: st.Thread, TaskID: st.ID, Task: &st,
+				Text: "this task never started — " + pickUpHint(st)})
+			return
 		}
 		st.Resumes++
 		_ = c.Store.PutTask(ctx, st)
-		c.autoResume(ctx, st, "")
+		c.autoResume(ctx, st, prompt)
 	}()
 }
 
@@ -162,24 +183,27 @@ func (c *Coordinator) decide(ctx context.Context, q decider.Question) decider.Ve
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	got, derr := d.Decide(dctx, q)
 	cancel()
-	switch {
-	case derr != nil:
+	if derr != nil {
+		// A timeout, a logged-out CLI, a 401: the decider answered nothing,
+		// so nothing is on the record and nothing is charged to the task —
+		// a backend that is down for an hour must not switch itself off
+		// for the rest of the task's life.
 		c.Log.Warn("decider fell back to the rules", "kind", q.Kind, "task", q.Task, "decider", d.Name(), "err", derr)
-	default:
-		// The interface cannot promise this — only Validate can. A verdict
-		// that leaves the options, or arrives oversized, is a decider bug
-		// and ends where every other failure does: at the rules.
-		valid, verr := decider.Validate(q, got)
-		if verr != nil {
-			c.Log.Warn("decider answered outside the question", "kind", q.Kind, "task", q.Task, "decider", d.Name(), "err", verr)
-			break
-		}
+		return v
+	}
+	// The interface cannot promise this — only Validate can. A verdict
+	// that leaves the options, or arrives oversized, is a decider bug
+	// and ends where every other failure does: at the rules. It did cost
+	// a model call, though, so it is on the record and counts.
+	if valid, verr := decider.Validate(q, got); verr != nil {
+		c.Log.Warn("decider answered outside the question", "kind", q.Kind, "task", q.Task, "decider", d.Name(), "err", verr)
+	} else {
 		v = valid
 		c.Log.Info("decision", "kind", q.Kind, "task", q.Task, "action", v.Action, "by", v.By, "reason", v.Reason)
 	}
-	// Only questions a decider actually saw are on the record, and the
-	// record is the budget: what was asked about a task is counted from
-	// the log, so neither a restart nor a finished run forgets it.
+	// Only questions a decider actually answered are on the record, and
+	// the record is the budget: what was asked about a task is counted
+	// from the log, so neither a restart nor a finished run forgets it.
 	c.append(ctx, executor.TaskID(q.Task), transport.ThreadID(q.Thread), recordVerdict, verdictRecord{q, v})
 	return v
 }
@@ -263,7 +287,7 @@ type resumeFacts struct {
 // small, and they bound what a chatty (or hostile) agent can put in front
 // of the decider.
 const (
-	factRecords   = 60
+	factRecords   = 60 // of the task's own agent events
 	factEvents    = 20
 	factFiles     = 10
 	factLine      = 160
@@ -273,6 +297,12 @@ const (
 // factsForResume reads the thread's tail out of the event log and turns it
 // into the facts of a resume question. A log that cannot be read costs
 // detail, not the decision: the task projection alone still answers it.
+//
+// The last human message is the thread's, whichever task it started; the
+// agent events are this task's only — an earlier task's "all done" on the
+// same thread is not this one's last word. They are two reads, because
+// every outbound message dancer posted sits in the same log and a verbose
+// turn would otherwise push the human's message out of any window.
 func (c *Coordinator) factsForResume(ctx context.Context, t store.TaskState) resumeFacts {
 	f := resumeFacts{
 		Agent:           t.Definition.Name,
@@ -285,41 +315,41 @@ func (c *Coordinator) factsForResume(ctx context.Context, t store.TaskState) res
 	if !t.UpdatedAt.IsZero() {
 		f.MinutesAgo = int(time.Since(t.UpdatedAt).Minutes())
 	}
-	records, err := c.Store.ThreadRecords(ctx, t.Thread, factRecords)
-	if err != nil {
+	if last, err := c.Store.ThreadRecordsOfKind(ctx, t.Thread, "inbound", 1); err != nil {
 		c.Log.Warn("reading the thread log for a decision", "task", t.ID, "err", err)
+	} else if len(last) == 1 {
+		var in transport.Inbound
+		if json.Unmarshal(last[0].Payload, &in) == nil && strings.TrimSpace(in.Text) != "" {
+			f.LastHumanMessage = truncate(strings.TrimSpace(in.Text), factParagraph)
+		}
+	}
+	records, err := c.Store.TaskRecords(ctx, t.ID, "agent", factRecords)
+	if err != nil {
+		c.Log.Warn("reading the task log for a decision", "task", t.ID, "err", err)
 		return f
 	}
 	files := map[string]bool{}
 	inflight := map[string]string{} // tool_use id -> what it is doing
 	for _, r := range records {
-		switch r.Kind {
-		case "inbound":
-			var in transport.Inbound
-			if json.Unmarshal(r.Payload, &in) == nil && strings.TrimSpace(in.Text) != "" {
-				f.LastHumanMessage = truncate(strings.TrimSpace(in.Text), factParagraph)
+		var ev agent.Event
+		if json.Unmarshal(r.Payload, &ev) != nil || ev.Partial {
+			continue
+		}
+		if line := describeEvent(ev); line != "" {
+			f.RecentEvents = append(f.RecentEvents, line)
+		}
+		switch ev.Type {
+		case agent.EventText, agent.EventResult:
+			if strings.TrimSpace(ev.Text) != "" {
+				f.AgentLastWords = truncate(strings.TrimSpace(ev.Text), factParagraph)
 			}
-		case "agent":
-			var ev agent.Event
-			if json.Unmarshal(r.Payload, &ev) != nil || ev.Partial {
-				continue
+		case agent.EventToolUse, agent.EventNeedsPermission:
+			inflight[ev.ToolID] = describeEvent(ev)
+			if p := touchedFile(ev); p != "" {
+				files[p] = true
 			}
-			if line := describeEvent(ev); line != "" {
-				f.RecentEvents = append(f.RecentEvents, line)
-			}
-			switch ev.Type {
-			case agent.EventText, agent.EventResult:
-				if strings.TrimSpace(ev.Text) != "" {
-					f.AgentLastWords = truncate(strings.TrimSpace(ev.Text), factParagraph)
-				}
-			case agent.EventToolUse, agent.EventNeedsPermission:
-				inflight[ev.ToolID] = describeEvent(ev)
-				if p := touchedFile(ev); p != "" {
-					files[p] = true
-				}
-			case agent.EventToolResult:
-				delete(inflight, ev.ToolID)
-			}
+		case agent.EventToolResult:
+			delete(inflight, ev.ToolID)
 		}
 	}
 	if n := len(f.RecentEvents); n > factEvents {

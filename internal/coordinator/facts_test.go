@@ -89,6 +89,62 @@ func TestFactsReadTheThreadBack(t *testing.T) {
 	}
 }
 
+// TestFactsAreThisTasksOwn: an earlier task on the same thread does not
+// lend this one its last words, and the outbound copies dancer posted
+// do not push the human's message out of the window.
+func TestFactsAreThisTasksOwn(t *testing.T) {
+	th := transport.ThreadID("C-dev/41.0")
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	c := New(st, nil, nil, nil, nil)
+	log := func(kind string, task string, v any) {
+		b, _ := json.Marshal(v)
+		if _, err := st.Append(ctx, store.Record{At: time.Now(), Task: executor.TaskID(task), Thread: th, Kind: kind, Payload: b}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Task A ran to the end on this thread.
+	log("inbound", "", transport.Inbound{Transport: "slack", Thread: th, Text: "run coder ship the feature"})
+	log("agent", "t-a", agent.Event{Type: agent.EventToolUse, Tool: "Edit", ToolID: "a1", ToolInput: map[string]any{"file_path": "/repo/a.go"}})
+	log("agent", "t-a", agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "a2", ToolInput: map[string]any{"command": "git push"}})
+	log("agent", "t-a", agent.Event{Type: agent.EventResult, Text: "Committed and pushed. Nothing left to do."})
+	// Task B was started and cut short after one tool call — but its turn
+	// was verbose: every agent event also left an outbound copy.
+	log("inbound", "", transport.Inbound{Transport: "slack", Thread: th, Text: "run coder now add the retries"})
+	log("agent", "t-b", agent.Event{Type: agent.EventInit, Session: "sess-b"})
+	for i := 0; i < factRecords*2; i++ {
+		log("agent", "t-b", agent.Event{Type: agent.EventToolUse, Tool: "Read", ToolID: "b", ToolInput: map[string]any{"file_path": "/repo/b.go"}})
+		log("agent", "t-b", agent.Event{Type: agent.EventToolResult, ToolID: "b"})
+		log("outbound", "t-b", transport.Outbound{Thread: th, Text: "📖 Read /repo/b.go"})
+		log("outbound", "t-b", transport.Outbound{Thread: th, Text: "…"})
+	}
+	log("agent", "t-b", agent.Event{Type: agent.EventToolUse, Tool: "Edit", ToolID: "b9", ToolInput: map[string]any{"file_path": "/repo/retry.go"}})
+
+	f := c.factsForResume(ctx, store.TaskState{ID: "t-b", Thread: th, Session: "sess-b", Status: store.StatusInterrupted,
+		Definition: agent.Definition{Name: "coder", Environment: environment.Spec{Kind: environment.KindLocal}}})
+	if f.LastHumanMessage != "run coder now add the retries" {
+		t.Errorf("last human message = %q (pushed out by outbound records?)", f.LastHumanMessage)
+	}
+	if f.AgentLastWords != "" {
+		t.Errorf("agent last words = %q — those are task A's", f.AgentLastWords)
+	}
+	for _, p := range f.FilesTouched {
+		if p == "/repo/a.go" {
+			t.Errorf("files touched %v include task A's", f.FilesTouched)
+		}
+	}
+	if !strings.Contains(f.ToolInFlight, "/repo/retry.go") {
+		t.Errorf("tool in flight = %q", f.ToolInFlight)
+	}
+	if len(f.RecentEvents) > factEvents {
+		t.Errorf("%d recent events, cap %d", len(f.RecentEvents), factEvents)
+	}
+}
+
 // TestFactsAreBounded: a chatty (or hostile) agent cannot flood the question.
 func TestFactsAreBounded(t *testing.T) {
 	th := transport.ThreadID("C-dev/41.0")
@@ -128,6 +184,9 @@ func TestAskPutsTheChoiceToTheThread(t *testing.T) {
 	}{
 		{"continue resumes it", "continue", "echo:" + defaultResumePrompt, store.StatusIdle},
 		{"drop leaves it", "drop", "⏹️ dropped", store.StatusCancelled},
+		// The terminal types its answers: the human's own words are the
+		// turn to hand the agent, not a drop.
+		{"own words resume it", "yes, keep going and run the tests", "echo:yes, keep going and run the tests", store.StatusIdle},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &stubDecider{verdict: decider.Verdict{Action: actionAsk,

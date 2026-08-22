@@ -65,3 +65,33 @@ func TestParseVerdictFindsTheObject(t *testing.T) {
 		t.Fatal("prose was accepted as a verdict")
 	}
 }
+
+func TestParseAllow(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want Allow
+		bad  bool
+	}{
+		{in: "Read", want: Allow{Tool: "Read", Any: true}},
+		{in: " Bash(*) ", want: Allow{Tool: "Bash", Any: true}},
+		{in: "Bash(go test:*)", want: Allow{Tool: "Bash", Arg: "go test"}},
+		{in: "Read(/repo/*)", want: Allow{Tool: "Read", Arg: "/repo/"}},
+		{in: "Read(/repo/**)", want: Allow{Tool: "Read", Arg: "/repo/"}},
+		{in: "Bash(", bad: true},
+		{in: "Bash()", bad: true},
+		{in: "Bash(:*)", bad: true},
+		{in: "(*)", bad: true},
+		{in: "", bad: true},
+	} {
+		got, err := ParseAllow(tc.in)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("ParseAllow(%q) = %+v, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("ParseAllow(%q) = %+v, %v; want %+v", tc.in, got, err, tc.want)
+		}
+	}
+}

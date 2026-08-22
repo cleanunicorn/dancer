@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS log (
 );
 CREATE INDEX IF NOT EXISTS log_task ON log(task, seq);
 CREATE INDEX IF NOT EXISTS log_thread ON log(thread, seq);
+CREATE INDEX IF NOT EXISTS log_task_kind ON log(task, kind, seq);
 
 CREATE TABLE IF NOT EXISTS tasks (
 	id         TEXT PRIMARY KEY,
@@ -195,11 +196,20 @@ func (s *Store) ThreadRecords(ctx context.Context, thread transport.ThreadID, li
 		string(thread), limit)
 }
 
+func (s *Store) ThreadRecordsOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]store.Record, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.tail(ctx, // walks log_thread(thread, seq) newest-first until limit of the kind are found
+		`SELECT seq, at, task, thread, kind, payload FROM log WHERE thread = ? AND kind = ? ORDER BY seq DESC LIMIT ?`,
+		string(thread), kind, limit)
+}
+
 func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind string, limit int) ([]store.Record, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	return s.tail(ctx, // uses the log_task(task, seq) index
+	return s.tail(ctx, // uses the log_task_kind(task, kind, seq) index
 		`SELECT seq, at, task, thread, kind, payload FROM log WHERE task = ? AND kind = ? ORDER BY seq DESC LIMIT ?`,
 		string(task), kind, limit)
 }
