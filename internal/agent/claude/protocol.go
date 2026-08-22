@@ -19,6 +19,8 @@ type line struct {
 	Model          string `json:"model,omitempty"`
 	PermissionMode string `json:"permissionMode,omitempty"`
 	APIKeySource   string `json:"apiKeySource,omitempty"` // "none" = OAuth/subscription login
+	Cwd            string `json:"cwd,omitempty"`
+	Version        string `json:"claude_code_version,omitempty"`
 
 	// type=result
 	IsError      bool    `json:"is_error,omitempty"`
