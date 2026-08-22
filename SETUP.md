@@ -171,10 +171,21 @@ This installs two more system units and a copy of `scripts/dancer-update.sh`:
 - `dancer-update.service` — a oneshot that does the work, as root.
 
 Each run: `git fetch` into a **deploy checkout** at `SRC` (default
-`/opt/dancer/src`, cloned on the first run), compare `HEAD` with
-`origin/main`, and stop there if they match. Otherwise hard-reset the checkout
-to `origin/main`, build into a scratch directory, smoke-test the new binary,
-replace `/usr/local/bin/dancer` with an atomic rename, and
+`/opt/dancer/src`, cloned on the first run) and hard-reset it to `origin/main`.
+Then two things are brought into line with the branch.
+
+**The glue** — this script and the three unit files. A release that changes
+`deploy/` is as much "the new version" as one that changes the Go code, and
+deploying only the binary silently leaves the box on the old units. Each unit is
+re-rendered from the checkout using the settings recorded at install time in
+`/etc/dancer/deploy.env`, compared with what is installed, and written only if it
+differs, followed by `daemon-reload`. If the updater script itself changed, it is
+installed and re-executed on the spot, so a release lands on the tick that brings
+it in rather than the one after.
+
+**The binary** — if the deployed sha already matches `origin/main` there is
+nothing to build. Otherwise: build into a scratch directory, smoke-test the new
+binary, replace `/usr/local/bin/dancer` with an atomic rename, and
 `systemctl restart dancer`.
 
 The deploy checkout is root-owned and separate from any checkout you edit in —
@@ -187,12 +198,26 @@ Three things can go wrong, and each has a defined outcome:
 | `main` does not compile | old binary keeps running, nothing restarts, exit 1 in the journal; retried every tick and deploys itself once `main` compiles again |
 | new binary fails `dancer -h` | same — it never reaches `/usr/local/bin/dancer` |
 | new binary installs but the service will not stay up | the previous binary is restored from `$BIN.prev`, the service is restarted, and that sha is recorded in `deployed.sha.failed` and skipped until the branch moves |
+| a unit file systemd cannot parse | detected via its `LoadState` after `daemon-reload`, restored from `$UNIT.prev`, reloaded again; the binary deploy carries on |
+| a unit that parses but the service will not start on it | restored from `$UNIT.prev` — and if the same tick also deployed a binary, both are put back, since either could be the reason |
 
 That last case is why the deployed sha lives in `/var/lib/dancer/deployed.sha`
 and is written *after* the restart is confirmed healthy, not before: a deploy
 that never came up is not a deploy. `DANCER_UPDATE_GRACE` (default 10s) is how
 long the service must stay up to count, and `DANCER_UPDATE_FORCE=1` retries a
-sha that was skipped.
+sha that was skipped, and `DANCER_UPDATE_SYNC_GLUE=0` goes back to binary-only
+deploys.
+
+`/etc/dancer/deploy.env` is what makes unit re-rendering possible — it records the
+`USER_`/`GROUP_`/`HOME_`/`BIN`/`INTERVAL` values the installers were given. It is
+written by `make service-install` and `make update-install`; change a setting by
+re-running those with the new value rather than editing the file. Without it the
+updater logs a warning and leaves the units alone.
+
+**Upgrading an existing box to this**: the updater already on the box does not know
+how to deploy glue, so it cannot install the version that does. Run
+`make service-install && make update-install` by hand once; every release after
+that lands on its own.
 
 Restarts go through the same drain path as everything else (see *Restarting
 dancer* below): live threads are notified, in-flight tool calls get

@@ -11,13 +11,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=DANCER_REPO=__REPO__
-Environment=DANCER_BRANCH=__BRANCH__
-Environment=DANCER_SRC=__SRC__
-Environment=DANCER_BIN=__BIN__
-Environment=DANCER_SERVICE=dancer.service
-Environment=GO=__GO__
-Environment=DANCER_UPDATE_STATE=/var/lib/dancer/deployed.sha
+# Written by `make update-install`; also read by the script when run by hand, and
+# what lets the updater re-render the unit files from the checkout.
+EnvironmentFile=/etc/dancer/deploy.env
 Environment=HOME=/root
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=__UPDATER__
