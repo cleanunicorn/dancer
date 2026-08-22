@@ -57,6 +57,11 @@ Milestone 5 — deploy-ready on Linux
 - [x] File attachments: paths mentioned by the agent are uploaded into the thread (live-verified, 3 screenshots)
 - [ ] `make service-install` and run as a systemd unit
 
+Milestone 6 — the decider (see [DECIDER.md](DECIDER.md))
+- [x] M1: `internal/decider` seam, `Static` + `Claude`, coordinator `decide()` with rules-fallback, wired at resume triage, `[decider]` config off by default, doctor check (unit + seam + live tests)
+- [ ] M2: facts from the event log, `ask`/`abandon` verdicts, live drill
+- [ ] M3: permission triage bounded by the definition's allowlist
+
 Deferred
 - [ ] `agent/codex` (`codex exec --json`)
 - [ ] Browser access via MCP server in `mcp_config`
@@ -155,4 +160,6 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | Slack wire                             | real workspace, mention in channel              | pass   |
 | graceful restart                       | `make restart-drill` (SIGTERM mid `sleep 8`, drained 9s, resumed) | pass |
 | automatic resume after restart         | `go test ./internal/coordinator -run AutoResume` | pass   |
+| decider seam + fallbacks               | `go test ./internal/decider ./internal/coordinator -run Decider` | pass |
+| decider against the real CLI (haiku)   | `DANCER_LIVE=1 go test ./internal/decider -run Live` | pass (23s, incl. an injection attempt) |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |

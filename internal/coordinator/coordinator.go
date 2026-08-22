@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
 	"github.com/cleanunicorn/dancer/internal/executor"
 	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
@@ -69,17 +70,33 @@ type Coordinator struct {
 	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
 	// task that keeps taking dancer down cannot restart-loop (default 3).
 	MaxAutoResumes int
+	// Decider answers policy questions the rules alone answer bluntly (see
+	// internal/decider). Nil is decider.Static: dancer's own rules, which
+	// is also what every failure falls back to.
+	Decider decider.Decider
+	// DeciderUses lists the question kinds Decider may answer; other kinds
+	// are answered statically. Empty allows none, so turning a decider on
+	// is always a deliberate, per-kind step.
+	DeciderUses []string
+	// DeciderTimeout bounds one question (default 15s). A decision never
+	// blocks dancer: on timeout the static answer wins.
+	DeciderTimeout time.Duration
+	// MaxDecisionsPerTask caps how many questions one task may cost before
+	// it falls back to the rules for good (default 20).
+	MaxDecisionsPerTask int
 
 	drives sync.WaitGroup
 
 	transports map[string]transport.Transport
 
-	mu      sync.Mutex
-	threads map[transport.ThreadID]executor.TaskID    // live task per thread
-	owner   map[executor.TaskID]string                // task -> surface that started it
-	pending map[string]chan transport.Decision        // prompt base id -> waiter
-	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
-	wizards map[transport.ThreadID]context.CancelFunc // open "add agent" flows
+	mu        sync.Mutex
+	decisions map[executor.TaskID]int                   // questions asked about a task
+	verdicts  map[executor.TaskID]decider.Verdict       // last verdict, for `status`
+	threads   map[transport.ThreadID]executor.TaskID    // live task per thread
+	owner     map[executor.TaskID]string                // task -> surface that started it
+	pending   map[string]chan transport.Decision        // prompt base id -> waiter
+	askText   map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
+	wizards   map[transport.ThreadID]context.CancelFunc // open "add agent" flows
 }
 
 // New returns a Coordinator.
@@ -90,6 +107,8 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 	c := &Coordinator{
 		Store: st, Executor: ex, Transports: transports, Surfaces: surfaces, Log: log,
 		transports: map[string]transport.Transport{},
+		decisions:  map[executor.TaskID]int{},
+		verdicts:   map[executor.TaskID]decider.Verdict{},
 		threads:    map[transport.ThreadID]executor.TaskID{},
 		owner:      map[executor.TaskID]string{},
 		pending:    map[string]chan transport.Decision{},
@@ -215,7 +234,7 @@ const defaultResumePrompt = "dancer restarted and cut your last turn short. Cont
 // again when they never got one — so nobody has to type in the thread; the
 // rest are marked idle and resume with the next message.
 func (c *Coordinator) recover(ctx context.Context) error {
-	var resume []store.TaskState
+	var resume []resumable
 	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued, store.StatusInterrupted} {
 		tasks, err := c.Store.ListTasks(ctx, status)
 		if err != nil {
@@ -223,6 +242,18 @@ func (c *Coordinator) recover(ctx context.Context) error {
 		}
 		for _, t := range tasks {
 			auto := c.autoResumable(t)
+			prompt, why := "", ""
+			if auto {
+				// The rules say this may continue; the decider may still
+				// leave it for a human, and may word the resume itself.
+				v := c.decide(ctx, decider.Question{
+					Kind: kindResume, Task: string(t.ID), Thread: string(t.Thread),
+					Options: []string{"continue", "wait"},
+					Facts:   factsForResume(t),
+					Static:  decider.Verdict{Action: "continue", Prompt: c.resumePrompt()},
+				})
+				auto, prompt, why = v.Action == "continue", v.Prompt, v.Reason
+			}
 			switch {
 			case auto:
 				t.Status = store.StatusIdle
@@ -239,17 +270,27 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			tt := t
 			switch {
 			case auto:
-				resume = append(resume, tt)
+				resume = append(resume, resumable{task: tt, prompt: prompt})
 			case tt.Status == store.StatusIdle:
-				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt,
-					Text: "▶️ dancer is back — reply in this thread to continue where the agent left off"})
+				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
+				if why != "" {
+					text = "▶️ dancer is back — " + why + "; reply in this thread to continue"
+				}
+				c.emitTo(ctx, t.Transport, surface.Event{Kind: surface.EventReply, Thread: t.Thread, TaskID: t.ID, Task: &tt, Text: text})
 			}
 		}
 	}
-	for _, t := range resume {
-		c.autoResume(ctx, t)
+	for _, r := range resume {
+		c.autoResume(ctx, r.task, r.prompt)
 	}
 	return nil
+}
+
+// resumable is a task recover() decided to pick up, with the turn it is to
+// be given (empty = the configured resume prompt).
+type resumable struct {
+	task   store.TaskState
+	prompt string
 }
 
 // autoResumable reports whether a task cut short by a restart may continue
@@ -283,8 +324,11 @@ func (c *Coordinator) autoResumable(t store.TaskState) bool {
 }
 
 // autoResume drives one recovered task without waiting for a message.
-func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState) {
+func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState, decided string) {
 	prompt, note := c.resumePrompt(), "▶️ dancer is back — picking up this task where the agent left off"
+	if decided != "" {
+		prompt = decided
+	}
 	if t.Session == "" {
 		// The task never reached a session: run the original request again.
 		prompt, note = t.Prompt, "▶️ dancer is back — this task never started, running it again"
@@ -353,8 +397,14 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no task on this thread"}, s)
 			return
 		}
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st,
-			Text: fmt.Sprintf("task `%s` — agent *%s* — status *%s* — session `%s`", st.ID, st.Definition.Name, st.Status, st.Session)}, s)
+		text := fmt.Sprintf("task `%s` — agent *%s* — status *%s* — session `%s`", st.ID, st.Definition.Name, st.Status, st.Session)
+		if v, ok := c.lastVerdict(st.ID); ok && v.By != "" {
+			text += fmt.Sprintf("\n· last decision: *%s* by %s", v.Action, v.By)
+			if v.Reason != "" {
+				text += " — " + v.Reason
+			}
+		}
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text}, s)
 	case surface.Cancel:
 		if c.cancelWizard(it.Thread) {
 			return

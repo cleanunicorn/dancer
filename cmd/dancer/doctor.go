@@ -29,6 +29,18 @@ func (c check) String() string {
 	return fmt.Sprintf("  %s %-22s %s", mark, c.name, c.info)
 }
 
+// checkDecider reports the policy decider: off (dancer's own rules decide)
+// or the model and the question kinds it is allowed to answer.
+func checkDecider(cfg *config.Config) check {
+	if !cfg.Decider.Enabled() {
+		return check{"decider", true, "off — dancer's rules decide"}
+	}
+	if len(cfg.Decider.Uses) == 0 {
+		return check{"decider", false, fmt.Sprintf("kind %q but uses = [] — it is never asked anything", cfg.Decider.Kind)}
+	}
+	return check{"decider", true, fmt.Sprintf("%s/%s for %v (timeout %s)", cfg.Decider.Kind, cfg.Decider.Model, cfg.Decider.Uses, cfg.Decider.Timeout.Duration)}
+}
+
 func runDoctor(cfgPath string) error {
 	fmt.Println("dancer doctor")
 	var checks []check
@@ -51,6 +63,7 @@ func runDoctor(cfgPath string) error {
 	add(check{"workdir_root", dirWritable(cfg.Server.WorkdirRoot), cfg.Server.WorkdirRoot})
 
 	add(checkClaude(cfg.Claude.Binary))
+	add(checkDecider(cfg))
 
 	needDocker, needSSH := false, false
 	for _, d := range cfg.Definitions {

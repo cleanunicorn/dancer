@@ -173,6 +173,28 @@ Auto-resume is on by default and tunable in `[server]`:
 The counter behind `max_auto_resumes` is cleared as soon as a resumed agent
 finishes a turn.
 
+## The decider (optional)
+
+Dancer's restart rules are blunt on purpose: everything cut mid-execution is
+picked up with the same "carry on" sentence. Switching on a decider hands those
+judgement calls to a small model — it can leave a task for you with a reason, or
+word the resume in the task's own terms. See [DECIDER.md](DECIDER.md).
+
+```toml
+[decider]
+kind = "claude"       # off (default) | claude
+model = "haiku"
+uses = ["resume"]     # question kinds it may answer; [] = never asked
+timeout = "15s"
+max_per_task = 20
+```
+
+It can only ever narrow what the rules already allow: `auto_resume_within`,
+`max_auto_resumes` and a definition's `allowed_tools` are applied before it is
+asked, and an answer outside the offered options is discarded. If it fails,
+times out or is not configured, dancer behaves exactly as it does without one.
+Every verdict, with its reason, is in the event log and in `status`.
+
 ## Environments
 
 **local** — the agent runs on the dancer host in `workdir` (or a fresh

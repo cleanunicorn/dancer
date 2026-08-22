@@ -17,6 +17,18 @@ max_auto_resumes = 3        # consecutive automatic resumes of one task before i
 [claude]
 binary = "claude"
 
+# --- decider (optional) ------------------------------------------------------
+# A small model that answers dancer's judgement calls; see DECIDER.md. Off by
+# default: dancer's own rules decide, and they are also the fallback whenever
+# the decider fails, times out or answers something outside the options.
+
+[decider]
+kind = "off"                # off | claude
+model = "haiku"
+uses = ["resume"]           # question kinds it may answer; [] = never asked
+timeout = "15s"
+max_per_task = 20           # questions one task may cost before the rules take over
+
 [slack]
 app_token = "xapp-..."      # App-level token with connections:write
 bot_token = "xoxb-..."      # Bot User OAuth token

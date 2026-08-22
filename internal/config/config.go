@@ -18,6 +18,7 @@ import (
 type Config struct {
 	Server      Server       `toml:"server"`
 	Claude      Claude       `toml:"claude"`
+	Decider     Decider      `toml:"decider"`
 	Slack       Slack        `toml:"slack"`
 	Surfaces    []Surface    `toml:"surfaces"`
 	Channels    []Channel    `toml:"channels"`
@@ -81,6 +82,23 @@ type Server struct {
 type Claude struct {
 	Binary string `toml:"binary"`
 }
+
+// Decider configures the small model that answers dancer's policy
+// questions (see DECIDER.md). It is off by default: dancer's own rules
+// answer everything, which is also the fallback whenever the decider
+// fails, times out or answers something unacceptable.
+type Decider struct {
+	Kind  string `toml:"kind"`  // "off" (default) | "claude"
+	Model string `toml:"model"` // default "haiku"
+	// Uses lists the question kinds the decider may answer ("resume").
+	// Empty means none, so switching it on is deliberate per kind.
+	Uses       []string `toml:"uses"`
+	Timeout    Duration `toml:"timeout"`
+	MaxPerTask int      `toml:"max_per_task"`
+}
+
+// Enabled reports whether a decider other than the built-in rules is set.
+func (d Decider) Enabled() bool { return d.Kind != "" && d.Kind != "off" }
 
 type Slack struct {
 	AppToken string `toml:"app_token"`
@@ -171,6 +189,18 @@ func (c *Config) applyDefaults(path string) {
 	if c.Claude.Binary == "" {
 		c.Claude.Binary = "claude"
 	}
+	if c.Decider.Kind == "" {
+		c.Decider.Kind = "off"
+	}
+	if c.Decider.Model == "" {
+		c.Decider.Model = "haiku"
+	}
+	if c.Decider.Timeout.Duration == 0 {
+		c.Decider.Timeout.Duration = 15 * time.Second
+	}
+	if c.Decider.MaxPerTask == 0 {
+		c.Decider.MaxPerTask = 20
+	}
 	if len(c.Server.Transports) == 0 {
 		if c.Slack.AppToken != "" {
 			c.Server.Transports = []string{"slack"}
@@ -230,6 +260,16 @@ func (c *Config) ChannelAgents() map[string]string {
 }
 
 func (c *Config) validate() error {
+	switch c.Decider.Kind {
+	case "off", "claude":
+	default:
+		return fmt.Errorf("config: unknown decider kind %q (off|claude)", c.Decider.Kind)
+	}
+	for _, u := range c.Decider.Uses {
+		if u != "resume" {
+			return fmt.Errorf("config: decider cannot answer %q yet (resume)", u)
+		}
+	}
 	seen := map[string]bool{}
 	for _, d := range c.Definitions {
 		if d.Name == "" {
