@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,5 +117,152 @@ kind = "local"
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
 		t.Fatalf("file changed by rejected appends:\n%s", after)
+	}
+}
+
+func TestReplaceAndRemoveDefinition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	orig := `# my dancer config
+[server]
+default_agent = "coder" # keep
+
+[[channels]]
+id = "C1"
+agent = "reviewer"
+
+[[channels]]
+id = "C1"
+agent = "coder" # overrides the block above
+
+# the main agent
+[[definitions]]
+name = "coder"
+model = "sonnet"
+[definitions.environment]
+kind = "local"
+
+# added from chat on 2026-08-22
+[[definitions]]
+name = "reviewer"
+model = "opus"
+allowed_tools = ["Read"]
+[definitions.environment]
+kind = "docker"
+image = "ghcr.io/x/claude:latest"
+[definitions.environment.env]
+FOO = "bar"
+
+[[definitions]]
+name = 'tester'
+[definitions.environment]
+kind = "local"
+`
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replace: the block is rewritten in place, its comment and position
+	// (and so the implicit default) stay, the rest stays byte for byte.
+	d := Definition{Name: "reviewer", Kind: "claude", Model: "haiku", PermissionMode: "manual"}
+	d.Environment.Kind = "local"
+	if err := ReplaceDefinition(path, d); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	got := string(b)
+	head := orig[:strings.Index(orig, "[[definitions]]\nname = \"reviewer\"")]
+	tail := orig[strings.Index(orig, "\n[[definitions]]\nname = 'tester'"):]
+	if !strings.HasPrefix(got, head) || !strings.HasSuffix(got, tail) {
+		t.Fatalf("content around the replaced block changed:\n%s", got)
+	}
+	if strings.Contains(got, "ghcr.io") || strings.Contains(got, "FOO") || !strings.Contains(got, "# added from chat") {
+		t.Fatalf("old block survived or its comment was lost:\n%s", got)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Definitions) != 3 || cfg.Definitions[1].Name != "reviewer" || cfg.Definitions[1].Model != "haiku" ||
+		cfg.Definitions[1].Environment.Kind != "local" || cfg.Definitions[2].Name != "tester" {
+		t.Fatalf("loaded = %+v", cfg.Definitions)
+	}
+
+	// Replace of a name the file lacks appends it.
+	if err := ReplaceDefinition(path, Definition{Name: "extra", Environment: EnvironmentConfig{Kind: "local"}}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := Load(path); len(cfg.Definitions) != 4 || cfg.Definitions[3].Name != "extra" {
+		t.Fatalf("loaded = %+v", cfg.Definitions)
+	}
+	if err := RemoveDefinition(path, "extra"); err != nil {
+		t.Fatal(err)
+	}
+	// Remove: the default agent and an effective channel default are refused;
+	// an overridden [[channels]] block does not count; a missing name is
+	// ErrNoDefinition.
+	before, _ := os.ReadFile(path)
+	if err := RemoveDefinition(path, "coder"); err == nil || !strings.Contains(err.Error(), "default agent") {
+		t.Fatalf("removing the default agent: %v", err)
+	}
+	if err := RemoveDefinition(path, "nosuch"); !errors.Is(err, ErrNoDefinition) {
+		t.Fatalf("unknown definition: %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Fatalf("file changed by rejected edits:\n%s", after)
+	}
+	if err := RemoveDefinition(path, "reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveDefinition(path, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(path)
+	got = string(b)
+	if !strings.HasPrefix(got, orig[:strings.Index(orig, "\n# added from chat")]) || strings.Contains(got, "name = \"reviewer\"") || strings.Contains(got, "tester") || strings.Contains(got, "added from chat") {
+		t.Fatalf("after removals:\n%s", got)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Definitions) != 1 || cfg.Definitions[0].Name != "coder" || cfg.Definitions[0].Model != "sonnet" {
+		t.Fatalf("loaded = %+v", cfg.Definitions)
+	}
+}
+
+func TestSpliceDefinition(t *testing.T) {
+	src := "[[definitions]]\nname = \"a\"\n[definitions.environment]\nkind = \"local\"\n\n[[definitions]]\nname = \"b\"\n[definitions.environment]\nkind = \"local\"\n[[channels]]\nid = \"C\"\nagent = \"a\"\n"
+	out, ok := spliceDefinition([]byte(src), "b", nil)
+	if !ok || string(out) != "[[definitions]]\nname = \"a\"\n[definitions.environment]\nkind = \"local\"\n[[channels]]\nid = \"C\"\nagent = \"a\"\n" {
+		t.Fatalf("cut b: ok=%v\n%s", ok, out)
+	}
+	out, ok = spliceDefinition([]byte(src), "a", nil)
+	if !ok || !strings.HasPrefix(string(out), "[[definitions]]\nname = \"b\"\n") {
+		t.Fatalf("cut a: ok=%v\n%s", ok, out)
+	}
+	// Replacement keeps the comment above and the blank line after.
+	out, ok = spliceDefinition([]byte("# a\n[[definitions]]\nname = \"a\"\n\n[[definitions]]\nname = \"b\"\n"), "a", []byte("[[definitions]]\nname = \"a\"\nmodel = \"x\"\n"))
+	if !ok || string(out) != "# a\n[[definitions]]\nname = \"a\"\nmodel = \"x\"\n\n[[definitions]]\nname = \"b\"\n" {
+		t.Fatalf("replace a: ok=%v\n%q", ok, out)
+	}
+	// Comments and blank lines above the next block stay with it.
+	out, ok = spliceDefinition([]byte("[[definitions]]\nname = \"a\"\n\n# b is next\n[[definitions]]\nname = \"b\"\n"), "a", nil)
+	if !ok || string(out) != "# b is next\n[[definitions]]\nname = \"b\"\n" {
+		t.Fatalf("cut a before a commented block: ok=%v\n%q", ok, out)
+	}
+	// Sub-tables, array sub-tables and lines starting with "[" inside
+	// multi-line strings are part of the block.
+	src = "[[definitions]]\nname = \"a\"\nsystem_prompt = \"\"\"\n[IMPORTANT]\nbe nice\n\"\"\"\n[[definitions.sub_agents.x]]\nname = \"z\"\n[[definitions]]\nname = \"b\"\n"
+	out, ok = spliceDefinition([]byte(src), "a", nil)
+	if !ok || string(out) != "[[definitions]]\nname = \"b\"\n" {
+		t.Fatalf("cut a with string and sub-array: ok=%v\n%q", ok, out)
+	}
+	// A sub-table key named "name" does not identify the block.
+	if _, ok := spliceDefinition([]byte("[[definitions]]\nname = \"x\"\n[definitions.sub_agents.y]\nname = \"z\"\n"), "z", nil); ok {
+		t.Fatal("matched a sub-table name")
+	}
+	if _, ok := spliceDefinition([]byte("definitions = [{name = \"inline\"}]\n"), "inline", nil); ok {
+		t.Fatal("matched an inline table")
 	}
 }

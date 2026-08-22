@@ -38,11 +38,13 @@ Milestone 4 — definitions and instances
 - [x] Definitions seeded from config into the store; `agents` lists them
 - [x] Sub-agents passed through as `--agents` JSON (`sub_agents` in config; untested live)
 - [x] Multiple instances of one definition run concurrently (one task per thread)
-- [x] Add definitions from chat: `add agent` asks name/model/environment/permissions/tools/prompt, appends to config.toml and the store (coordinator + config tests)
+- [x] Add definitions from chat: `agent add` asks name/model/environment/permissions/tools/prompt, appends to config.toml and the store (coordinator + config tests)
 - [x] Per-channel default agent: `[[channels]]` in config, `default <agent>` from chat appends one (last block wins), `agents` marks it (coordinator + config tests)
 - [x] Agent picker for bare `run`: agent list as buttons / a searchable static select from 5 agents, then the prompt is asked in the thread; `run <agent>` alone asks only for the prompt (coordinator test)
 - [ ] Live check of the select menu in Slack (block action carries `selected_option` instead of `value`)
-- [ ] Edit or remove definitions from chat (still config-file only)
+- [x] Edit and delete definitions from chat: `agent edit` shows a field menu (model/environment/permissions/tools/prompt) and rewrites the agent's `[[definitions]]` block in config.toml on Save; `agent delete` confirms, then removes the block — refused while the agent is the global or a channel default (coordinator + config tests, terminal smoke test)
+- [ ] Resume `agent edit` after a restart (only `agent add` is persisted; edit/delete are asked again)
+- [ ] Rename an agent from chat (channels and `default_agent` reference it by name)
 
 Milestone 5 — deploy-ready on Linux
 - [x] `dancer setup` wizard: storage, claude check, Slack tokens, first definition, then runs doctor
@@ -163,3 +165,4 @@ Surfaces shipped: `chat` (commands + thread follow-ups + approvals + results) an
 | decider seam + fallbacks               | `go test ./internal/decider ./internal/coordinator -run Decider` | pass |
 | decider against the real CLI (haiku)   | `DANCER_LIVE=1 go test ./internal/decider -run Live` | pass (23s, incl. an injection attempt) |
 | file attachments in Slack              | agent-produced screenshots uploaded to thread   | pass   |
+| agent edit / delete from chat          | `go test -race ./internal/config ./internal/coordinator`; terminal run against a temp config: edit rewrites the block in place, delete keeps neighbouring comments, default refused | pass |

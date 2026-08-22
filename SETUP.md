@@ -50,7 +50,7 @@ You can edit the file by hand afterwards — `deploy/config.example.toml` shows
 every option, including docker and ssh environments and a second surface.
 
 More agents can be added later from Slack (or the terminal) without a
-restart: see [Adding agents from chat](#adding-agents-from-chat).
+restart: see [Managing agents from chat](#managing-agents-from-chat).
 
 ## 5. Try it
 
@@ -92,13 +92,13 @@ When the agent asks a question (Claude Code's `AskUserQuestion`), the thread
 shows the options as buttons; click one, or reply in the thread with your own
 answer. Multi-select questions are answered one option at a time for now. When the agent wants to run
 something not pre-approved you get **Allow / Deny** buttons. Reply in the
-thread to continue the conversation; `status`, `cancel`, `agents`, `help` work
+thread to continue the conversation; `status`, `cancel`, `agent list` (or `agents`), `help` work
 anywhere. DMs to the bot work the same way without the mention.
 
-## Adding agents from chat
+## Managing agents from chat
 
 ```
-@dancer add agent
+@dancer agent add
 ```
 
 dancer asks, one question per message in the thread: name, model, where it
@@ -115,8 +115,15 @@ Saving appends a `[[definitions]]` block to `config.toml` (the rest of the
 file is left untouched) and registers the agent immediately — `agents` lists
 it and `run <name> <prompt>` works without a restart. Settings the flow does
 not ask for (`sub_agents`, `mcp_config`, `key_path`, container `env`) can be
-added to that block by hand afterwards. Editing or removing an agent is still
-done in the file.
+added to that block by hand afterwards.
+
+`@dancer agent edit <name>` shows the agent's settings with a menu — model,
+environment, permissions, tools, system prompt — re-asks the field you pick,
+and on **Save** rewrites that agent's `[[definitions]]` block (tasks already
+running keep their old settings). `@dancer agent delete <name>` asks for a
+confirmation and removes the block; an agent that is the global
+`default_agent` or a channel default is refused until the default points
+elsewhere. Both pick the agent from a list when the name is left out.
 
 ## 6. Install as a service
 

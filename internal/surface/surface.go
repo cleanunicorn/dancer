@@ -65,9 +65,23 @@ type Status struct{ Thread transport.ThreadID }
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
-// AddAgent starts the guided "add agent" flow on Thread: the coordinator
+// AddAgent starts the guided "agent add" flow on Thread: the coordinator
 // asks for each setting in turn and saves the new definition.
 type AddAgent struct{ Thread transport.ThreadID }
+
+// EditAgent starts the guided "agent edit" flow on Thread for the
+// definition Agent (picked from a list when empty).
+type EditAgent struct {
+	Thread transport.ThreadID
+	Agent  string
+}
+
+// DeleteAgent asks to confirm and then removes the definition Agent
+// (picked from a list when empty).
+type DeleteAgent struct {
+	Thread transport.ThreadID
+	Agent  string
+}
 
 // Decide answers a permission prompt.
 type Decide struct {
@@ -81,15 +95,17 @@ type Say struct {
 	Text   string
 }
 
-func (RunTask) isIntent()    {}
-func (FollowUp) isIntent()   {}
-func (Cancel) isIntent()     {}
-func (Status) isIntent()     {}
-func (ListAgents) isIntent() {}
-func (AddAgent) isIntent()   {}
-func (SetDefault) isIntent() {}
-func (Decide) isIntent()     {}
-func (Say) isIntent()        {}
+func (RunTask) isIntent()     {}
+func (FollowUp) isIntent()    {}
+func (Cancel) isIntent()      {}
+func (Status) isIntent()      {}
+func (ListAgents) isIntent()  {}
+func (AddAgent) isIntent()    {}
+func (EditAgent) isIntent()   {}
+func (DeleteAgent) isIntent() {}
+func (SetDefault) isIntent()  {}
+func (Decide) isIntent()      {}
+func (Say) isIntent()         {}
 
 // EventKind classifies coordinator events.
 type EventKind string
