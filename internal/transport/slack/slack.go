@@ -14,7 +14,9 @@
 // without them the first failure turns the mirror off for the process.
 // Agent text (Outbound.Markdown) goes out as a Block Kit "markdown" block,
 // which renders standard Markdown; Slack's own mrkdwn would show **bold**
-// and # headings literally.
+// and # headings literally. Outbound.Mention goes out as "<@U…> " in front
+// of plain and prompt text, so Slack notifies that user even in a muted
+// thread; keyed messages ignore it, and the markdown block is not given one.
 package slack
 
 import (
