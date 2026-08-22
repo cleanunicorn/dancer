@@ -49,7 +49,58 @@ func (c *Coordinator) addAgent(ctx context.Context, s surface.Surface, it surfac
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "already adding an agent on this thread — answer the question above or `cancel`"}, s)
 		return
 	}
-	c.startWizard(ctx, s, it.Thread, nil)
+	c.startFlow(ctx, s, it.Thread, flowAddAgent, nil, func(ctx context.Context, w *wizard) (string, error) {
+		def, err := w.run(ctx)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✅ agent *%s* saved — try `run %s <prompt>`", def.Name, def.Name), nil
+	})
+}
+
+// startPick runs the `run` picker on a thread: choose the agent (unless
+// given), then type the prompt, then start the task.
+func (c *Coordinator) startPick(ctx context.Context, s surface.Surface, th transport.ThreadID, agentName string) {
+	c.startFlow(ctx, s, th, flowRun, nil, func(ctx context.Context, w *wizard) (string, error) {
+		name := agentName
+		if name == "" {
+			defs, err := w.c.Store.ListDefinitions(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(defs) == 0 {
+				return "", errors.New("no agent definitions — say `add agent` first")
+			}
+			q := agent.Question{Header: "Run", Text: "Which agent?"}
+			def := w.c.defaultAgent(w.s, th)
+			for _, d := range defs {
+				desc := describeDefinition(d)
+				if d.Name == def {
+					desc = "default here · " + desc
+				}
+				q.Options = append(q.Options, agent.Option{Label: d.Name, Description: desc})
+			}
+			name, err = w.askUntil(ctx, q, func(a string) (string, error) {
+				for _, d := range defs {
+					if strings.EqualFold(a, d.Name) {
+						return d.Name, nil
+					}
+				}
+				return "", fmt.Errorf("no agent named %q", a)
+			})
+			if err != nil {
+				return "", err
+			}
+		}
+		prompt, err := w.askUntil(ctx, agent.Question{Header: "Prompt", Text: fmt.Sprintf("What should *%s* do? Reply in this thread.", name)}, nonEmpty("prompt"))
+		if err != nil {
+			return "", err
+		}
+		w.then = func(ctx context.Context) {
+			w.c.runTask(ctx, w.s, surface.RunTask{Thread: th, Agent: name, Prompt: prompt})
+		}
+		return "", nil
+	})
 }
 
 // resumeFlows restarts flows that were open before a restart: the saved
@@ -78,45 +129,81 @@ func (c *Coordinator) resumeFlows(ctx context.Context) {
 	}
 }
 
-const flowAddAgent = "add_agent"
+// Flow kinds. Only add_agent is persisted and resumed after a restart; the
+// run picker is short-lived and simply asked again.
+const (
+	flowAddAgent = "add_agent"
+	flowRun      = "run"
+)
 
-// startWizard runs the flow in its own goroutine; one per thread. answers
-// are replayed before any new question is asked.
+// flowLabel names a flow in messages.
+func flowLabel(kind string) string {
+	if kind == flowAddAgent {
+		return "add agent"
+	}
+	return kind
+}
+
+// startWizard resumes an add-agent flow with saved answers.
 func (c *Coordinator) startWizard(ctx context.Context, s surface.Surface, th transport.ThreadID, answers []string) {
+	c.startFlow(ctx, s, th, flowAddAgent, answers, func(ctx context.Context, w *wizard) (string, error) {
+		def, err := w.run(ctx)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✅ agent *%s* saved — try `run %s <prompt>`", def.Name, def.Name), nil
+	})
+}
+
+// startFlow runs a question flow in its own goroutine; one per thread.
+// answers are replayed before any new question is asked. run returns the
+// success message (empty posts nothing); w.then, if set by run, executes
+// after the flow is unregistered from the thread.
+func (c *Coordinator) startFlow(ctx context.Context, s surface.Surface, th transport.ThreadID, kind string, answers []string, run func(context.Context, *wizard) (string, error)) {
 	wctx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	c.wizards[th] = cancel
 	c.mu.Unlock()
 
-	w := &wizard{c: c, s: s, thread: th, id: newID(), parent: ctx, answers: answers}
+	w := &wizard{c: c, s: s, thread: th, kind: kind, id: newID(), parent: ctx, answers: answers}
 	c.drives.Add(1)
 	go func() {
 		defer c.drives.Done()
-		defer func() {
-			cancel()
-			c.mu.Lock()
-			delete(c.wizards, th)
-			c.mu.Unlock()
-		}()
-		def, err := w.run(wctx)
+		done, err := run(wctx, w)
+		cancel()
+		c.mu.Lock()
+		delete(c.wizards, th)
+		c.mu.Unlock()
 		// Report with a context that survives shutdown.
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer rcancel()
+		label := flowLabel(kind)
 		if ctx.Err() != nil {
-			// Shutdown: keep the saved answers; resumeFlows continues after restart.
-			w.say(rctx, "⏸️ dancer is restarting — the agent questions continue when it is back")
+			if kind == flowAddAgent {
+				// Shutdown: keep the saved answers; resumeFlows continues after restart.
+				w.say(rctx, "⏸️ dancer is restarting — the agent questions continue when it is back")
+			} else {
+				w.say(rctx, fmt.Sprintf("⏸️ dancer is restarting — say `%s` again when it is back", label))
+			}
 			return
 		}
-		_ = c.Store.DeleteFlow(rctx, th)
+		if kind == flowAddAgent {
+			_ = c.Store.DeleteFlow(rctx, th)
+		}
 		switch {
 		case errors.Is(err, errWizardCancelled):
-			w.say(rctx, "⏹️ add agent cancelled")
+			w.say(rctx, fmt.Sprintf("⏹️ %s cancelled", label))
 		case errors.Is(err, context.DeadlineExceeded):
-			w.say(rctx, "⌛ no answer — add agent abandoned; say `add agent` to start over")
+			w.say(rctx, fmt.Sprintf("⌛ no answer — %s abandoned; say `%s` to start over", label, label))
 		case err != nil:
-			w.say(rctx, "❌ add agent: "+err.Error())
+			w.say(rctx, fmt.Sprintf("❌ %s: %s", label, err.Error()))
 		default:
-			w.say(rctx, fmt.Sprintf("✅ agent *%s* saved — try `run %s <prompt>`", def.Name, def.Name))
+			if done != "" {
+				w.say(rctx, done)
+			}
+			if w.then != nil {
+				w.then(ctx)
+			}
 		}
 	}()
 }
@@ -136,9 +223,11 @@ type wizard struct {
 	c      *Coordinator
 	s      surface.Surface
 	thread transport.ThreadID
+	kind   string
 	id     string
 	parent context.Context // the coordinator's context; ends only on shutdown
 	step   int
+	then   func(context.Context) // runs after a successful flow, once the thread is free
 
 	answers []string // every answer so far; persisted after each one
 	next    int      // answers[next:] are still to be replayed
@@ -158,7 +247,7 @@ func (w *wizard) ask(ctx context.Context, q agent.Question) (string, error) {
 		w.next++
 		return a, nil
 	}
-	base := fmt.Sprintf("def-%s#%d", w.id, w.step)
+	base := fmt.Sprintf("%s-%s#%d", w.kind, w.id, w.step)
 	ch := make(chan transport.Decision, 1)
 	w.c.mu.Lock()
 	w.c.pending[base] = ch
@@ -174,8 +263,10 @@ func (w *wizard) ask(ctx context.Context, q agent.Question) (string, error) {
 		a := unquote(d.Choice)
 		w.answers = append(w.answers, a)
 		w.next = len(w.answers)
-		if err := w.c.Store.PutFlow(ctx, store.FlowState{Thread: w.thread, Transport: w.s.Transport(), Surface: w.s.Name(), Kind: flowAddAgent, Answers: w.answers}); err != nil {
-			w.c.Log.Error("persist flow", "thread", w.thread, "err", err)
+		if w.kind == flowAddAgent {
+			if err := w.c.Store.PutFlow(ctx, store.FlowState{Thread: w.thread, Transport: w.s.Transport(), Surface: w.s.Name(), Kind: w.kind, Answers: w.answers}); err != nil {
+				w.c.Log.Error("persist flow", "thread", w.thread, "err", err)
+			}
 		}
 		return a, nil
 	case <-time.After(wizardTimeout):

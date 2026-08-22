@@ -35,11 +35,19 @@ type Surface interface {
 // Intent is something a human asked for. Concrete types below.
 type Intent interface{ isIntent() }
 
-// RunTask starts a new task on Thread.
+// RunTask starts a new task on Thread. With neither Agent nor Prompt the
+// coordinator asks for them on the thread (agent picker, then prompt).
 type RunTask struct {
 	Thread transport.ThreadID
-	Agent  string // definition name; "" = coordinator default
+	Agent  string // definition name; "" = the channel's or coordinator's default
 	Prompt string
+}
+
+// SetDefault sets the default agent of the channel Thread belongs to, or
+// with an empty Agent reports the current one.
+type SetDefault struct {
+	Thread transport.ThreadID
+	Agent  string
 }
 
 // FollowUp sends Text to the task on Thread, resuming it if needed.
@@ -79,6 +87,7 @@ func (Cancel) isIntent()     {}
 func (Status) isIntent()     {}
 func (ListAgents) isIntent() {}
 func (AddAgent) isIntent()   {}
+func (SetDefault) isIntent() {}
 func (Decide) isIntent()     {}
 func (Say) isIntent()        {}
 

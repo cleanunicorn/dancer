@@ -40,6 +40,13 @@ type Coordinator struct {
 	// (or whose agent name is unknown, in which case the name is treated
 	// as part of the prompt).
 	DefaultDefinition string
+	// ChannelAgents overrides DefaultDefinition per channel, keyed by
+	// "<transport>/<channel>" (the channel is the part of the thread id
+	// before the first "/"). Read and updated under mu once Run started.
+	ChannelAgents map[string]string
+	// SaveChannelAgent persists a per-channel default set from chat (the
+	// config file). Nil keeps it in memory only.
+	SaveChannelAgent func(ctx context.Context, transportName, channel, agent string) error
 	// WorkdirRoot hosts per-task working directories for definitions that
 	// do not pin one.
 	WorkdirRoot string
@@ -261,19 +268,102 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		}
 		var b strings.Builder
 		for _, d := range defs {
-			fmt.Fprintf(&b, "• *%s* — %s/%s, env %s, mode %s\n", d.Name, d.Kind, d.Model, d.Environment.Kind, d.PermissionMode)
+			fmt.Fprintf(&b, "• *%s* — %s", d.Name, describeDefinition(d))
+			if d.Name == c.defaultAgent(s, it.Thread) {
+				b.WriteString(" · _default here_")
+			}
+			b.WriteString("\n")
 		}
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: strings.TrimRight(b.String(), "\n")}, s)
 	case surface.AddAgent:
 		c.addAgent(ctx, s, it)
+	case surface.SetDefault:
+		c.setDefault(ctx, s, it)
 	}
 }
 
+func describeDefinition(d agent.Definition) string {
+	return fmt.Sprintf("%s/%s, env %s, mode %s", d.Kind, d.Model, d.Environment.Kind, d.PermissionMode)
+}
+
+// channelOf returns the channel part of a thread id ("C123/1.0" → "C123").
+func channelOf(th transport.ThreadID) string {
+	ch, _, _ := strings.Cut(string(th), "/")
+	return ch
+}
+
+func channelKey(s surface.Surface, th transport.ThreadID) string {
+	return s.Transport() + "/" + channelOf(th)
+}
+
+// defaultAgent is the definition used on th when none is named: the
+// channel's default if one is set, else DefaultDefinition.
+func (c *Coordinator) defaultAgent(s surface.Surface, th transport.ThreadID) string {
+	c.mu.Lock()
+	name, ok := c.ChannelAgents[channelKey(s, th)]
+	c.mu.Unlock()
+	if ok && name != "" {
+		return name
+	}
+	return c.DefaultDefinition
+}
+
+// setDefault shows or changes the default agent of a channel.
+func (c *Coordinator) setDefault(ctx context.Context, s surface.Surface, it surface.SetDefault) {
+	key := channelKey(s, it.Thread)
+	if it.Agent == "" {
+		c.mu.Lock()
+		name, ok := c.ChannelAgents[key]
+		c.mu.Unlock()
+		switch {
+		case ok && name != "":
+			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: fmt.Sprintf("default agent on this channel: *%s* — change it with `default <agent>`", name)}, s)
+		case c.DefaultDefinition != "":
+			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: fmt.Sprintf("no default set for this channel; the global default *%s* is used — set one with `default <agent>`", c.DefaultDefinition)}, s)
+		default:
+			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no default agent — set one with `default <agent>`"}, s)
+		}
+		return
+	}
+	def, err := c.Store.GetDefinition(ctx, it.Agent)
+	if err != nil {
+		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: fmt.Sprintf("unknown agent %q — try `agents`", it.Agent)}, s)
+		return
+	}
+	if c.SaveChannelAgent != nil {
+		if err := c.SaveChannelAgent(ctx, s.Transport(), channelOf(it.Thread), def.Name); err != nil {
+			c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "writing config: " + err.Error()}, s)
+			return
+		}
+	}
+	c.mu.Lock()
+	if c.ChannelAgents == nil {
+		c.ChannelAgents = map[string]string{}
+	}
+	c.ChannelAgents[key] = def.Name
+	c.mu.Unlock()
+	c.Log.Info("channel default set from chat", "channel", key, "agent", def.Name)
+	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: fmt.Sprintf("✅ default agent on this channel is now *%s* — plain messages here run it", def.Name)}, s)
+}
+
 func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface.RunTask) {
+	if _, busy := c.lookup(it.Thread); busy {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is already running on this thread — `cancel` it first or reply to it"}, s)
+		return
+	}
+	if c.wizardOpen(it.Thread) {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "finish or `cancel` the questions on this thread first"}, s)
+		return
+	}
+	if it.Agent == "" && strings.TrimSpace(it.Prompt) == "" {
+		// Bare `run`: ask for the agent and the prompt on the thread.
+		c.startPick(ctx, s, it.Thread, "")
+		return
+	}
 	def, err := c.Store.GetDefinition(ctx, it.Agent)
 	prompt := it.Prompt
-	if errors.Is(err, store.ErrNotFound) && c.DefaultDefinition != "" {
-		def, err = c.Store.GetDefinition(ctx, c.DefaultDefinition)
+	if fallback := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && fallback != "" {
+		def, err = c.Store.GetDefinition(ctx, fallback)
 		prompt = strings.TrimSpace(it.Agent + " " + it.Prompt)
 	}
 	if err != nil {
@@ -281,15 +371,8 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 		return
 	}
 	if strings.TrimSpace(prompt) == "" {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "usage: `run <agent> <prompt>`"}, s)
-		return
-	}
-	if _, busy := c.lookup(it.Thread); busy {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is already running on this thread — `cancel` it first or reply to it"}, s)
-		return
-	}
-	if c.wizardOpen(it.Thread) {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "finish or `cancel` the `add agent` questions on this thread first"}, s)
+		// `run <agent>` without a prompt: ask for it.
+		c.startPick(ctx, s, it.Thread, def.Name)
 		return
 	}
 	id := executor.TaskID(newID())
@@ -330,9 +413,9 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 		}
 	}
 	st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
-	if errors.Is(err, store.ErrNotFound) && c.DefaultDefinition != "" {
-		// A fresh thread with plain text: start a task with the default agent.
-		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: c.DefaultDefinition, Prompt: it.Text})
+	if def := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
+		// A fresh thread with plain text: start a task with the channel's default agent.
+		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text})
 		return
 	}
 	if err != nil {

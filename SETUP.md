@@ -75,7 +75,18 @@ In the channel you invited the bot to:
 ```
 
 dancer answers **in a thread under your message** (look for "1 reply"), using the
-default agent; `run <agent> <prompt>` picks a specific one.
+channel's default agent; `run <agent> <prompt>` picks a specific one. Slack
+has no autocomplete for text after a mention, so a bare `@dancer run` posts
+the agent list as buttons (a searchable menu from five agents up) and then
+asks for the prompt in the thread; `run <agent>` alone skips straight to the
+prompt question.
+
+Each channel can have its own default agent: `@dancer default reviewer` in
+`#code-review` makes plain messages there run *reviewer*. That appends a
+`[[channels]]` block to `config.toml` (you can also write one by hand with
+the channel id from the channel's details pane); `default` shows the
+current one and `agents` marks it. Without a channel default,
+`server.default_agent` applies.
 
 When the agent asks a question (Claude Code's `AskUserQuestion`), the thread
 shows the options as buttons; click one, or reply in the thread with your own

@@ -26,7 +26,7 @@ Milestone 2 — Slack
 - [x] Permission round-trip: `needs_permission` → buttons → `Decide` (coordinator test)
 - [x] `surface/feed`: mirror starts/approvals/results to a fixed thread (second surface on the same transport)
 - [x] Live validation against a real Slack workspace: mention → thread reply → task started (2026-08-22)
-- [ ] Slash command `/dancer` (optional; mentions + DMs work without it)
+- [ ] Slash command `/dancer` (optional; mentions + DMs work without it — would add a modal with typeahead over agent names)
 
 Milestone 3 — environments ✅
 - [x] `environment/docker`: container per task, workdir bind mount at /work, runs as host uid, HOME=/tmp (test against real daemon)
@@ -39,6 +39,9 @@ Milestone 4 — definitions and instances
 - [x] Sub-agents passed through as `--agents` JSON (`sub_agents` in config; untested live)
 - [x] Multiple instances of one definition run concurrently (one task per thread)
 - [x] Add definitions from chat: `add agent` asks name/model/environment/permissions/tools/prompt, appends to config.toml and the store (coordinator + config tests)
+- [x] Per-channel default agent: `[[channels]]` in config, `default <agent>` from chat appends one (last block wins), `agents` marks it (coordinator + config tests)
+- [x] Agent picker for bare `run`: agent list as buttons / a searchable static select from 5 agents, then the prompt is asked in the thread; `run <agent>` alone asks only for the prompt (coordinator test)
+- [ ] Live check of the select menu in Slack (block action carries `selected_option` instead of `value`)
 - [ ] Edit or remove definitions from chat (still config-file only)
 
 Milestone 5 — deploy-ready on Linux
