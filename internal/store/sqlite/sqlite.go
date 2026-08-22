@@ -215,13 +215,16 @@ func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind stri
 		string(task), kind, limit)
 }
 
+// taskCols is the tasks column list, in the order scanTask reads it.
+const taskCols = "id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at"
+
 func (s *Store) PutTask(ctx context.Context, t store.TaskState) error {
 	def, err := json.Marshal(t.Definition)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO tasks(id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at)
+		INSERT INTO tasks(`+taskCols+`)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET transport=excluded.transport, thread=excluded.thread, definition=excluded.definition,
 			requester=excluded.requester, session=excluded.session, status=excluded.status, last_seq=excluded.last_seq,
@@ -232,7 +235,7 @@ func (s *Store) PutTask(ctx context.Context, t store.TaskState) error {
 }
 
 func (s *Store) GetTask(ctx context.Context, id executor.TaskID) (store.TaskState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at FROM tasks WHERE id = ?`, string(id))
+	row := s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE id = ?`, string(id))
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, store.ErrNotFound
@@ -241,7 +244,7 @@ func (s *Store) GetTask(ctx context.Context, id executor.TaskID) (store.TaskStat
 }
 
 func (s *Store) ListTasks(ctx context.Context, status string) ([]store.TaskState, error) {
-	q := `SELECT id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at FROM tasks`
+	q := `SELECT ` + taskCols + ` FROM tasks`
 	var args []any
 	if status != "" {
 		q += ` WHERE status = ?`
@@ -266,7 +269,7 @@ func (s *Store) ListTasks(ctx context.Context, status string) ([]store.TaskState
 
 // LatestTaskForThread returns the most recently updated task on a thread.
 func (s *Store) LatestTaskForThread(ctx context.Context, thread transport.ThreadID) (store.TaskState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, transport, thread, definition, requester, session, status, last_seq, prompt, resumes, updated_at FROM tasks WHERE thread = ? ORDER BY updated_at DESC LIMIT 1`, string(thread))
+	row := s.db.QueryRowContext(ctx, `SELECT `+taskCols+` FROM tasks WHERE thread = ? ORDER BY updated_at DESC LIMIT 1`, string(thread))
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return t, store.ErrNotFound
@@ -276,6 +279,7 @@ func (s *Store) LatestTaskForThread(ctx context.Context, thread transport.Thread
 
 type scanner interface{ Scan(dest ...any) error }
 
+// scanTask reads one row of taskCols.
 func scanTask(sc scanner) (store.TaskState, error) {
 	var t store.TaskState
 	var id, thread, updated string
