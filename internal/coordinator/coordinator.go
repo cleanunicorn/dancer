@@ -75,6 +75,9 @@ type Coordinator struct {
 	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
 	// task that keeps taking dancer down cannot restart-loop (default 3).
 	MaxAutoResumes int
+	// Models is the model picker's list in the agent wizard. Empty uses
+	// defaultModels.
+	Models []string
 
 	drives sync.WaitGroup
 

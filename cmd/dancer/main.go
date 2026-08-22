@@ -150,6 +150,7 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	c.ResumePrompt = cfg.Server.ResumePrompt
 	c.AutoResumeWithin = cfg.Server.AutoResumeWithin.Duration
 	c.MaxAutoResumes = cfg.Server.MaxAutoResumes
+	c.Models = cfg.Claude.Models
 	c.SaveDefinition = func(_ context.Context, d agent.Definition) error {
 		return config.AppendDefinition(cfgPath, config.DefinitionFromAgent(d))
 	}

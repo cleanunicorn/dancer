@@ -16,6 +16,11 @@ max_auto_resumes = 3        # consecutive automatic resumes of one task before i
 
 [claude]
 binary = "claude"
+# The model picker in `agent add` / `agent edit` offers these; unset uses
+# sonnet, opus, fable, haiku. The picker always takes a typed model id too,
+# so this is for convenience, not a whitelist. Five or more turn the Slack
+# buttons into a searchable dropdown.
+# models = ["sonnet", "opus", "fable", "haiku", "claude-opus-4-8"]
 
 [slack]
 app_token = "xapp-..."      # App-level token with connections:write
@@ -35,7 +40,7 @@ agent = "sandbox"
 
 [[definitions]]
 name = "coder"
-model = "sonnet"                          # haiku | sonnet | opus | fable, or a full model id
+model = "sonnet"                          # an entry from [claude].models, or any model id
 permission_mode = "manual"                 # manual | acceptEdits | auto | bypassPermissions
 allowed_tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"]
 system_prompt = "You are working inside a git repository. Commit when done."

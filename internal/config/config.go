@@ -83,6 +83,11 @@ type Server struct {
 
 type Claude struct {
 	Binary string `toml:"binary"`
+	// Models is what the agent wizard offers in its model picker. The
+	// claude CLI cannot enumerate models, so this is the only way to add
+	// one without a rebuild. Empty uses the built-in list; the picker
+	// takes a typed model id either way.
+	Models []string `toml:"models,omitempty"`
 }
 
 type Slack struct {

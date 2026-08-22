@@ -373,3 +373,19 @@ func waitForNthOut(t *testing.T, tr *fakeTransport, th transport.ThreadID, sub s
 	}
 	return transport.Outbound{}
 }
+
+func TestModelOptions(t *testing.T) {
+	w := &wizard{c: &Coordinator{}}
+	got := w.modelOptions()
+	if len(got) != len(defaultModels) || got[0].Label != "sonnet" || got[0].Description != "balanced" {
+		t.Fatalf("default options = %+v", got)
+	}
+
+	// The config replaces the list; a model with no hint is offered bare.
+	w.c.Models = []string{"fable", "claude-opus-4-8"}
+	got = w.modelOptions()
+	if len(got) != 2 || got[0].Label != "fable" || got[0].Description != "most capable" ||
+		got[1].Label != "claude-opus-4-8" || got[1].Description != "" {
+		t.Fatalf("configured options = %+v", got)
+	}
+}

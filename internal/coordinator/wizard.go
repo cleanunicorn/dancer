@@ -557,10 +557,39 @@ func (w *wizard) edit(ctx context.Context, def *agent.Definition) (changed bool,
 	}
 }
 
+// defaultModels is what the picker offers when the config names none. The
+// claude CLI has no way to list the models it accepts, so this is a curated
+// list rather than a discovered one; `models` under [claude] replaces it,
+// and a typed model id is accepted either way.
+var defaultModels = []string{"sonnet", "opus", "fable", "haiku"}
+
+// modelHints label the aliases we know about. A model without one (a full
+// id, or one released after this build) is offered on its own.
+var modelHints = map[string]string{
+	"sonnet": "balanced",
+	"opus":   "frontier default",
+	"fable":  "most capable",
+	"haiku":  "fastest",
+}
+
+// modelOptions is the configured model list, or defaultModels.
+func (w *wizard) modelOptions() []agent.Option {
+	models := w.c.Models
+	if len(models) == 0 {
+		models = defaultModels
+	}
+	opts := make([]agent.Option, 0, len(models))
+	for _, m := range models {
+		opts = append(opts, agent.Option{Label: m, Description: modelHints[m]})
+	}
+	return opts
+}
+
 func (w *wizard) askModel(ctx context.Context, def *agent.Definition) error {
+	opts := w.modelOptions()
 	var err error
 	def.Model, err = w.askUntil(ctx, agent.Question{Header: "Model", Text: "Which model? Pick one or type a full model id.",
-		Options: options("sonnet", "balanced", "opus", "frontier default", "fable", "most capable", "haiku", "fastest")}, nonEmpty("model"))
+		Options: opts}, nonEmpty("model"))
 	return err
 }
 
