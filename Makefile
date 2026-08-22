@@ -24,11 +24,13 @@ UPDATER    ?= /usr/local/lib/dancer/dancer-update.sh
 UPDATE_UNIT ?= /etc/systemd/system/dancer-update.service
 UPDATE_TIMER ?= /etc/systemd/system/dancer-update.timer
 GO_BIN     ?= $(shell command -v $(GO))
+DEPLOY_ENV ?= /etc/dancer/deploy.env
+STATE      ?= /var/lib/dancer/deployed.sha
 
 .DEFAULT_GOAL := help
 .PHONY: help build run run-terminal setup doctor test test-race test-live e2e restart-drill auto-resume-drill lint fmt tidy clean \
         install uninstall service-install service-uninstall service-restart service-status service-logs \
-        update-install update-uninstall update-now update-status update-logs
+        update-install update-uninstall update-now update-status update-logs deploy-env
 
 ## ---- build -----------------------------------------------------------------
 
@@ -91,7 +93,7 @@ install: build ## Copy the binary to BIN=$(BIN)   (SUDO= to skip sudo)
 uninstall: ## Remove the binary
 	-$(SUDO) rm -f $(BIN)
 
-service-install: install ## Install + enable + start the systemd unit for USER_=$(USER_)
+service-install: install deploy-env ## Install + enable + start the systemd unit for USER_=$(USER_)
 	sed -e 's|__USER__|$(USER_)|g' -e 's|__GROUP__|$(GROUP_)|g' -e 's|__HOME__|$(HOME_)|g' -e 's|__BIN__|$(BIN)|g' \
 		deploy/dancer.service | sudo tee $(UNIT) > /dev/null
 	sudo systemctl daemon-reload
@@ -116,7 +118,30 @@ service-logs: ## Follow service logs
 
 ## ---- auto-update from git ---------------------------------------------------
 
-update-install: ## Poll REPO for new commits every INTERVAL=$(INTERVAL), rebuild, restart (SRC=$(SRC))
+deploy-env: ## Record install settings in DEPLOY_ENV=$(DEPLOY_ENV) (the updater re-renders units from it)
+	@test -n "$(REPO)" || { echo "no git remote 'origin' here; pass REPO=https://github.com/you/dancer"; exit 1; }
+	@printf '%s\n' \
+		"# Written by 'make deploy-env'. Plain values only — systemd reads this as an" \
+		"# EnvironmentFile and the updater sources it. Re-run make to change it." \
+		"DANCER_REPO=$(REPO)" \
+		"DANCER_BRANCH=$(BRANCH)" \
+		"DANCER_SRC=$(SRC)" \
+		"DANCER_BIN=$(BIN)" \
+		"DANCER_SERVICE=dancer.service" \
+		"DANCER_UPDATE_STATE=$(STATE)" \
+		"GO=$(GO_BIN)" \
+		"DANCER_USER=$(USER_)" \
+		"DANCER_GROUP=$(GROUP_)" \
+		"DANCER_HOME=$(HOME_)" \
+		"DANCER_INTERVAL=$(INTERVAL)" \
+		"DANCER_UPDATER=$(UPDATER)" \
+		"DANCER_UNIT=$(UNIT)" \
+		"DANCER_UPDATE_UNIT=$(UPDATE_UNIT)" \
+		"DANCER_UPDATE_TIMER=$(UPDATE_TIMER)" \
+		| $(SUDO) install -D -m 0644 /dev/stdin $(DEPLOY_ENV)
+	@echo "wrote $(DEPLOY_ENV)"
+
+update-install: deploy-env ## Poll REPO for new commits every INTERVAL=$(INTERVAL), rebuild, restart (SRC=$(SRC))
 	@test -n "$(GO_BIN)" || { echo "go not found on PATH; pass GO_BIN=/path/to/go"; exit 1; }
 	@test -n "$(REPO)" || { echo "no git remote 'origin' here; pass REPO=https://github.com/you/dancer"; exit 1; }
 	sudo install -d $(dir $(UPDATER))
@@ -130,9 +155,9 @@ update-install: ## Poll REPO for new commits every INTERVAL=$(INTERVAL), rebuild
 	@$(MAKE) --no-print-directory update-status
 
 update-uninstall: ## Stop the timer and remove the updater (leaves SRC, state and the binary)
-	-sudo systemctl disable --now dancer-update.timer
-	-sudo rm -f $(UPDATE_UNIT) $(UPDATE_TIMER) $(UPDATER)
-	sudo systemctl daemon-reload
+	-$(SUDO) systemctl disable --now dancer-update.timer
+	-$(SUDO) rm -f $(UPDATE_UNIT) $(UPDATE_TIMER) $(UPDATER) $(DEPLOY_ENV)
+	$(SUDO) systemctl daemon-reload
 
 update-now: ## Run one update immediately instead of waiting for the timer
 	@sudo systemctl start dancer-update.service; rc=$$?; \
