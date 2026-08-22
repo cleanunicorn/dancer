@@ -94,7 +94,8 @@ type Claude struct {
 type Decider struct {
 	Kind  string `toml:"kind"`  // "off" (default) | "claude"
 	Model string `toml:"model"` // default "haiku"
-	// Uses lists the question kinds the decider may answer ("resume").
+	// Uses lists the question kinds the decider may answer ("resume",
+	// "permission").
 	// Empty means none, so switching it on is deliberate per kind.
 	Uses    []string `toml:"uses"`
 	Timeout Duration `toml:"timeout"`

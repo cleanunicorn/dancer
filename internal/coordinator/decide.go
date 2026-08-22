@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,9 +16,21 @@ import (
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
 
-// Question kinds. Only "resume" is asked today; the rest of the call sites
-// in DECIDER.md come later.
+// Question kinds. "resume" is asked in recover(), "permission" in
+// AwaitDecision (permission.go); the rest of the call sites in DECIDER.md
+// come later.
 const kindResume = "resume"
+
+// recordVerdict is the log kind of a decider's answer; "decision" is a
+// human's button click, and the two must not be told apart by sniffing.
+const recordVerdict = "verdict"
+
+// verdictRecord is what a verdict record holds: the question, so a reader
+// knows what was asked and from which facts, and the answer.
+type verdictRecord struct {
+	Question decider.Question `json:"question"`
+	Verdict  decider.Verdict  `json:"verdict"`
+}
 
 // What a resume decision may come to. The rules only ever answer
 // actionContinue or actionWait; a decider may also ask the thread or leave
@@ -164,14 +177,10 @@ func (c *Coordinator) decide(ctx context.Context, q decider.Question) decider.Ve
 		v = valid
 		c.Log.Info("decision", "kind", q.Kind, "task", q.Task, "action", v.Action, "by", v.By, "reason", v.Reason)
 	}
-	id := executor.TaskID(q.Task)
-	c.mu.Lock()
-	c.decisions[id]++ // only questions a decider actually saw cost budget
-	c.mu.Unlock()
-	c.append(ctx, id, transport.ThreadID(q.Thread), "decision", struct {
-		Question decider.Question `json:"question"`
-		Verdict  decider.Verdict  `json:"verdict"`
-	}{q, v})
+	// Only questions a decider actually saw are on the record, and the
+	// record is the budget: what was asked about a task is counted from
+	// the log, so neither a restart nor a finished run forgets it.
+	c.append(ctx, executor.TaskID(q.Task), transport.ThreadID(q.Thread), recordVerdict, verdictRecord{q, v})
 	return v
 }
 
@@ -182,47 +191,53 @@ func (c *Coordinator) deciderFor(q decider.Question) decider.Decider {
 	if c.Decider == nil {
 		return nil
 	}
-	if !contains(c.DeciderUses, q.Kind) {
+	if !slices.Contains(c.DeciderUses, q.Kind) {
 		return nil
 	}
-	max := c.MaxDecisionsPerTask
-	if max <= 0 {
-		max = 20
+	if q.Task == "" {
+		return c.Decider
 	}
-	c.mu.Lock()
-	spent := c.decisions[executor.TaskID(q.Task)]
-	c.mu.Unlock()
-	if q.Task != "" && spent >= max {
+	max := c.maxDecisions()
+	if spent := len(c.taskVerdicts(context.Background(), executor.TaskID(q.Task), max)); spent >= max {
 		c.Log.Warn("decider budget spent; using the rules", "task", q.Task, "decisions", spent)
 		return nil
 	}
 	return c.Decider
 }
 
-// lastVerdict returns the last decision made about a task, for `status`.
-// It reads the log rather than a map, so it costs nothing to keep, holds
-// nothing forever, and still answers after a restart.
-func (c *Coordinator) lastVerdict(ctx context.Context, t store.TaskState) (decider.Verdict, bool) {
-	records, err := c.Store.ThreadRecords(ctx, t.Thread, factRecords)
+func (c *Coordinator) maxDecisions() int {
+	if c.MaxDecisionsPerTask > 0 {
+		return c.MaxDecisionsPerTask
+	}
+	return 20
+}
+
+// taskVerdicts reads back up to limit of the verdicts given about a task,
+// oldest first. A log that cannot be read reads as no verdicts: the rules
+// then answer, which is the safe side.
+func (c *Coordinator) taskVerdicts(ctx context.Context, id executor.TaskID, limit int) []verdictRecord {
+	records, err := c.Store.TaskRecords(ctx, id, recordVerdict, limit)
 	if err != nil {
-		c.Log.Warn("reading decisions from the log", "task", t.ID, "err", err)
+		c.Log.Warn("reading verdicts from the log", "task", id, "err", err)
+		return nil
+	}
+	out := make([]verdictRecord, 0, len(records))
+	for _, r := range records {
+		var rec verdictRecord
+		if json.Unmarshal(r.Payload, &rec) == nil {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// lastVerdict returns the last decision made about a task, for `status`.
+func (c *Coordinator) lastVerdict(ctx context.Context, t store.TaskState) (decider.Verdict, bool) {
+	vs := c.taskVerdicts(ctx, t.ID, 1)
+	if len(vs) == 0 {
 		return decider.Verdict{}, false
 	}
-	var out decider.Verdict
-	var found bool
-	for _, r := range records {
-		if r.Kind != "decision" || r.Task != t.ID {
-			continue
-		}
-		var rec struct {
-			Verdict decider.Verdict `json:"verdict"`
-		}
-		if json.Unmarshal(r.Payload, &rec) != nil || rec.Verdict.Action == "" {
-			continue // a button click, not a decider verdict
-		}
-		out, found = rec.Verdict, true
-	}
-	return out, found
+	return vs[len(vs)-1].Verdict, true
 }
 
 // resumeFacts is what the decider is told about a task a restart cut short.
@@ -376,13 +391,4 @@ func touchedFile(ev agent.Event) string {
 
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

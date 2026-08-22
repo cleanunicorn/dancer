@@ -94,3 +94,37 @@ func TestStore(t *testing.T) {
 		t.Fatalf("flows after delete = %+v", flows)
 	}
 }
+
+func TestTaskRecords(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "d.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	for i, r := range []store.Record{
+		{Task: "t1", Thread: "th", Kind: "verdict", Payload: []byte(`{"n":0}`)},
+		{Task: "t1", Thread: "th", Kind: "decision", Payload: []byte(`{"n":1}`)},
+		{Task: "t2", Thread: "th", Kind: "verdict", Payload: []byte(`{"n":2}`)},
+		{Task: "t1", Thread: "th", Kind: "verdict", Payload: []byte(`{"n":3}`)},
+		{Task: "t1", Thread: "th", Kind: "verdict", Payload: []byte(`{"n":4}`)},
+	} {
+		if _, err := s.Append(ctx, r); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	got, err := s.TaskRecords(ctx, "t1", "verdict", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || string(got[0].Payload) != `{"n":0}` || string(got[2].Payload) != `{"n":4}` {
+		t.Fatalf("TaskRecords = %+v, want t1's three verdicts oldest first", got)
+	}
+	last, err := s.TaskRecords(ctx, "t1", "verdict", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(last) != 1 || string(last[0].Payload) != `{"n":4}` {
+		t.Fatalf("TaskRecords(limit 1) = %+v, want only the newest", last)
+	}
+}

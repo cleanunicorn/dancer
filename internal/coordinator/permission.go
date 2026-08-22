@@ -7,6 +7,7 @@ import (
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/decider"
+	"github.com/cleanunicorn/dancer/internal/executor"
 	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/surface"
 )
@@ -67,10 +68,20 @@ func (c *Coordinator) permissionFacts(ctx context.Context, st store.TaskState, e
 	resume := c.factsForResume(ctx, st) // the same thread tail, read once
 	f.LastHumanMessage = resume.LastHumanMessage
 	f.RecentEvents = resume.RecentEvents
-	c.mu.Lock()
-	f.AlreadyAllowed = c.allowed[st.ID]
-	c.mu.Unlock()
+	f.AlreadyAllowed = c.autoAllowedSoFar(ctx, st.ID)
 	return f
+}
+
+// autoAllowedSoFar counts the tool calls a decider has approved for a task,
+// from the log, so the count survives a restart along with the session.
+func (c *Coordinator) autoAllowedSoFar(ctx context.Context, id executor.TaskID) int {
+	n := 0
+	for _, v := range c.taskVerdicts(ctx, id, c.maxDecisions()) {
+		if v.Question.Kind == kindPermission && v.Verdict.Action == actionAllow {
+			n++
+		}
+	}
+	return n
 }
 
 // autoAllowed reports whether a tool call is inside the auto-allow list:
@@ -220,12 +231,10 @@ func pathArgument(in map[string]any) string {
 
 // noteAutoAllowed tells the thread what ran without asking, and how to
 // stop the task if that was the wrong call. Silent privilege is the one
-// thing this feature must not have.
+// thing this feature must not have — so the notice goes to every surface,
+// the same way the prompt it replaced would have: an approvals feed sees
+// what ran instead of what it would have been asked.
 func (c *Coordinator) noteAutoAllowed(ctx context.Context, st store.TaskState, ev agent.Event, v decider.Verdict) {
-	c.mu.Lock()
-	c.allowed[st.ID]++
-	n := c.allowed[st.ID]
-	c.mu.Unlock()
 	what := ev.Tool
 	if in := oneLine(summarizeInput(ev.ToolInput)); in != "" {
 		what += " " + in
@@ -235,7 +244,7 @@ func (c *Coordinator) noteAutoAllowed(ctx context.Context, st store.TaskState, e
 		text += " — " + v.Reason
 	}
 	text += "\n_say `cancel` to stop this task_"
-	c.Log.Info("tool call auto-allowed", "task", st.ID, "tool", ev.Tool, "reason", v.Reason, "allowed_so_far", n)
-	tt := st
-	c.emitTo(ctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: st.Thread, TaskID: st.ID, Task: &tt, Text: text})
+	c.Log.Info("tool call auto-allowed", "task", st.ID, "tool", ev.Tool, "reason", v.Reason)
+	tt, e := st, ev
+	c.broadcast(ctx, surface.Event{Kind: surface.EventAllowed, Thread: st.Thread, TaskID: st.ID, Task: &tt, Agent: &e, Text: text})
 }

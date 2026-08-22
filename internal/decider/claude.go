@@ -12,7 +12,8 @@ import (
 )
 
 // Claude answers with one `claude -p` call: a small model, no tools, no
-// session, and an empty scratch directory to run in. It always runs on the
+// session (and none written to disk), and an empty scratch directory to
+// run in. It always runs on the
 // dancer host — a policy question is about dancer, not about the task's
 // environment.
 //
@@ -84,9 +85,10 @@ func (c Claude) Decide(ctx context.Context, q Question) (Verdict, error) {
 		"-p",
 		"--output-format", "json",
 		"--model", model,
-		"--allowedTools", "",
+		"--tools", "", // no built-in tools at all, not merely none pre-approved
 		"--permission-mode", "manual",
-		"--strict-mcp-config", // no MCP servers: nothing to reach out to
+		"--strict-mcp-config",      // no MCP servers: nothing to reach out to
+		"--no-session-persistence", // one question, no transcript left under ~/.claude/projects
 		"--append-system-prompt", policy,
 	)
 	cmd.Dir = dir // empty: no project CLAUDE.md, settings or hooks

@@ -172,10 +172,7 @@ func TestBudgetIsSpentOnlyOnQuestionsADeciderSaw(t *testing.T) {
 			t.Fatalf("permission answer = %+v", v)
 		}
 	}
-	c.mu.Lock()
-	spent := c.decisions["t-1"]
-	c.mu.Unlock()
-	if spent != 0 {
+	if spent := len(c.taskVerdicts(ctx, "t-1", 0)); spent != 0 {
 		t.Fatalf("budget spent on questions no decider saw: %d", spent)
 	}
 	resume := decider.Question{Kind: kindResume, Task: "t-1",
@@ -192,7 +189,7 @@ func TestDecisionsAreOnTheRecord(t *testing.T) {
 
 	var found int
 	err := st.Replay(context.Background(), 0, func(r store.Record) error {
-		if r.Kind != "decision" || r.Task != "t-1" {
+		if r.Kind != recordVerdict || r.Task != "t-1" {
 			return nil
 		}
 		found++
@@ -208,5 +205,43 @@ func TestDecisionsAreOnTheRecord(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("decision records = %d, want 1", found)
+	}
+}
+
+// TestBudgetSurvivesARestart: the per-task budget is a projection of the
+// log, so a new coordinator on the same store starts where the old one
+// stopped rather than handing the task a fresh set of questions.
+func TestBudgetSurvivesARestart(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	q := decider.Question{Kind: kindResume, Task: "t-1", Thread: "th",
+		Options: []string{actionContinue, actionWait}, Static: decider.Verdict{Action: actionContinue}}
+
+	first := New(st, nil, nil, nil, nil)
+	first.Decider = &stubDecider{verdict: decider.Verdict{Action: actionWait}}
+	first.DeciderUses = []string{kindResume}
+	first.MaxDecisionsPerTask = 3
+	for i := 0; i < 2; i++ {
+		if v := first.decide(ctx, q); v.Action != actionWait {
+			t.Fatalf("decision %d = %+v", i, v)
+		}
+	}
+
+	second := New(st, nil, nil, nil, nil)
+	second.Decider = &stubDecider{verdict: decider.Verdict{Action: actionWait}}
+	second.DeciderUses = []string{kindResume}
+	second.MaxDecisionsPerTask = 3
+	if v := second.decide(ctx, q); v.Action != actionWait || v.By != "stub" {
+		t.Fatalf("third question should still reach the decider: %+v", v)
+	}
+	if v := second.decide(ctx, q); v.Action != actionContinue || v.By != "static" {
+		t.Fatalf("fourth question should hit the budget carried over the restart: %+v", v)
+	}
+	if got := len(second.taskVerdicts(ctx, "t-1", 0)); got != 3 {
+		t.Fatalf("verdicts on record = %d, want 3", got)
 	}
 }

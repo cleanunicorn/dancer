@@ -1,6 +1,8 @@
 // Package coordinator is the long-running brain. It owns tasks: it turns
 // surface intents into executor work, fans executor/agent events back out
-// to every surface, relays permission decisions, and persists everything
+// to every surface, relays permission decisions (or lets a decider answer
+// the ones inside the operator's auto_allow ceiling — see decide.go), and
+// persists everything
 // in the store so a restart can resume sessions.
 //
 //	transports --Inbound--> surfaces --Intent--> Coordinator --Task--> Executor
@@ -104,15 +106,13 @@ type Coordinator struct {
 
 	transports map[string]transport.Transport
 
-	mu        sync.Mutex
-	decisions map[executor.TaskID]int                   // questions asked about a task
-	allowed   map[executor.TaskID]int                   // tool calls auto-allowed for a task
-	threads   map[transport.ThreadID]executor.TaskID    // live task per thread
-	owner     map[executor.TaskID]string                // task -> surface that started it
-	pending   map[string]chan transport.Decision        // prompt base id -> waiter
-	askText   map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
-	wizards   map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
-	closed    map[transport.ThreadID]bool               // threads a human ended; projection of the store
+	mu      sync.Mutex
+	threads map[transport.ThreadID]executor.TaskID    // live task per thread
+	owner   map[executor.TaskID]string                // task -> surface that started it
+	pending map[string]chan transport.Decision        // prompt base id -> waiter
+	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
+	wizards map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
+	closed  map[transport.ThreadID]bool               // threads a human ended; projection of the store
 }
 
 // New returns a Coordinator.
@@ -123,8 +123,6 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 	c := &Coordinator{
 		Store: st, Executor: ex, Transports: transports, Surfaces: surfaces, Log: log,
 		transports: map[string]transport.Transport{},
-		decisions:  map[executor.TaskID]int{},
-		allowed:    map[executor.TaskID]int{},
 		threads:    map[transport.ThreadID]executor.TaskID{},
 		owner:      map[executor.TaskID]string{},
 		pending:    map[string]chan transport.Decision{},
@@ -1099,10 +1097,6 @@ func (c *Coordinator) unbind(th transport.ThreadID, id executor.TaskID) {
 		delete(c.threads, th)
 	}
 	delete(c.owner, id)
-	// The decision budget and the auto-allow count belong to a run, not to
-	// a task id that a long-lived server would otherwise remember forever.
-	delete(c.decisions, id)
-	delete(c.allowed, id)
 	c.mu.Unlock()
 }
 

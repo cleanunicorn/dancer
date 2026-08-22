@@ -12,6 +12,7 @@ package decider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -68,21 +69,12 @@ func (Static) Decide(_ context.Context, q Question) (Verdict, error) {
 // not cross, so the caller falls back instead of guessing what was meant.
 func Validate(q Question, v Verdict) (Verdict, error) {
 	v.Action = strings.TrimSpace(v.Action)
-	if !allowed(q.Options, v.Action) {
+	if !slices.Contains(q.Options, v.Action) {
 		return Verdict{}, fmt.Errorf("decider: action %q is not one of %v", v.Action, q.Options)
 	}
 	v.Prompt = truncate(strings.TrimSpace(v.Prompt), MaxPromptLen)
 	v.Reason = truncate(strings.TrimSpace(strings.ReplaceAll(v.Reason, "\n", " ")), MaxReasonLen)
 	return v, nil
-}
-
-func allowed(options []string, action string) bool {
-	for _, o := range options {
-		if o == action {
-			return true
-		}
-	}
-	return false
 }
 
 // truncate cuts at a rune boundary: a verdict is JSON-marshalled into the

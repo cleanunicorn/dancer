@@ -22,11 +22,11 @@ Planning
 
 Milestone 1 — the seam ✅
 - [x] `internal/decider`: `Decider` interface, `Question`/`Verdict` types, `Static` implementation that returns exactly today's behaviour
-- [x] `claude` implementation: one-shot `claude -p --output-format json`, haiku, no tools, no session, hard timeout
+- [x] `claude` implementation: one-shot `claude -p --output-format json`, haiku, no tools, no session (none written to disk either), hard timeout
 - [x] `Validate`: an action outside `Options` is an error, prompt and reason are capped
 - [x] Coordinator seam: `decide()` is total — refusal, timeout, crash or an unacceptable answer all fall back to the rules
 - [x] Wired at resume triage with options `continue | wait`; the verdict may also word the resume prompt
-- [x] Every verdict appended to the event log (`kind: "decision"`) with its facts and reason; `status` prints the last one
+- [x] Every verdict appended to the event log (`kind: "verdict"`) with its facts and reason; `status` prints the last one
 - [x] Config `[decider]` (default `kind = "off"`), `dancer doctor` reports it
 - [x] Tests: package unit tests, five coordinator seam tests, two live tests (`DANCER_LIVE=1`) including one prompt-injection attempt through the facts
 
@@ -49,11 +49,15 @@ Review pass ✅ (PR #7)
 - [x] The decider CLI runs in an empty scratch dir with `--strict-mcp-config`, so no project `CLAUDE.md`, settings, hooks or MCP servers reach it as instructions
 - [x] `decide()` validates every verdict at the seam, so an implementation that skips `Validate` still cannot reach a task
 - [x] A stale click on a hours-old resume question re-reads the task and refuses if it moved on, instead of writing the pre-restart snapshot back
-- [x] Recovery decisions share one deadline; questions the rules answered cost no budget; per-run counters are dropped with the run; `status` reads the last verdict from the log
+- [x] Recovery decisions share one deadline; questions the rules answered cost no budget; `status` reads the last verdict from the log
+- [x] Verdicts have their own log kind (`verdict`; `decision` stays a button click), and the per-task budget and the auto-allow count are read back from it — a restart or a finished run does not hand a task a fresh set of questions
+- [x] The decider CLI gets `--tools ""` (no built-in tools at all, not merely none pre-approved) and `--no-session-persistence` (no transcript per question under `~/.claude/projects`)
+- [x] An auto-allowed call is announced on every surface, so an approvals feed sees what ran in place of the prompt it would have shown
 - [x] Abandon/drop tell a session-less task to `run` again rather than promising a resume that `followUp` refuses
 
 Deferred from milestone 3
 - [ ] Remember an operator's own allow/deny answers and feed them to the next similar decision
+- [ ] Re-arm an unanswered `ask` after a restart: the waiter is in memory, so a click on an hours-old question after a redeploy is dropped (logged, not answered); a plain reply still picks the task up
 
 Deferred
 - [ ] Stall detection: an idle task whose last text is a question nobody answered
@@ -100,8 +104,8 @@ type Decider interface {
 ```
 
 Implementations: `Static` (returns `q.Static`; the default and every fallback)
-and `Claude` (one-shot `claude -p`, haiku, `--output-format json`, no tools, no
-session, an empty scratch directory, MCP off, hard timeout). `decider.Validate`
+and `Claude` (one-shot `claude -p`, haiku, `--output-format json`, `--tools ""`,
+`--no-session-persistence`, an empty scratch directory, MCP off, hard timeout). `decider.Validate`
 is what enforces the contract: an action outside `Options` is an error, not a
 verdict.
 
@@ -230,9 +234,10 @@ the human actually asked for.
    log next to the events they were derived from. "Why did it resume that?" has
    an answer — `status` reads it back out of the log — and the log is training
    data for tightening the rules later.
-5. **It cannot loop, and it cannot stall a start.** Decisions are counted per
-   run and stop at `max_per_task`; only questions a decider actually saw cost
-   anything. All of recovery shares one deadline (four questions' worth), so a
+5. **It cannot loop, and it cannot stall a start.** Decisions are counted from
+   the log (`kind: "verdict"`) and stop at `max_per_task`; only questions a
+   decider actually saw are on the record, so only those cost anything, and a
+   restart does not reset the count. All of recovery shares one deadline (four questions' worth), so a
    crash that left twenty tasks behind cannot hold the bot offline while each
    one waits its turn.
 6. **A verdict is checked at the seam, not on trust.** `Coordinator.decide`

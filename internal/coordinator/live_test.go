@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -106,7 +107,7 @@ func TestLiveResumeVerdicts(t *testing.T) {
 			})
 			t.Logf("facts: %+v", facts)
 			t.Logf("verdict: %s by %s — %s (prompt: %s)", v.Action, v.By, v.Reason, v.Prompt)
-			if !contains(options, v.Action) {
+			if !slices.Contains(options, v.Action) {
 				t.Fatalf("verdict escaped the options: %+v", v)
 			}
 			if v.By != "claude" {
