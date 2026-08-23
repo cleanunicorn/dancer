@@ -112,6 +112,47 @@ func TestArgs(t *testing.T) {
 
 func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0) }
 
+// usageLine is a get_usage answer as claude 2.1.240 writes it (trimmed to
+// the fields around the ones dancer reads; the real one is far larger).
+const usageLine = `{"type":"control_response","response":{"subtype":"success","request_id":"usage-1","response":{"session":{"total_cost_usd":0.0187},"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":3,"resets_at":"2026-08-23T07:20:00.228639+00:00","limit_dollars":null},"seven_day":{"utilization":26,"resets_at":"2026-08-28T12:00:00.228656+00:00"},"seven_day_opus":null,"seven_day_sonnet":null,"nimbus_quill":{"utilization":0,"resets_at":null},"extra_usage":{"is_enabled":false},"limits":[{"kind":"session","percent":3}],"model_scoped":[{"display_name":"Fable","utilization":37,"resets_at":"2026-08-28T12:00:00.228845+00:00"}]}}}}`
+
+func TestTranslateUsageResponse(t *testing.T) {
+	p, err := translate([]byte(usageLine), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Events) != 0 || p.Response == nil || p.Response.RequestID != "usage-1" || p.Response.Subtype != "success" {
+		t.Fatalf("parsed = %+v", p)
+	}
+	u := parseUsage(p.Response.Response)
+	if u == nil || u.Plan != "max" || len(u.Windows) != 3 {
+		t.Fatalf("usage = %+v", u)
+	}
+	reset := time.Date(2026, 8, 28, 12, 0, 0, 228656000, time.UTC)
+	want := []agent.UsageWindow{
+		{Name: "5h", Used: 3, ResetsAt: time.Date(2026, 8, 23, 7, 20, 0, 228639000, time.UTC)},
+		{Name: "7d", Used: 26, ResetsAt: reset},
+		{Name: "Fable", Used: 37, ResetsAt: reset.Add(189 * time.Microsecond)},
+	}
+	for i, w := range want {
+		got := u.Windows[i]
+		if got.Name != w.Name || got.Used != w.Used || !got.ResetsAt.Equal(w.ResetsAt) {
+			t.Errorf("window %d = %+v, want %+v", i, got, w)
+		}
+	}
+
+	// An API key has no windows; an unexpected shape is no usage, not an error.
+	for name, raw := range map[string]string{
+		"api key":   `{"subscription_type":null,"rate_limits_available":false,"rate_limits":null}`,
+		"no values": `{"rate_limits":{"five_hour":{"utilization":null},"seven_day":null}}`,
+		"garbage":   `"nope"`,
+	} {
+		if u := parseUsage([]byte(raw)); u != nil {
+			t.Errorf("%s: usage = %+v, want nil", name, u)
+		}
+	}
+}
+
 func indexOf(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

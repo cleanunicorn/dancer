@@ -1,5 +1,14 @@
 // Package claude drives the Claude Code CLI (`claude -p`) over its
 // bidirectional stream-json protocol and normalizes it into agent.Event.
+//
+// Besides the handshake (initialize, then answer every can_use_tool) the
+// driver sends one more control request: on a subscription login it asks
+// get_usage after each result and stamps the answer — how much of the
+// plan's 5-hour, 7-day and per-model windows is used — on the result as
+// agent.Event.Usage. The CLI does the lookup itself, with its own login,
+// so it works the same in a container or over SSH; the result waits at
+// most usageTimeout for it and goes out without usage when the CLI
+// cannot say (older version, offline).
 package claude
 
 import (
@@ -153,7 +162,7 @@ type run struct {
 	pending map[string]pendingPerm // tool_use_id -> control request
 	stderr  strings.Builder
 	done    chan struct{}
-	billing agent.Billing // learned from init, stamped on results
+	billing agent.Billing // learned from init, stamped on results; subscription also asks for usage
 }
 
 func (r *run) Events() <-chan agent.Event { return r.events }
@@ -234,44 +243,119 @@ func (r *run) drainStderr() {
 	}
 }
 
+// usageTimeout bounds how long a turn's result waits for the plan usage
+// that follows it. The CLI's own lookup gives up after five seconds; a
+// result held longer than that is a result nobody sees.
+var usageTimeout = 5 * time.Second
+
 func (r *run) loop() {
 	defer close(r.events)
 	defer close(r.done)
+	lines := make(chan []byte)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r.proc.Stdout())
+		sc.Buffer(make([]byte, 0, 256*1024), 16<<20)
+		for sc.Scan() {
+			if raw := append([]byte(nil), sc.Bytes()...); len(raw) > 0 {
+				lines <- raw
+			}
+		}
+	}()
+
+	// On a subscription every result is held back, briefly, for the
+	// plan usage that answers the get_usage request sent after it: the
+	// closing line should say how much of the plan is left *after* the
+	// turn, not before. Anything else that arrives meanwhile queues
+	// behind the held result so the event order survives.
 	sawResult := false
-	sc := bufio.NewScanner(r.proc.Stdout())
-	sc.Buffer(make([]byte, 0, 256*1024), 16<<20)
-	for sc.Scan() {
-		raw := append([]byte(nil), sc.Bytes()...)
-		if len(raw) == 0 {
+	var held *agent.Event
+	var queued []agent.Event
+	var deadline <-chan time.Time
+	usageReq, usageN := "", 0
+	flush := func() {
+		if held != nil {
+			r.events <- *held
+			held, deadline, usageReq = nil, nil, ""
+		}
+		for _, ev := range queued {
+			r.events <- ev
+		}
+		queued = nil
+	}
+	emit := func(ev agent.Event) {
+		if held != nil {
+			queued = append(queued, ev)
+			return
+		}
+		r.events <- ev
+	}
+	hold := func(ev agent.Event) {
+		usageN++
+		usageReq = fmt.Sprintf("usage-%d", usageN)
+		if err := r.write(controlRequestOut{Type: "control_request", RequestID: usageReq, Request: map[string]any{"subtype": "get_usage"}}); err != nil {
+			usageReq = ""
+			r.events <- ev
+			return
+		}
+		held = &ev
+		deadline = time.After(usageTimeout)
+	}
+
+loop:
+	for {
+		var raw []byte
+		var ok bool
+		select {
+		case <-deadline:
+			flush()
 			continue
+		case raw, ok = <-lines:
+			if !ok {
+				break loop
+			}
 		}
 		p, err := translate(raw, time.Now())
 		if err != nil {
-			r.events <- agent.Event{Type: agent.EventError, At: time.Now(), Text: "claude: bad line: " + err.Error(), Raw: raw}
+			emit(agent.Event{Type: agent.EventError, At: time.Now(), Text: "claude: bad line: " + err.Error(), Raw: raw})
 			continue
 		}
 		for _, ev := range p.Events {
 			switch ev.Type {
 			case agent.EventInit:
 				r.billing = ev.Billing
-			case agent.EventResult, agent.EventError:
+			case agent.EventResult:
+				sawResult = true
+				ev.Billing = r.billing
+				if r.billing == agent.BillingSubscription && held == nil {
+					hold(ev)
+					continue
+				}
+			case agent.EventError:
 				sawResult = true
 				ev.Billing = r.billing
 			}
-			r.events <- ev
+			emit(ev)
 		}
 		if p.Permission != nil {
 			r.mu.Lock()
 			r.pending[p.Permission.Event.ToolID] = pendingPerm{reqID: p.Permission.RequestID, input: p.Permission.Event.ToolInput}
 			r.mu.Unlock()
-			r.events <- p.Permission.Event
+			emit(p.Permission.Event)
 		}
 		if p.Control != nil {
 			// Unknown control requests (hooks, dialogs) are acknowledged
 			// with an empty success so the CLI does not block.
 			_ = r.write(controlResponseOut{Type: "control_response", Response: controlResponseBody{Subtype: "success", RequestID: p.Control.RequestID, Response: map[string]any{}}})
 		}
+		if p.Response != nil && held != nil && p.Response.RequestID == usageReq {
+			if p.Response.Subtype == "success" {
+				held.Usage = parseUsage(p.Response.Response)
+			}
+			flush()
+		}
 	}
+	flush()
 	code, _ := r.proc.Wait()
 	if code != 0 && !sawResult {
 		r.mu.Lock()

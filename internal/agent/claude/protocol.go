@@ -7,13 +7,14 @@ import "encoding/json"
 
 // line is the envelope of every NDJSON line on stdout.
 type line struct {
-	Type            string          `json:"type"`
-	Subtype         string          `json:"subtype,omitempty"`
-	SessionID       string          `json:"session_id,omitempty"`
-	ParentToolUseID *string         `json:"parent_tool_use_id,omitempty"`
-	Message         *apiMessage     `json:"message,omitempty"`
-	RequestID       string          `json:"request_id,omitempty"`
-	Request         *controlRequest `json:"request,omitempty"`
+	Type            string           `json:"type"`
+	Subtype         string           `json:"subtype,omitempty"`
+	SessionID       string           `json:"session_id,omitempty"`
+	ParentToolUseID *string          `json:"parent_tool_use_id,omitempty"`
+	Message         *apiMessage      `json:"message,omitempty"`
+	RequestID       string           `json:"request_id,omitempty"`
+	Request         *controlRequest  `json:"request,omitempty"`
+	Response        *controlResponse `json:"response,omitempty"` // type=control_response
 
 	// type=system subtype=init
 	Model          string `json:"model,omitempty"`
@@ -59,6 +60,37 @@ type controlRequest struct {
 	Description string         `json:"description,omitempty"`
 	ToolUseID   string         `json:"tool_use_id,omitempty"`
 	AgentID     string         `json:"agent_id,omitempty"`
+}
+
+// controlResponse is the payload of a type=control_response line: the
+// CLI's answer to a control request dancer sent (initialize, get_usage).
+type controlResponse struct {
+	Subtype   string          `json:"subtype"` // "success" or "error"
+	RequestID string          `json:"request_id"`
+	Response  json.RawMessage `json:"response,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
+// usageResponse is the part of a get_usage answer dancer reads: the
+// plan's rate-limit windows. The CLI calls the request experimental
+// (claude 2.1.240); every field is optional here so a changed shape
+// degrades to "no usage", never to a parse error.
+type usageResponse struct {
+	SubscriptionType    string `json:"subscription_type"`
+	RateLimitsAvailable bool   `json:"rate_limits_available"`
+	RateLimits          *struct {
+		FiveHour    *usageWindow `json:"five_hour"`
+		SevenDay    *usageWindow `json:"seven_day"`
+		ModelScoped []struct {
+			DisplayName string `json:"display_name"`
+			usageWindow
+		} `json:"model_scoped"`
+	} `json:"rate_limits"`
+}
+
+type usageWindow struct {
+	Utilization *float64 `json:"utilization"` // percent used; null when the window does not apply
+	ResetsAt    string   `json:"resets_at"`   // RFC 3339; null/empty when unknown
 }
 
 // Outbound (stdin) messages.

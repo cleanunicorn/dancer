@@ -27,6 +27,36 @@ func TestFormatCost(t *testing.T) {
 	}
 }
 
+// On a subscription the closing line says how much of the plan is used,
+// not what the turn would have cost on an API key; a nearly spent window
+// says when it resets.
+func TestFormatCostUsage(t *testing.T) {
+	at := time.Date(2026, 8, 23, 6, 0, 0, 0, time.UTC)
+	usage := &agent.Usage{Plan: "max", Windows: []agent.UsageWindow{
+		{Name: "5h", Used: 3, ResetsAt: at.Add(80 * time.Minute)},
+		{Name: "7d", Used: 26, ResetsAt: at.Add(5 * 24 * time.Hour)},
+		{Name: "Fable", Used: 37.4},
+	}}
+	cases := []struct {
+		name string
+		ev   agent.Event
+		want string
+	}{
+		{"windows", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: usage}, "usage 5h 3% · 7d 26% · Fable 37%"},
+		{"nearly spent", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: &agent.Usage{Windows: []agent.UsageWindow{
+			{Name: "5h", Used: 92, ResetsAt: at.Add(80 * time.Minute)}, {Name: "7d", Used: 85}}}}, "usage 5h 92% (resets in 1h20m) · 7d 85%"},
+		// No windows: the estimate is still better than nothing.
+		{"empty", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: &agent.Usage{Plan: "max"}}, "≈$2.27 API-equiv"},
+		// An API key is metered; usage is not what it pays for.
+		{"api key", agent.Event{At: at, Billing: agent.BillingAPIKey, Cost: 2.269, Usage: usage}, "$2.269"},
+	}
+	for _, c := range cases {
+		if got := FormatCost(&c.ev); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestHelpListsClose(t *testing.T) {
 	if !strings.Contains(help, "`close`") {
 		t.Fatal("help does not mention close")

@@ -147,4 +147,40 @@ func TestLiveQuestion(t *testing.T) {
 	}
 }
 
+// TestLiveUsage checks a subscription login's result carries the plan's
+// usage. Run with DANCER_LIVE=1; skips on an API key.
+func TestLiveUsage(t *testing.T) {
+	if os.Getenv("DANCER_LIVE") == "" {
+		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	}
+	env, _ := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	def := agent.Definition{Kind: agent.KindClaude, Model: "haiku", PermissionMode: agent.PermissionManual}
+	run, err := New().Start(ctx, env, def, "Reply with exactly: hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Stop()
+	for ev := range run.Events() {
+		switch ev.Type {
+		case agent.EventError:
+			t.Fatalf("agent error: %s", ev.Text)
+		case agent.EventResult:
+			if ev.Billing != agent.BillingSubscription {
+				t.Skipf("billing %q: usage is a subscription thing", ev.Billing)
+			}
+			t.Logf("usage = %+v", ev.Usage)
+			if ev.Usage == nil || len(ev.Usage.Windows) < 2 || ev.Usage.Windows[0].Name != "5h" || ev.Usage.Windows[1].Name != "7d" {
+				t.Fatalf("usage = %+v", ev.Usage)
+			}
+			if ev.Usage.Windows[0].ResetsAt.IsZero() || ev.Usage.Plan == "" {
+				t.Fatalf("usage = %+v", ev.Usage)
+			}
+			return
+		}
+	}
+	t.Fatal("no result")
+}
+
 func containsStr(s, sub string) bool { return indexOf(s, sub) >= 0 }

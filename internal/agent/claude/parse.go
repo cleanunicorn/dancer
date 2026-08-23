@@ -10,8 +10,9 @@ import (
 // parsed is the result of translating one stdout line.
 type parsed struct {
 	Events     []agent.Event
-	Permission *permissionReq // non-nil for control_request/can_use_tool
-	Control    *line          // any other control_request (answered with {})
+	Permission *permissionReq   // non-nil for control_request/can_use_tool
+	Control    *line            // any other control_request (answered with {})
+	Response   *controlResponse // control_response: the answer to a request dancer sent
 }
 
 type permissionReq struct {
@@ -121,8 +122,46 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			lc := l
 			p.Control = &lc
 		}
+	case "control_response":
+		if l.Response != nil {
+			rc := *l.Response
+			p.Response = &rc
+		}
 	}
 	return p, nil
+}
+
+// parseUsage reads a get_usage answer into agent.Usage: nil when the plan
+// has no rate-limit windows to report (API key, an unavailable lookup, an
+// unexpected shape).
+func parseUsage(raw json.RawMessage) *agent.Usage {
+	var in usageResponse
+	if err := json.Unmarshal(raw, &in); err != nil || in.RateLimits == nil {
+		return nil
+	}
+	u := &agent.Usage{Plan: in.SubscriptionType}
+	add := func(name string, w *usageWindow) {
+		if w == nil || w.Utilization == nil {
+			return
+		}
+		uw := agent.UsageWindow{Name: name, Used: *w.Utilization}
+		if t, err := time.Parse(time.RFC3339Nano, w.ResetsAt); err == nil {
+			uw.ResetsAt = t
+		}
+		u.Windows = append(u.Windows, uw)
+	}
+	add("5h", in.RateLimits.FiveHour)
+	add("7d", in.RateLimits.SevenDay)
+	for i := range in.RateLimits.ModelScoped {
+		m := &in.RateLimits.ModelScoped[i]
+		if m.DisplayName != "" {
+			add(m.DisplayName, &m.usageWindow)
+		}
+	}
+	if len(u.Windows) == 0 {
+		return nil
+	}
+	return u
 }
 
 // parseQuestions decodes the AskUserQuestion tool input.

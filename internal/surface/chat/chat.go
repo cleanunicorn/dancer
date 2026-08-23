@@ -9,7 +9,8 @@
 // so Slack edits it in place and the terminal redraws it. The line goes
 // away when the agent asks the human something (the prompt says it all)
 // and when the turn ends, replaced by a closing line with the outcome,
-// duration, tool count and cost.
+// duration, tool count and what it cost — a charge on an API key, how
+// much of the plan is used on a subscription.
 //
 // The lines that need the human — a turn's closing line, an error, a
 // permission or question prompt, a notice that a restart left the task
@@ -496,17 +497,44 @@ func describeInit(ev surface.Event) string {
 	return "🤖 " + strings.Join(parts, " · ")
 }
 
-// FormatCost renders a result's cost: a plain charge for API-key runs, an
-// API-equivalent estimate for subscription logins.
+// FormatCost renders what a result cost: a plain charge for API-key runs;
+// for subscription logins how much of the plan's windows is used (the
+// estimate in dollars is not what the human pays), falling back to the
+// API-equivalent estimate when the agent could not report usage.
 func FormatCost(a *agent.Event) string {
 	switch a.Billing {
 	case agent.BillingSubscription:
+		if s := formatUsage(a); s != "" {
+			return s
+		}
 		return fmt.Sprintf("≈$%.2f API-equiv", a.Cost)
 	case agent.BillingAPIKey:
 		return fmt.Sprintf("$%.3f", a.Cost)
 	}
 	return fmt.Sprintf("$%.3f", a.Cost)
 }
+
+// formatUsage renders a result's plan usage — "usage 5h 3% · 7d 26% ·
+// Fable 37%", percent used per window — and, for a window that is nearly
+// spent, when it resets. "" when the result carries no usage.
+func formatUsage(a *agent.Event) string {
+	if a.Usage == nil || len(a.Usage.Windows) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(a.Usage.Windows))
+	for _, w := range a.Usage.Windows {
+		part := fmt.Sprintf("%s %.0f%%", w.Name, w.Used)
+		if w.Used >= usageResetAt && !w.ResetsAt.IsZero() && w.ResetsAt.After(a.At) {
+			part += fmt.Sprintf(" (resets in %s)", formatDuration(w.ResetsAt.Sub(a.At)))
+		}
+		parts = append(parts, part)
+	}
+	return "usage " + strings.Join(parts, " · ")
+}
+
+// usageResetAt is the percent used from which a window's reset time is
+// worth a few more characters on the closing line.
+const usageResetAt = 80
 
 // questionText renders a question with its numbered options.
 func questionText(q *agent.Question) string {
