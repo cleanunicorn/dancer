@@ -38,6 +38,9 @@ import (
 type Agent struct {
 	// Binary is the claude executable name or path inside the environment.
 	Binary string
+	// Credentials is the host login file lent to containers (see
+	// login.go). Empty = the CLI's own location on this host.
+	Credentials string
 }
 
 // New returns an Agent using the default "claude" binary.
@@ -131,15 +134,17 @@ func (a *Agent) start(ctx context.Context, env environment.Environment, def agen
 	if bin == "" {
 		bin = "claude"
 	}
+	hint := a.lendLogin(ctx, env, def)
 	proc, err := env.Exec(ctx, bin, argv...)
 	if err != nil {
 		return nil, fmt.Errorf("claude: exec: %w", err)
 	}
 	r := &run{
-		proc:    proc,
-		events:  make(chan agent.Event, 64),
-		pending: map[string]pendingPerm{},
-		done:    make(chan struct{}),
+		proc:      proc,
+		events:    make(chan agent.Event, 64),
+		pending:   map[string]pendingPerm{},
+		done:      make(chan struct{}),
+		loginHint: hint,
 	}
 	// Handshake: the CLI only routes permission prompts to stdio after an
 	// initialize control request.
@@ -178,6 +183,10 @@ type run struct {
 	usageOff bool          // the CLI answered get_usage with an error: stop asking
 	bg       background    // sub-agents and backgrounded commands still owed to the turn
 	held     *agent.Event  // the last result withheld because bg was not settled
+
+	// loginHint is appended to a "Not logged in" result when the driver
+	// knew in advance the environment had no login (login.go).
+	loginHint string
 }
 
 func (r *run) Events() <-chan agent.Event { return r.events }
@@ -291,6 +300,9 @@ func (r *run) loop() {
 				}
 				sawResult = true
 				r.held = nil
+				if r.loginHint != "" && strings.Contains(ev.Text, "Not logged in") {
+					ev.Text += r.loginHint
+				}
 			}
 			r.events <- ev
 			if (ev.Type == agent.EventResult || ev.Type == agent.EventError) && r.billing == agent.BillingSubscription {

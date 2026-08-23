@@ -203,6 +203,13 @@ files first — they carry the contract, the concrete packages under them are im
   never be released. Verified against claude 2.1.240; `parse_test.go` fixtures pin the
   stream-json → `agent.Event` mapping, `testdata/session.jsonl` is a real captured session and
   `testdata/background.jsonl` a captured sub-agent one.
+- **A container borrows the host's login** (`internal/agent/claude/login.go`). Before every turn in a
+  docker environment the driver copies the host's `~/.claude/.credentials.json` into the
+  container's `$HOME/.claude`, keeping the host mtime and leaving a copy the container refreshed
+  more recently alone. It lends nothing when the definition's env carries a key
+  (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, …), and never to local (same home) or ssh
+  (someone else's machine). Without a host login the CLI's `Not logged in` result is annotated
+  with what to do. `TestLiveDockerLogin` (`DANCER_LIVE=1`) proves it in a provisioned `ubuntu:24.04`.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.
