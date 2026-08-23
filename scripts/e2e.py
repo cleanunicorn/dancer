@@ -31,10 +31,11 @@ allowed_tools = ["Read"]
 p = subprocess.Popen([bin_, "run", "-config", cfg, "-terminal"], stdin=subprocess.PIPE,
                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 os.set_blocking(p.stdout.fileno(), False)
-buf = ""
+buf = ""   # output not yet matched
+seen = ""  # everything dancer printed
 
 def wait_for(pat, timeout=180):
-    global buf
+    global buf, seen
     end = time.time() + timeout
     while time.time() < end:
         r, _, _ = select.select([p.stdout], [], [], 0.2)
@@ -42,6 +43,7 @@ def wait_for(pat, timeout=180):
             chunk = p.stdout.read()
             if chunk:
                 buf += chunk
+                seen += chunk
                 sys.stdout.write(chunk)
                 sys.stdout.flush()
         if pat in buf:
@@ -57,17 +59,24 @@ def send(s):
     p.stdin.write(s + "\n")
     p.stdin.flush()
 
+def done():
+    """The closing line — and, on a subscription login, the usage meter
+    posted right after it, so terminating here does not cut it off."""
+    if not wait_for("✅ done"):
+        return False
+    return wait_for("📊", 10) if "· subscription ·" in seen else True
+
 ok = wait_for("type `help`")
 send("agents");                                   ok &= wait_for("coder")
 send("run coder Using Bash, run `touch e2e.txt` then reply with exactly: DONE")
 ok &= wait_for("[allow/deny] >")
-send("allow");                                    ok &= wait_for("✅ done")
+send("allow");                                    ok &= done()
 send("status");                                   ok &= wait_for("status *idle*")
-send("Reply with exactly: SECOND");               ok &= wait_for("✅ done")
+send("Reply with exactly: SECOND");               ok &= done()
 send("close");                                    ok &= wait_for("thread closed")
 send("close");                                    ok &= wait_for("already closed")
 send("Reply with exactly: THIRD");                ok &= wait_for("thread reopened")
-ok &= wait_for("✅ done")
+ok &= done()
 p.terminate()
 try:
     p.wait(10)

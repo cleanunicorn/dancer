@@ -84,7 +84,15 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 		}
 		switch ev.Agent.Type {
 		case agent.EventResult:
-			return out(fmt.Sprintf("✅ `%s` done · %s — %s", ev.TaskID, chat.FormatCost(ev.Agent), truncate(ev.Agent.Text, 300)))
+			line := fmt.Sprintf("✅ `%s` done", ev.TaskID)
+			if cost := chat.FormatCost(ev.Agent); cost != "" {
+				line += " · " + cost
+			}
+			return out(line + " — " + truncate(ev.Agent.Text, 300))
+		case agent.EventUsage:
+			if u := chat.FormatUsage(ev.Agent); u != "" {
+				return out(fmt.Sprintf("📊 `%s` · %s", ev.TaskID, u))
+			}
 		case agent.EventError:
 			return out(fmt.Sprintf("❌ `%s` — %s", ev.TaskID, truncate(ev.Agent.Text, 300)))
 		}

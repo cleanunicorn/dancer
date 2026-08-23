@@ -12,7 +12,8 @@ restarts — a restarted dancer resumes the tasks it cut short by itself.
   🤖 `claude-sonnet-4-5` · acceptEdits · claude 2.1.239 · subscription · local /srv/work/a1b2c3d4
   @you 🔐 Bash wants to run: go test ./...        [Allow] [Deny]
   Added exponential backoff in client.go; 12 tests pass.
-  @you ✅ done · 2m13s · 7 tool calls · $0.31
+  @you ✅ done · 2m13s · 7 tool calls
+  📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%
 ```
 
 While the agent works, the last message in the thread is a live status line
@@ -21,6 +22,10 @@ every few seconds, and your message carries ⏳ — ✋ while the agent waits fo
 your answer. Both go away when the turn ends. The lines that need you — a
 permission or question prompt, the closing line, an error — mention whoever
 started the task, so you can mute the thread and still be told when to look.
+The closing line ends with the charge on an API key; on a Claude subscription
+a meter follows it a moment later instead, one bar per plan window — the
+5-hour and 7-day windows, and a model's own weekly window when it has one —
+showing how much is used after the turn and, past 80%, when the window resets.
 
 - **Transports**: Slack (Socket Mode, no public URL), terminal. Telegram later.
 - **Surfaces**: `chat` (threads, commands, approvals), `feed` (ops channel mirror). Several per transport.

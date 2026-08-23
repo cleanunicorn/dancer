@@ -198,6 +198,7 @@ func (fakeAgent) Start(ctx context.Context, env environment.Environment, def age
 		case d := <-r.decided:
 			r.emit(agent.Event{Type: agent.EventText, Text: fmt.Sprintf("allowed=%v", d.Allow)})
 			r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1", Cost: 0.01})
+			r.emit(agent.Event{Type: agent.EventUsage, Usage: &agent.Usage{Plan: "max", Windows: []agent.UsageWindow{{Name: "5h", Used: 15}}}})
 		case <-r.done:
 		}
 	}()
@@ -238,8 +239,12 @@ func (r *fakeRun) emit(ev agent.Event) {
 
 func (r *fakeRun) Events() <-chan agent.Event { return r.events }
 func (r *fakeRun) Send(ctx context.Context, text string) error {
-	r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + text})
-	r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1"})
+	// Asynchronous like a real agent: the executor must see the send's
+	// activity before the turn's result, or its idle timer never restarts.
+	go func() {
+		r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + text})
+		r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1"})
+	}()
 	return nil
 }
 func (r *fakeRun) Decide(ctx context.Context, d agent.PermissionDecision) error {

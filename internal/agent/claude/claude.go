@@ -1,5 +1,15 @@
 // Package claude drives the Claude Code CLI (`claude -p`) over its
 // bidirectional stream-json protocol and normalizes it into agent.Event.
+//
+// Besides the handshake (initialize, then answer every can_use_tool) the
+// driver sends one more control request: on a subscription login it asks
+// get_usage after each result and emits the answer — how much of the
+// plan's 5-hour, 7-day and per-model windows is used — as its own
+// agent.EventUsage, after the result. The result never waits for it: a
+// turn ends when the CLI says so, and the usage line lands a moment later
+// or, when the CLI cannot say (older version, offline), not at all. The
+// CLI does the lookup itself, with its own login, so it works the same in
+// a container or over SSH. Needs claude 2.1.240.
 package claude
 
 import (
@@ -149,11 +159,13 @@ type run struct {
 
 	writeMu sync.Mutex
 
-	mu      sync.Mutex
-	pending map[string]pendingPerm // tool_use_id -> control request
-	stderr  strings.Builder
-	done    chan struct{}
-	billing agent.Billing // learned from init, stamped on results
+	mu       sync.Mutex
+	pending  map[string]pendingPerm // tool_use_id -> control request
+	stderr   strings.Builder
+	done     chan struct{}
+	billing  agent.Billing // learned from init, stamped on results; subscription also asks for usage
+	usageN   int           // get_usage requests sent, for their ids
+	usageOff bool          // the CLI answered get_usage with an error: stop asking
 }
 
 func (r *run) Events() <-chan agent.Event { return r.events }
@@ -259,6 +271,9 @@ func (r *run) loop() {
 				ev.Billing = r.billing
 			}
 			r.events <- ev
+			if (ev.Type == agent.EventResult || ev.Type == agent.EventError) && r.billing == agent.BillingSubscription {
+				r.askUsage()
+			}
 		}
 		if p.Permission != nil {
 			r.mu.Lock()
@@ -271,6 +286,11 @@ func (r *run) loop() {
 			// with an empty success so the CLI does not block.
 			_ = r.write(controlResponseOut{Type: "control_response", Response: controlResponseBody{Subtype: "success", RequestID: p.Control.RequestID, Response: map[string]any{}}})
 		}
+		if p.Response != nil && strings.HasPrefix(p.Response.RequestID, usageReqPrefix) {
+			if ev, ok := r.usageEvent(p.Response, time.Now()); ok {
+				r.events <- ev
+			}
+		}
 	}
 	code, _ := r.proc.Wait()
 	if code != 0 && !sawResult {
@@ -279,4 +299,32 @@ func (r *run) loop() {
 		r.mu.Unlock()
 		r.events <- agent.Event{Type: agent.EventError, At: time.Now(), Text: fmt.Sprintf("claude exited with code %d: %s", code, strings.TrimSpace(tail))}
 	}
+}
+
+// usageReqPrefix starts the id of every get_usage request, so its answer
+// is told apart from the initialize reply.
+const usageReqPrefix = "usage-"
+
+// askUsage sends a get_usage request after a turn, unless this CLI has
+// already said it cannot answer one.
+func (r *run) askUsage() {
+	if r.usageOff {
+		return
+	}
+	r.usageN++
+	_ = r.write(controlRequestOut{Type: "control_request", RequestID: fmt.Sprintf("%s%d", usageReqPrefix, r.usageN), Request: map[string]any{"subtype": "get_usage"}})
+}
+
+// usageEvent turns a get_usage answer into an EventUsage. An error answer
+// (a CLI without get_usage) switches the question off for this process.
+func (r *run) usageEvent(resp *controlResponse, now time.Time) (agent.Event, bool) {
+	if resp.Subtype != "success" {
+		r.usageOff = true
+		return agent.Event{}, false
+	}
+	u := parseUsage(resp.Response)
+	if u == nil {
+		return agent.Event{}, false
+	}
+	return agent.Event{Type: agent.EventUsage, At: now, Usage: u, Billing: r.billing}, true
 }
