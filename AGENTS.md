@@ -208,6 +208,9 @@ files first — they carry the contract, the concrete packages under them are im
 
 - Only non-stdlib deps: `modernc.org/sqlite`, `slack-go/slack`, `BurntSushi/toml`. Adding a dependency
   is a decision — justify it in the PR and in the package doc of the package that uses it.
+  The web UI (`internal/transport/web/ui`: React, HeroUI, Tailwind, react-markdown) is the one
+  JavaScript toolchain; its Vite build is committed in `internal/transport/web/static` and embedded,
+  so `go build` never needs Node. Run `make ui` after touching `ui/` and commit `static/`.
 - Package docs carry the design rationale; keep them accurate when the contract changes.
 - A feature's plan lives in its PR: a Progress checkbox list kept current as work lands, and the
   validation that was run (`make test-race`, `make e2e`, `make restart-drill`) named in the body.

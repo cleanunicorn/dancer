@@ -28,7 +28,7 @@ DEPLOY_ENV ?= /etc/dancer/deploy.env
 STATE      ?= /var/lib/dancer/deployed.sha
 
 .DEFAULT_GOAL := help
-.PHONY: help build run run-terminal run-web setup doctor test test-race test-live e2e restart-drill auto-resume-drill lint fmt tidy clean \
+.PHONY: help build run run-terminal run-web ui ui-dev setup doctor test test-race test-live e2e restart-drill auto-resume-drill lint fmt tidy clean \
         install uninstall service-install service-uninstall service-restart service-status service-logs \
         update-install update-uninstall update-now update-status update-logs deploy-env
 
@@ -50,6 +50,13 @@ run-terminal: build ## Run with the terminal transport instead of Slack
 
 run-web: build ## Run with the web transport (browser UI) instead of Slack
 	bin/dancer run -config $(CONFIG) -web
+
+UI := internal/transport/web/ui
+ui: ## Build the web UI (React + HeroUI) into internal/transport/web/static — commit the result
+	cd $(UI) && npm install --no-audit --no-fund && npm run build
+
+ui-dev: ## Vite dev server for the web UI, proxying /api to a running `dancer run -web`
+	cd $(UI) && npm install --no-audit --no-fund && npm run dev
 
 setup: build ## Interactive first-time wizard (writes CONFIG, then runs doctor)
 	bin/dancer setup -config $(CONFIG)

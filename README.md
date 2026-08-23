@@ -59,7 +59,10 @@ token = ""                      # shared secret the browser asks for once
 channels = ["general"]          # the web UI's own channels, for threads outside Slack
 ```
 
-Open http://127.0.0.1:8788. The sidebar lists channels per transport and their threads;
+Open http://127.0.0.1:8788. The UI is a React + [HeroUI](https://heroui.com) app under
+`internal/transport/web/ui`; its build is committed in `internal/transport/web/static`, so
+`go build` needs no Node — run `make ui` after changing it (`make ui-dev` for a live dev server).
+The sidebar lists channels per transport and their threads;
 ⏳ means the agent is working, ✋ that it waits for an answer (the tab title says so too,
 and a browser notification fires if allowed). Commands are the same as in Slack (`?` in the
 header lists them). `make run-web` starts it on its own, like `make run-terminal`.

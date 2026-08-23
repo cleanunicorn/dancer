@@ -1,6 +1,10 @@
 // Package web is a browser transport: an HTTP server that serves a
 // single-page chat UI and streams it every message over server-sent
-// events. It is a transport.Observer — it shows every conversation dancer
+// events. The UI is a React app on HeroUI (ui/: Vite, TypeScript,
+// Tailwind; react-markdown renders the agent's Markdown) — the one place
+// in dancer with a JavaScript toolchain. Its build is committed under
+// static/ and embedded, so `go build` needs no Node; `make ui` rebuilds
+// it after a change in ui/. It is a transport.Observer — it shows every conversation dancer
 // has, whichever transport hosts it — and runs next to Slack on the same
 // coordinator, so one dancer serves both.
 //
