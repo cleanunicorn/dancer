@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,3 +191,67 @@ func TestLiveUsage(t *testing.T) {
 }
 
 func containsStr(s, sub string) bool { return indexOf(s, sub) >= 0 }
+
+// TestLiveSubAgentOneResult spawns a real sub-agent. The CLI ends the
+// model's turn while the sub-agent runs and starts another when it is
+// done; dancer must report one result, after the sub-agent's answer.
+func TestLiveSubAgentOneResult(t *testing.T) {
+	if os.Getenv("DANCER_LIVE") == "" {
+		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	}
+	env, err := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+
+	def := agent.Definition{Kind: agent.KindClaude, Model: "haiku", PermissionMode: agent.PermissionManual, AllowedTools: []string{"Agent", "Bash(sleep:*)"}}
+	run, err := New().Start(ctx, env, def, "Launch one Agent (subagent_type Explore) with the prompt: run the shell command sleep 15 then reply with the single word PONG. Do not wait for it and do not sleep yourself. Immediately reply with exactly: LAUNCHED. When the agent's completion notification arrives, reply with exactly the word it returned.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer run.Stop()
+
+	var results []string
+	var subAgentSpoke bool
+	deadline := time.After(3 * time.Minute)
+	// The turn must outlast the sub-agent: keep reading well past the first
+	// result and count what arrives.
+loop:
+	for {
+		select {
+		case ev, ok := <-run.Events():
+			if !ok {
+				break loop
+			}
+			t.Logf("event %-16s parent=%.8s tool=%s text=%.60q", ev.Type, ev.ParentID, ev.Tool, ev.Text)
+			switch ev.Type {
+			case agent.EventText:
+				if ev.ParentID != "" {
+					subAgentSpoke = true
+				}
+			case agent.EventError:
+				t.Fatalf("agent error: %s", ev.Text)
+			case agent.EventResult:
+				results = append(results, ev.Text)
+				if subAgentSpoke {
+					// Give a second result, if the CLI sends one, time to show up.
+					time.Sleep(5 * time.Second)
+					for len(run.Events()) > 0 {
+						ev := <-run.Events()
+						if ev.Type == agent.EventResult {
+							results = append(results, ev.Text)
+						}
+					}
+					break loop
+				}
+			}
+		case <-deadline:
+			t.Fatal("no final result in time")
+		}
+	}
+	if !subAgentSpoke || len(results) != 1 || !strings.Contains(strings.ToUpper(results[0]), "PONG") {
+		t.Fatalf("sub-agent spoke=%v results=%q, want one result carrying the sub-agent's answer", subAgentSpoke, results)
+	}
+}

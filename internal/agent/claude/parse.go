@@ -13,6 +13,17 @@ type parsed struct {
 	Permission *permissionReq   // non-nil for control_request/can_use_tool
 	Control    *line            // any other control_request (answered with {})
 	Response   *controlResponse // control_response: the answer to a request dancer sent
+	Task       *taskLine        // system/task_*: a background task of this session changed state
+}
+
+// taskLine is what the background tracker needs from a system task_started,
+// task_notification or task_updated line.
+type taskLine struct {
+	Subtype    string
+	ID         string
+	Background bool   // task_started: the spawning call returned at once
+	Owned      bool   // task_started: belongs to a sub-agent, not this session
+	Status     string // task_notification/task_updated: completed, failed, killed
 }
 
 type permissionReq struct {
@@ -77,6 +88,12 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 				ev.Text = reason
 			}
 			emit(ev)
+		case "task_started", "task_notification", "task_updated":
+			tl := &taskLine{Subtype: l.Subtype, ID: l.TaskID, Background: l.IsBackgrounded, Owned: l.OwnedBySubagent, Status: l.Status}
+			if l.Patch != nil {
+				tl.Status = l.Patch.Status
+			}
+			p.Task = tl
 		}
 	case "assistant":
 		for _, c := range msg.Content {

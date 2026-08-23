@@ -169,8 +169,14 @@ files first — they carry the contract, the concrete packages under them are im
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
   `can_use_tool` with a `control_response`. After each turn on a subscription login it also sends a
   `get_usage` control request and emits the answer as `agent.EventUsage` (claude 2.1.240+; older CLIs
-  answer with an error and are not asked again). Verified against claude 2.1.240; `parse_test.go` fixtures
-  pin the stream-json → `agent.Event` mapping and `testdata/session.jsonl` is a real captured session.
+  answer with an error and are not asked again). A `result` line is not always the turn's end: the
+  CLI runs sub-agents (and `run_in_background` commands) behind the model's turn, emits a `result`
+  when the model stops, and starts a *second* turn (new `init`, another `result`) when the background
+  task finishes. `background.go` tracks those tasks from the `system/task_*` lines and withholds a
+  `result` until nothing is running or waiting to be delivered, so every layer above sees one
+  `EventResult` per turn. Verified against claude 2.1.240; `parse_test.go` fixtures pin the
+  stream-json → `agent.Event` mapping, `testdata/session.jsonl` is a real captured session and
+  `testdata/background.jsonl` a captured sub-agent one.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

@@ -10,6 +10,13 @@
 // or, when the CLI cannot say (older version, offline), not at all. The
 // CLI does the lookup itself, with its own login, so it works the same in
 // a container or over SSH. Needs claude 2.1.240.
+//
+// A result line is not always the end of the turn: the CLI emits one
+// whenever the model stops, and with a sub-agent or a backgrounded command
+// still running it will start the model again to deliver the outcome. The
+// background tracker withholds such results so the layers above — which
+// close the turn, idle the process and tell the human "done" on
+// EventResult — only hear the last one.
 package claude
 
 import (
@@ -166,6 +173,8 @@ type run struct {
 	billing  agent.Billing // learned from init, stamped on results; subscription also asks for usage
 	usageN   int           // get_usage requests sent, for their ids
 	usageOff bool          // the CLI answered get_usage with an error: stop asking
+	bg       background    // sub-agents and backgrounded commands still owed to the turn
+	held     *agent.Event  // the last result withheld because bg was not settled
 }
 
 func (r *run) Events() <-chan agent.Event { return r.events }
@@ -262,13 +271,23 @@ func (r *run) loop() {
 			r.events <- agent.Event{Type: agent.EventError, At: time.Now(), Text: "claude: bad line: " + err.Error(), Raw: raw}
 			continue
 		}
+		r.bg.observe(p)
 		for _, ev := range p.Events {
 			switch ev.Type {
 			case agent.EventInit:
 				r.billing = ev.Billing
 			case agent.EventResult, agent.EventError:
-				sawResult = true
 				ev.Billing = r.billing
+				if ev.Type == agent.EventResult && !r.bg.settled() {
+					// The model stopped, but a sub-agent or background command
+					// is still owed to this turn: the CLI will run the model
+					// again when it finishes. The turn goes on.
+					h := ev
+					r.held = &h
+					continue
+				}
+				sawResult = true
+				r.held = nil
 			}
 			r.events <- ev
 			if (ev.Type == agent.EventResult || ev.Type == agent.EventError) && r.billing == agent.BillingSubscription {
@@ -293,6 +312,12 @@ func (r *run) loop() {
 		}
 	}
 	code, _ := r.proc.Wait()
+	if code == 0 && !sawResult && r.held != nil {
+		// The process ended cleanly on a result dancer was still holding:
+		// whatever was outstanding is not coming, so that result was the end.
+		r.events <- *r.held
+		sawResult = true
+	}
 	if code != 0 && !sawResult {
 		r.mu.Lock()
 		tail := r.stderr.String()
