@@ -89,7 +89,9 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
             .sort((a, b) => a.name.localeCompare(b.name))
             .map((c) => {
               // a waiting strip is racked in the needs-you bay, not cloned here
-              const threads = (byChannel.get(c.id) || []).filter((t) => state(t) !== "wait").sort(byUrgency);
+              const all = byChannel.get(c.id) || [];
+              const threads = all.filter((t) => state(t) !== "wait").sort(byUrgency);
+              const cocked = all.length - threads.length;
               return (
                 <div key={c.id}>
                   <div className="bay-label">
@@ -117,7 +119,11 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
                       </Tooltip>
                     ) : null}
                   </div>
-                  {!threads.length ? <div className="px-4 pb-2 pt-1 font-strip text-[11px]">empty bay</div> : null}
+                  {!threads.length ? (
+                    <div className="px-4 pb-2 pt-1 font-strip text-[11px]">
+                      {cocked ? (cocked === 1 ? "its one strip needs you, above" : cocked + " strips need you, above") : "empty bay"}
+                    </div>
+                  ) : null}
                   {threads.slice(0, 50).map((t) => (
                     <div key={t.id} onClick={onNavigate}>
                       <Strip t={t} active={t.id === st.current} />

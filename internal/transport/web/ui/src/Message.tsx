@@ -7,7 +7,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ME, type Message } from "./api";
 import { Mrkdwn, linkify } from "./mrkdwn";
-import { clock, label, store } from "./store";
+import { clock, label, store, useStore } from "./store";
 import { Lamp } from "./strip";
 
 function size(n: number): string {
@@ -65,15 +65,15 @@ function Files({ files }: { files: NonNullable<Message["files"]> }) {
 
 export function Choices({ m, open, inline }: { m: Message; open: boolean; inline?: boolean }) {
   const p = m.prompt!;
-  const [busy, setBusy] = useState(false);
+  // the store holds the answer in flight, so both copies of a prompt's
+  // buttons — the log's and the pulled strip's — go quiet together
+  const busy = useStore().answering.has(p.id);
   const [free, setFree] = useState("");
   const send = async (choice: string) => {
-    setBusy(true);
     try {
       await store.decide(m.thread, p.id, choice);
     } catch (e) {
       store.toast(String(e));
-      setBusy(false);
     }
   };
   if (!open) return <div className="answered">settled elsewhere</div>;

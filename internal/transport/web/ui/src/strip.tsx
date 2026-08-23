@@ -85,9 +85,12 @@ export function Mark({ size = 18 }: { size?: number }) {
   );
 }
 
-// elapsed prints a duration the way the strip does: 1m05s, 2h13m, 3d.
+// elapsed prints a duration the way the strip does: 1m05s, 2h13m, 3d. A
+// missing or zero timestamp prints a dash, the way the clock does.
 export function elapsed(from: string, to: number = Date.now()): string {
-  const s = Math.max(0, Math.floor((to - new Date(from).getTime()) / 1000));
+  const at = from ? new Date(from).getTime() : NaN;
+  if (!isFinite(at) || at <= 0) return "—";
+  const s = Math.max(0, Math.floor((to - at) / 1000));
   if (s < 60) return s + "s";
   if (s < 3600) return Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
   if (s < 86400) return Math.floor(s / 3600) + "h" + String(Math.floor((s % 3600) / 60)).padStart(2, "0") + "m";

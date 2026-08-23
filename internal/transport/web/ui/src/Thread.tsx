@@ -5,6 +5,7 @@ import { Button, TextArea, TextField } from "@heroui/react";
 import type { Message, Thread } from "./api";
 import { ME } from "./api";
 import { Choices, LiveLine, MessageRow } from "./Message";
+import { plain } from "./mrkdwn";
 import { label, promptOpen, store, useStore } from "./store";
 import { FLAG, Flag, Lamp, Mark, TITLE, elapsed, state } from "./strip";
 
@@ -34,7 +35,6 @@ function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
   const st = useStore();
   const s = state(t);
   const list = st.messages.get(t.id);
-  const started = list?.find((m) => m.from)?.at;
   // the open prompt rides on the pulled strip, so the answer is always at hand
   let ask: Message | null = null;
   if (s === "wait" && list) {
@@ -45,7 +45,22 @@ function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
       }
     }
   }
-  useTick(s === "run" || s === "wait");
+  const running = s === "run" || s === "wait";
+  // the clock counts this turn, not the whole thread: from the prompt that
+  // waits, or from the last thing a human said, which is what set the agent
+  // going. Until the log is fetched, all we know is when the thread moved.
+  let since = t.updated;
+  if (ask) since = ask.at;
+  else if (list) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].from) {
+        since = list[i].at;
+        break;
+      }
+    }
+  }
+  const stamp = running ? elapsed(since) : elapsed(t.updated);
+  useTick(running);
   return (
     <header className="px-3 pt-3 md:px-5 md:pt-4">
       <div
@@ -88,14 +103,8 @@ function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
               <span className="v">{t.requester || "—"}</span>
             </div>
             <div className="field md:w-[5.5rem]">
-              <span className="k">
-                {s === "run" || s === "wait" ? "elapsed" : "updated"}
-              </span>
-              <span className="v">
-                {s === "run" || s === "wait"
-                  ? elapsed(started || t.updated)
-                  : elapsed(t.updated) + " ago"}
-              </span>
+              <span className="k">{running ? (ask ? "waiting" : "elapsed") : "updated"}</span>
+              <span className="v">{running || stamp === "—" ? stamp : stamp + " ago"}</span>
             </div>
             <div className="field" title={TITLE[s]}>
               <span className="k">state</span>
@@ -108,7 +117,7 @@ function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
         {ask ? (
           <div className="ask flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 md:px-5">
             <span className="text" title={ask.text}>
-              {ask.text.replace(/[*_`]/g, "").replace(/\s+/g, " ").trim()}
+              {plain(ask.text)}
             </span>
             <Choices m={ask} open inline />
           </div>
