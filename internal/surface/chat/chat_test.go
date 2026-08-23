@@ -27,8 +27,8 @@ func TestFormatCost(t *testing.T) {
 	}
 }
 
-// A usage event renders as a meter line for the chat and a short phrase
-// for the feed. A nearly spent window says when it resets.
+// A usage event renders as a meter per window for the chat, bar first so
+// the bars line up on a phone, and a short phrase for the feed. A nearly spent window says when it resets.
 func TestUsageMeter(t *testing.T) {
 	at := time.Date(2026, 8, 23, 6, 0, 0, 0, time.UTC)
 	usage := &agent.Usage{Plan: "max", Windows: []agent.UsageWindow{
@@ -47,9 +47,9 @@ func TestUsageMeter(t *testing.T) {
 		meter, text string
 	}{
 		{"windows", agent.Event{At: at, Usage: usage},
-			"📊 5h ▱▱▱▱▱▱▱▱▱▱ 3% · 7d ▰▰▰▱▱▱▱▱▱▱ 26% · Fable ▰▰▰▰▱▱▱▱▱▱ 37%", "5h 3% · 7d 26% · Fable 37%"},
+			"📊 max plan\n▱▱▱▱▱▱▱▱▱▱ 3% · 5h\n▰▰▰▱▱▱▱▱▱▱ 26% · 7d\n▰▰▰▰▱▱▱▱▱▱ 37% · Fable", "5h 3% · 7d 26% · Fable 37%"},
 		{"nearly spent", agent.Event{At: at, Usage: spent},
-			"📊 5h ▰▰▰▰▰▰▰▰▰▱ 92% (resets in 1h20m) · 7d ▰▰▰▰▰▰▰▰▰▱ 85% (resets in 5d 3h) · Fable ▰▰▰▰▰▰▰▰▰▰ 100%",
+			"📊 plan usage\n▰▰▰▰▰▰▰▰▰▱ 92% · 5h · resets in 1h20m\n▰▰▰▰▰▰▰▰▰▱ 85% · 7d · resets in 5d 3h\n▰▰▰▰▰▰▰▰▰▰ 100% · Fable",
 			"5h 92% (resets in 1h20m) · 7d 85% (resets in 5d 3h) · Fable 100%"},
 		{"empty", agent.Event{At: at, Usage: &agent.Usage{Plan: "max"}}, "", ""},
 		{"none", agent.Event{At: at}, "", ""},
@@ -325,7 +325,7 @@ func TestStatusLine(t *testing.T) {
 		"[remove status]", "✅ done · 0s")
 	usage := agentEv(agent.Event{Type: agent.EventUsage, Usage: &agent.Usage{Windows: []agent.UsageWindow{{Name: "5h", Used: 15}, {Name: "7d", Used: 28}}}})
 	meter := s.Render(usage)
-	check("usage after the turn", meter, "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%")
+	check("usage after the turn", meter, "📊 plan usage\n▰▰▱▱▱▱▱▱▱▱ 15% · 5h\n▰▰▰▱▱▱▱▱▱▱ 28% · 7d")
 	if meter[0].Mention != "" || s.turns[th] != nil {
 		t.Fatalf("usage line: mention=%q, turn started=%v", meter[0].Mention, s.turns[th] != nil)
 	}
@@ -333,7 +333,7 @@ func TestStatusLine(t *testing.T) {
 	check("quick follow-up", s.Render(agentEv(agent.Event{Type: agent.EventToolUse, Tool: "Read", ToolID: "9", ToolInput: map[string]any{"file_path": "/b.go"}})),
 		"[status] 🔧 Read `/b.go` · 0s · 1 tool call")
 	check("usage inside the next turn", s.Render(usage),
-		"[remove status]", "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%", "[status] 🔧 Read `/b.go` · 0s · 1 tool call")
+		"[remove status]", "📊 plan usage\n▰▰▱▱▱▱▱▱▱▱ 15% · 5h\n▰▰▰▱▱▱▱▱▱▱ 28% · 7d", "[status] 🔧 Read `/b.go` · 0s · 1 tool call")
 	check("follow-up result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Billing: agent.BillingSubscription})),
 		"[remove status]", "✅ done · 0s · 1 tool call")
 

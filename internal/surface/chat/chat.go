@@ -12,7 +12,8 @@
 // duration, tool count and the charge on an API key. On a subscription
 // the charge is nobody's bill, so the closing line carries none and the
 // agent's usage report (agent.EventUsage, a moment after the result)
-// becomes a meter line instead: one bar per plan window, percent used.
+// becomes a meter instead: one line per plan window, bar first, so a
+// phone's narrow screen never wraps a label away from its bar.
 //
 // The lines that need the human — a turn's closing line, an error, a
 // permission or question prompt, a notice that a restart left the task
@@ -524,42 +525,60 @@ func FormatCost(a *agent.Event) string {
 	return fmt.Sprintf("$%.3f", a.Cost)
 }
 
-// UsageMeter renders a usage event as a line of meters, one per window —
-// "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%" — and, for a window that is
-// nearly spent, when it resets. "" when the event carries no windows.
+// UsageMeter renders a usage event as one meter per plan window, each
+// on its own line with the bar first, so the bars line up whatever the
+// label's width and a narrow screen (a phone) never wraps a label away
+// from its bar:
+//
+//	📊 max plan
+//	▰▰▱▱▱▱▱▱▱▱ 15% · 5h
+//	▰▰▰▱▱▱▱▱▱▱ 28% · 7d
+//
+// A window that is nearly spent says when it resets. "" when the event
+// carries no windows.
 func UsageMeter(a *agent.Event) string {
-	if s := formatUsage(a, meter); s != "" {
-		return "📊 " + s
+	if a.Usage == nil || len(a.Usage.Windows) == 0 {
+		return ""
 	}
-	return ""
+	head := "📊 plan usage"
+	if a.Usage.Plan != "" {
+		head = "📊 " + a.Usage.Plan + " plan"
+	}
+	lines := []string{head}
+	for _, w := range a.Usage.Windows {
+		line := fmt.Sprintf("%s %.0f%% · %s", meter(w.Used), w.Used, w.Name)
+		if r := resetsIn(a, w); r != "" {
+			line += " · " + r
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
-// FormatUsage is the compact form of UsageMeter, percentages only:
+// FormatUsage is the one-line form of UsageMeter, percentages only:
 // "5h 15% · 7d 28%".
 func FormatUsage(a *agent.Event) string {
-	return formatUsage(a, nil)
-}
-
-// formatUsage is the windows of a usage event, percent used each, joined
-// with " · "; bar, when given, draws something in front of every
-// percentage.
-func formatUsage(a *agent.Event, bar func(used float64) string) string {
 	if a.Usage == nil || len(a.Usage.Windows) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(a.Usage.Windows))
 	for _, w := range a.Usage.Windows {
-		part := w.Name
-		if bar != nil {
-			part += " " + bar(w.Used)
-		}
-		part += fmt.Sprintf(" %.0f%%", w.Used)
-		if w.Used >= usageResetAt && w.ResetsAt.After(a.At) {
-			part += " (resets in " + formatSpan(w.ResetsAt.Sub(a.At)) + ")"
+		part := fmt.Sprintf("%s %.0f%%", w.Name, w.Used)
+		if r := resetsIn(a, w); r != "" {
+			part += " (" + r + ")"
 		}
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// resetsIn is "resets in 1h20m" for a window that is nearly spent and
+// has its reset ahead, "" otherwise.
+func resetsIn(a *agent.Event, w agent.UsageWindow) string {
+	if w.Used < usageResetAt || !w.ResetsAt.After(a.At) {
+		return ""
+	}
+	return "resets in " + formatSpan(w.ResetsAt.Sub(a.At))
 }
 
 // formatSpan is formatDuration for spans that may run to days: "2d 3h",
