@@ -23,6 +23,7 @@ oauth_config:
     bot:
       - app_mentions:read
       - chat:write
+      - files:read
       - files:write
       - reactions:write
       - assistant:write
@@ -31,6 +32,9 @@ oauth_config:
       - im:history
       - im:write
       - users:read
+      # Optional: lets the web UI show Slack channel names instead of ids.
+      - channels:read
+      - groups:read
 settings:
   event_subscriptions:
     bot_events:

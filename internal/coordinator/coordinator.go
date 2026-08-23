@@ -125,6 +125,8 @@ type Coordinator struct {
 	sinks   map[executor.TaskID]*taskSink             // live tasks, for follow-up heartbeats
 	marks   map[transport.ThreadID]string             // reaction currently on a thread's root message
 	outMu   map[transport.ThreadID]*sync.Mutex        // serializes render+send per thread (keyed messages need order)
+	hosts   map[transport.ThreadID]string             // transport hosting a thread, once known (see threads.go)
+	titles  map[transport.ThreadID]string             // first human line of a thread, once read
 }
 
 // New returns a Coordinator.
@@ -144,6 +146,8 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		sinks:      map[executor.TaskID]*taskSink{},
 		marks:      map[transport.ThreadID]string{},
 		outMu:      map[transport.ThreadID]*sync.Mutex{},
+		hosts:      map[transport.ThreadID]string{},
+		titles:     map[transport.ThreadID]string{},
 	}
 	for _, t := range transports {
 		c.transports[t.Name()] = t
@@ -294,6 +298,16 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				c.Log.Info("recovered task on a closed thread", "task", t.ID, "thread", t.Thread)
 				continue
 			}
+			if _, running := c.transports[t.Transport]; t.Transport != "" && !running {
+				// Nobody could see or answer it: leave it for a dancer that
+				// runs its transport, marked idle so it is not reported live.
+				t.Status = store.StatusIdle
+				if err := c.Store.PutTask(ctx, t); err != nil {
+					return err
+				}
+				c.Log.Warn("not resuming task: its transport is not configured", "task", t.ID, "thread", t.Thread, "transport", t.Transport)
+				continue
+			}
 			c.unmark(ctx, t.Transport, t.Thread) // a mark the previous process left
 			v := decider.Verdict{Action: actionWait}
 			if c.autoResumable(t) {
@@ -420,7 +434,7 @@ func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState, decided
 	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: t.Thread, TaskID: t.ID, Task: &t})
 	c.Log.Info("auto-resuming task", "task", t.ID, "thread", t.Thread, "session", t.Session)
 	c.drives.Add(1)
-	go c.drive(ctx, t, prompt)
+	go c.drive(ctx, t, prompt, nil)
 }
 
 func (c *Coordinator) resumePrompt() string {
@@ -440,12 +454,20 @@ func (c *Coordinator) surfaceOn(transportName string) string {
 	return ""
 }
 
-// handle offers an inbound message to the surfaces on its transport and
-// executes the intents of the first one that claims it.
+// handle places an inbound message (see place), logs it, relays it to
+// the transports following the thread, then offers it to the surfaces on
+// its transport and executes the intents of the first one that claims
+// it. A decision is offered to every surface: the prompt it answers was
+// rendered by one surface and may have been shown on any transport.
 func (c *Coordinator) handle(ctx context.Context, in transport.Inbound) {
+	openedOn, ok := c.place(ctx, &in)
+	if !ok {
+		return
+	}
 	c.append(ctx, "", in.Thread, "inbound", in)
+	c.relay(ctx, in, openedOn)
 	for _, s := range c.Surfaces {
-		if s.Transport() != in.Transport {
+		if s.Transport() != in.Transport && in.Decision == nil {
 			continue
 		}
 		intents, ok := s.Handle(ctx, in)
@@ -467,7 +489,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 	// a wizard step), put the tombstone back so plain replies stay ignored.
 	defer func() {
 		if in.Thread != "" && c.threadClosed(in.Thread) {
-			c.forget(s.Transport(), in.Thread)
+			c.forget(c.taskTransport(ctx, s, in.Thread), in.Thread)
 		}
 	}()
 	switch it := it.(type) {
@@ -518,7 +540,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		var b strings.Builder
 		for _, d := range defs {
 			fmt.Fprintf(&b, "• *%s* — %s", d.Name, describeDefinition(d))
-			if d.Name == c.defaultAgent(s, it.Thread) {
+			if d.Name == c.defaultAgent(ctx, s, it.Thread) {
 				b.WriteString(" · _default here_")
 			}
 			b.WriteString("\n")
@@ -545,8 +567,20 @@ func channelOf(th transport.ThreadID) string {
 	return ch
 }
 
-func channelKey(s surface.Surface, th transport.ThreadID) string {
-	return s.Transport() + "/" + channelOf(th)
+// channelKey names the channel a thread is in for ChannelAgents: the
+// transport hosting the thread — the human may be writing from another
+// one — and the channel part of the id.
+func (c *Coordinator) channelKey(ctx context.Context, s surface.Surface, th transport.ThreadID) string {
+	return c.taskTransport(ctx, s, th) + "/" + channelOf(th)
+}
+
+// taskTransport is the transport a task on th is recorded under: the
+// one hosting the thread, else the surface's own.
+func (c *Coordinator) taskTransport(ctx context.Context, s surface.Surface, th transport.ThreadID) string {
+	if host := c.hostOf(ctx, th); host != "" {
+		return host
+	}
+	return s.Transport()
 }
 
 // loadClosed reads the closed threads into memory once at startup; every
@@ -607,8 +641,9 @@ func (c *Coordinator) closeThread(ctx context.Context, s surface.Surface, it sur
 	c.append(ctx, id, it.Thread, "closed", map[string]any{"thread": it.Thread, "task": id})
 	c.Log.Info("thread closed", "thread", it.Thread, "task", id, "was_running", running)
 	c.emit(ctx, surface.Event{Kind: surface.EventClosed, Thread: it.Thread, TaskID: id}, s)
-	c.markClosed(ctx, s.Transport(), it.Thread)
-	c.forget(s.Transport(), it.Thread)
+	host := c.taskTransport(ctx, s, it.Thread) // the thread's own transport, wherever `close` was typed
+	c.markClosed(ctx, host, it.Thread)
+	c.forget(host, it.Thread)
 }
 
 // awaitStopped waits (briefly) for the cancelled task to let go of the
@@ -641,6 +676,11 @@ func (c *Coordinator) reopenThread(ctx context.Context, s surface.Surface, th tr
 		return
 	}
 	c.setClosed(th, false)
+	// Reopened from another transport (the web UI), the host transport
+	// never saw the human address the bot there; lift its tombstone too.
+	if tc, ok := c.transports[c.taskTransport(ctx, s, th)].(transport.ThreadCloser); ok {
+		tc.Follow(th)
+	}
 	c.Log.Info("thread reopened", "thread", th)
 	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "♻️ thread reopened"}, s)
 }
@@ -669,9 +709,10 @@ const closedReaction = "white_check_mark"
 
 // defaultAgent is the definition used on th when none is named: the
 // channel's default if one is set, else DefaultDefinition.
-func (c *Coordinator) defaultAgent(s surface.Surface, th transport.ThreadID) string {
+func (c *Coordinator) defaultAgent(ctx context.Context, s surface.Surface, th transport.ThreadID) string {
+	key := c.channelKey(ctx, s, th)
 	c.mu.Lock()
-	name, ok := c.ChannelAgents[channelKey(s, th)]
+	name, ok := c.ChannelAgents[key]
 	c.mu.Unlock()
 	if ok && name != "" {
 		return name
@@ -681,7 +722,7 @@ func (c *Coordinator) defaultAgent(s surface.Surface, th transport.ThreadID) str
 
 // setDefault shows or changes the default agent of a channel.
 func (c *Coordinator) setDefault(ctx context.Context, s surface.Surface, it surface.SetDefault) {
-	key := channelKey(s, it.Thread)
+	key := c.channelKey(ctx, s, it.Thread)
 	if it.Agent == "" {
 		c.mu.Lock()
 		name, ok := c.ChannelAgents[key]
@@ -702,7 +743,7 @@ func (c *Coordinator) setDefault(ctx context.Context, s surface.Surface, it surf
 		return
 	}
 	if c.SaveChannelAgent != nil {
-		if err := c.SaveChannelAgent(ctx, s.Transport(), channelOf(it.Thread), def.Name); err != nil {
+		if err := c.SaveChannelAgent(ctx, c.taskTransport(ctx, s, it.Thread), channelOf(it.Thread), def.Name); err != nil {
 			c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "writing config: " + err.Error()}, s)
 			return
 		}
@@ -728,12 +769,13 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if it.Agent == "" && strings.TrimSpace(it.Prompt) == "" {
 		// Bare `run`: ask for the agent and the prompt on the thread.
+		c.dropFiles(ctx, s, it.Thread, it.Files)
 		c.startPick(ctx, s, it.Thread, "", it.User)
 		return
 	}
 	def, err := c.Store.GetDefinition(ctx, it.Agent)
 	prompt := it.Prompt
-	if fallback := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && fallback != "" {
+	if fallback := c.defaultAgent(ctx, s, it.Thread); errors.Is(err, store.ErrNotFound) && fallback != "" {
 		def, err = c.Store.GetDefinition(ctx, fallback)
 		prompt = strings.TrimSpace(it.Agent + " " + it.Prompt)
 	}
@@ -741,8 +783,9 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: fmt.Sprintf("unknown agent %q — try `agents`", it.Agent)}, s)
 		return
 	}
-	if strings.TrimSpace(prompt) == "" {
-		// `run <agent>` without a prompt: ask for it.
+	if strings.TrimSpace(prompt) == "" && len(it.Files) == 0 {
+		// `run <agent>` without a prompt: ask for it. With attachments
+		// the files are the prompt.
 		c.startPick(ctx, s, it.Thread, def.Name, it.User)
 		return
 	}
@@ -751,7 +794,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 		def.Environment.Kind = environment.KindLocal
 	}
 	def.Environment = c.resolveEnv(def.Environment, def.Name, string(it.Thread), string(id))
-	st := store.TaskState{ID: id, Transport: s.Transport(), Thread: it.Thread, Definition: def, Requester: it.User, Status: store.StatusQueued}
+	st := store.TaskState{ID: id, Transport: c.taskTransport(ctx, s, it.Thread), Thread: it.Thread, Definition: def, Requester: it.User, Status: store.StatusQueued}
 	if err := c.Store.PutTask(ctx, st); err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "store: " + err.Error()}, s)
 		return
@@ -759,7 +802,27 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	c.bind(it.Thread, id, s.Name())
 	c.broadcast(ctx, surface.Event{Kind: surface.EventStarted, Thread: it.Thread, TaskID: id, Task: &st})
 	c.drives.Add(1)
-	go c.drive(ctx, st, prompt)
+	go c.drive(ctx, st, prompt, attachments(it.Files))
+}
+
+// attachments turns what a transport received into what an executor
+// copies into the environment.
+func attachments(files []transport.File) []agent.File {
+	var out []agent.File
+	for _, f := range files {
+		out = append(out, agent.File{Name: f.Name, Data: f.Data})
+	}
+	return out
+}
+
+// dropFiles tells the thread that attachments sent with a message that
+// opens a wizard (a bare `run`) went nowhere: the prompt comes later, as
+// text, and files cannot be sent with it.
+func (c *Coordinator) dropFiles(ctx context.Context, s surface.Surface, th transport.ThreadID, files []transport.File) {
+	if len(files) == 0 {
+		return
+	}
+	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "📎 attachments are dropped here — send them together with the prompt"}, s)
 }
 
 // resolveEnv fills in the parts of a Spec that only the coordinator knows:
@@ -821,7 +884,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	}
 	id, ok := c.lookup(it.Thread)
 	if ok {
-		if err := c.Executor.Send(ctx, id, it.Text); err == nil {
+		if err := c.Executor.Send(ctx, id, it.Text, attachments(it.Files)); err == nil {
 			c.wake(ctx, id)
 			return
 		} else if !errors.Is(err, execlocal.ErrNotRunning) {
@@ -830,9 +893,9 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 		}
 	}
 	st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
-	if def := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
+	if def := c.defaultAgent(ctx, s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
 		// A fresh thread with plain text: start a task with the channel's default agent.
-		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User})
+		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User, Files: it.Files})
 		return
 	}
 	if err != nil {
@@ -844,16 +907,18 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 		return
 	}
 	if st.Transport == "" {
-		st.Transport = s.Transport()
+		st.Transport = c.taskTransport(ctx, s, it.Thread)
 	}
 	c.bind(it.Thread, st.ID, s.Name())
 	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: it.Thread, TaskID: st.ID, Task: &st})
 	c.drives.Add(1)
-	go c.drive(ctx, st, it.Text)
+	go c.drive(ctx, st, it.Text, attachments(it.Files))
 }
 
 // drive runs one executor turn-loop for a task and records the outcome.
-func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt string) {
+// files are the attachments that came with prompt; a restart's re-run has
+// none (they were copied into the environment when the turn first ran).
+func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt string, files []agent.File) {
 	defer c.drives.Done()
 	st.Status = store.StatusRunning
 	st.Prompt = prompt
@@ -864,7 +929,7 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	c.mu.Unlock()
 	c.mark(ctx, st.Transport, st.Thread, store.StatusRunning)
 	stopBeat := c.beat(ctx, sink)
-	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session}, sink)
+	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session, Files: files}, sink)
 	stopBeat()
 	c.mu.Lock()
 	delete(c.sinks, st.ID)
@@ -1231,21 +1296,32 @@ func (c *Coordinator) deliver(base string, d transport.Decision) {
 	}
 }
 
-// emit renders an event through one surface. Render and send happen under
-// the thread's lock: a surface that edits a keyed message in place relies
-// on its messages reaching the transport in the order it rendered them,
-// and a heartbeat and an agent event can arrive from different goroutines.
+// emit renders an event through one surface and sends the result to the
+// surface's transport and to every observer (a transport following every
+// thread). Render and send happen under the thread's lock: a surface that
+// edits a keyed message in place relies on its messages reaching the
+// transport in the order it rendered them, and a heartbeat and an agent
+// event can arrive from different goroutines.
 func (c *Coordinator) emit(ctx context.Context, ev surface.Event, s surface.Surface) {
 	mu := c.threadLock(ev.Thread)
 	mu.Lock()
 	defer mu.Unlock()
 	t := c.transports[s.Transport()]
+	observers := c.observersBesides(s.Transport())
 	for _, out := range s.Render(ev) {
 		if ev.Kind != surface.EventHeartbeat {
 			c.append(ctx, ev.TaskID, out.Thread, "outbound", out)
 		}
 		if err := t.Send(ctx, out); err != nil {
 			c.Log.Error("send failed", "transport", t.Name(), "surface", s.Name(), "err", err)
+		}
+		if out.Thread != ev.Thread {
+			continue // a surface's own place (the feed channel), not the conversation
+		}
+		for _, o := range observers {
+			if err := o.Send(ctx, out); err != nil {
+				c.Log.Error("send failed", "transport", o.Name(), "surface", s.Name(), "err", err)
+			}
 		}
 	}
 }

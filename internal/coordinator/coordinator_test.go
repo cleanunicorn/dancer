@@ -32,6 +32,7 @@ type fakeTransport struct {
 	out        []transport.Outbound
 	remembered []transport.ThreadID
 	forgotten  []transport.ThreadID
+	followed   []transport.ThreadID
 	reacted    map[transport.ThreadID][]string
 }
 
@@ -46,6 +47,13 @@ func (f *fakeTransport) Remember(th transport.ThreadID) {
 func (f *fakeTransport) Forget(th transport.ThreadID) {
 	f.mu.Lock()
 	f.forgotten = append(f.forgotten, th)
+	f.mu.Unlock()
+}
+
+// Follow implements transport.ThreadCloser.
+func (f *fakeTransport) Follow(th transport.ThreadID) {
+	f.mu.Lock()
+	f.followed = append(f.followed, th)
 	f.mu.Unlock()
 }
 

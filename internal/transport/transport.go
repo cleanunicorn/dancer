@@ -1,12 +1,24 @@
 // Package transport defines the communication channels humans use to reach
-// dancer: Slack, a terminal, later Telegram.
+// dancer: Slack, a terminal, the web UI, later Telegram.
 //
 // A Transport moves messages and knows how to address a conversation
 // (ThreadID). It has no idea what the messages mean — that is the job of a
 // surface (package surface), and several surfaces can share one transport.
+//
+// A conversation belongs to dancer, not to the transport it started on.
+// Its ThreadID is minted by the transport that hosts it (Slack: a channel
+// and a message ts) and that transport renders it natively; but any
+// transport may post into it, and a transport that can list conversations
+// (Observer — the web UI) is shown every one of them, with what humans
+// said on the other transports relayed as Outbound.From. History is not
+// the transport's to keep: it is the coordinator's log, read back through
+// History.
 package transport
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // ThreadID identifies a conversation on a transport. For Slack this is
 // "<channel>/<thread_ts>" ("<channel>/" posts at top level); for the
@@ -14,12 +26,24 @@ import "context"
 type ThreadID string
 
 // Inbound is a message from a human.
+//
+// Thread may name a channel alone ("<channel>/"): the human wants a new
+// conversation there. The coordinator asks the transport that owns the
+// channel (ChannelLister) to open one (ThreadOpener) and carries on with
+// the id it returns.
 type Inbound struct {
 	Transport string    // transport name, e.g. "slack", "terminal"
 	Thread    ThreadID  // conversation the message belongs to
 	UserID    string    // transport-specific user identifier
+	UserName  string    // display name when the transport knows it; shown where UserID means nothing
 	Text      string    // raw text as typed
 	Decision  *Decision // set when the message answers a Prompt
+	// Files are the attachments the human sent with the message — an
+	// image pasted into Slack, a log, a PDF — already downloaded by the
+	// transport. A transport that cannot carry uploads (the terminal)
+	// never sets it. The surface hands them to the task and the executor
+	// copies them into the agent's environment.
+	Files []File
 }
 
 // Decision is a human's answer to a Prompt.
@@ -34,6 +58,18 @@ type Outbound struct {
 	Text   string
 	Prompt *Prompt // non-nil: render as a question with buttons/choices
 	Files  []File  // attachments uploaded after the text
+	// From, when set, says a human wrote Text (or made Decision) on
+	// another transport: the coordinator relays what people say so every
+	// transport showing the thread has the whole conversation. A
+	// transport renders it as that person's message, not dancer's
+	// (Slack: "💬 *name* via web: …"; the web UI: a message bubble with
+	// their name). Transports never write it themselves.
+	From *Author
+	// Decision, with From, says that person answered the prompt it names
+	// (Decision.PromptID) with Decision.Choice. A transport that posted
+	// that prompt settles it — Slack swaps the buttons for the outcome —
+	// and otherwise shows who answered what. Text is empty.
+	Decision *Decision
 	// Markdown says Text is Markdown as an agent writes it (CommonMark:
 	// **bold**, # headings, [links](url), fenced code), not the
 	// transport's own markup. A transport with a different dialect
@@ -59,10 +95,27 @@ type Outbound struct {
 	Key string
 }
 
-// File is an attachment.
+// Author is the human behind a relayed message (Outbound.From).
+type Author struct {
+	ID   string // Inbound.UserID on their transport
+	Name string // Inbound.UserName, or ID when the transport had none
+	Via  string // the transport they wrote on
+}
+
+// Display is the name to show for the author.
+func (a Author) Display() string {
+	if a.Name != "" {
+		return a.Name
+	}
+	return a.ID
+}
+
+// File is an attachment, either way: one the human sent (Inbound.Files)
+// or one the agent produced (Outbound.Files). Data stays out of the event
+// log, which records the message around it; only Name is kept there.
 type File struct {
 	Name string
-	Data []byte
+	Data []byte `json:"-"`
 }
 
 // Prompt asks the human for a decision.
@@ -107,9 +160,11 @@ type ThreadTracker interface {
 // ThreadCloser is implemented by transports that can stop following a
 // thread again (Slack). Forget is the inverse of ThreadTracker.Remember:
 // plain replies in the thread are ignored afterwards, until a human
-// addresses the bot there directly.
+// addresses the bot there directly — or Follow lifts it, when the human
+// reopened the thread from another transport.
 type ThreadCloser interface {
 	Forget(thread ThreadID)
+	Follow(thread ThreadID)
 }
 
 // Reactor is implemented by transports that can mark a conversation with
@@ -120,6 +175,70 @@ type ThreadCloser interface {
 type Reactor interface {
 	React(ctx context.Context, thread ThreadID, emoji string) error
 	Unreact(ctx context.Context, thread ThreadID, emoji string) error
+}
+
+// Channel is a place a transport can open conversations in: a Slack
+// channel, a web channel. ID is the first part of the ThreadIDs under it.
+type Channel struct {
+	ID   string
+	Name string // human name; ID when the transport has none
+}
+
+// ChannelLister is implemented by transports that know their channels.
+// The coordinator uses it to tell whose channel an Inbound addressed, and
+// to list every channel to an Observer.
+type ChannelLister interface {
+	Channels() []Channel
+}
+
+// ThreadOpener is implemented by transports that can start a conversation
+// in a channel of theirs on request: the coordinator calls it when a
+// human on another transport (or on the web UI, for its own channels)
+// writes to "<channel>/". The transport posts msg as the root of the new
+// thread — msg.From names who asked — and returns its id.
+type ThreadOpener interface {
+	OpenThread(ctx context.Context, channel string, msg Outbound) (ThreadID, error)
+}
+
+// Observer is implemented by transports that show every conversation,
+// whichever transport hosts it (the web UI). The coordinator sends them
+// each Outbound of every thread, relays what humans say on the other
+// transports (Outbound.From) — and what their own humans say, so they
+// need no memory of their own — and routes what they send on any thread
+// to that thread's task.
+type Observer interface {
+	ObservesAllThreads()
+}
+
+// ThreadInfo is one conversation as History lists it.
+type ThreadInfo struct {
+	ID        ThreadID
+	Transport string // the transport hosting it
+	Channel   string
+	Title     string    // the first thing the human asked
+	Status    string    // the task's status (store.Status*), "" without a task
+	Closed    bool      // the conversation was closed
+	Requester string    // who started it
+	Updated   time.Time // the task's last change
+}
+
+// History is the read side an Observer needs: the channels of every
+// transport, the conversations dancer knows and what was said in one,
+// rebuilt from the coordinator's log. Messages come back as the
+// Outbounds the thread saw, with what humans wrote as Outbound.From
+// entries, oldest first; live status lines (keyed messages) are not part
+// of it.
+type History interface {
+	// Channels lists every transport's channels, keyed by transport name.
+	Channels() map[string][]Channel
+	Threads(ctx context.Context) ([]ThreadInfo, error)
+	Messages(ctx context.Context, thread ThreadID, limit int) ([]Entry, error)
+}
+
+// Entry is one message of a thread's history, with when it was logged.
+type Entry struct {
+	At      time.Time
+	Message Outbound
 }
 
 // Transport is the interface every communication channel implements.

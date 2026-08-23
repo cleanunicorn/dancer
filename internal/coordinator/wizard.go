@@ -413,7 +413,7 @@ func (w *wizard) pickAgent(ctx context.Context, name, header, text string) (agen
 		return agent.Definition{}, errors.New("no agent definitions — say `agent add` first")
 	}
 	q := agent.Question{Header: header, Text: text}
-	def := w.c.defaultAgent(w.s, w.thread)
+	def := w.c.defaultAgent(ctx, w.s, w.thread)
 	for _, d := range defs {
 		desc := describeDefinition(d)
 		if d.Name == def {
