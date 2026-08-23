@@ -30,11 +30,27 @@ type line struct {
 	Cwd            string `json:"cwd,omitempty"`
 	Version        string `json:"claude_code_version,omitempty"`
 
+	// type=system subtype=task_started / task_notification / task_updated:
+	// a background task — a sub-agent, a backgrounded shell command — of
+	// this session. ToolUseID above names the call that spawned it.
+	TaskID          string     `json:"task_id,omitempty"`
+	TaskType        string     `json:"task_type,omitempty"`         // task_started: local_agent (a sub-agent), local_bash (a shell command), ...
+	IsBackgrounded  bool       `json:"is_backgrounded,omitempty"`   // task_started: the call returned before the task ended
+	OwnedBySubagent bool       `json:"owned_by_subagent,omitempty"` // task_started: a sub-agent's task, reported to it and not to the main session
+	Status          string     `json:"status,omitempty"`            // task_notification: completed, failed, killed, stopped
+	Patch           *taskPatch `json:"patch,omitempty"`             // task_updated
+
 	// type=result
 	IsError      bool    `json:"is_error,omitempty"`
 	Result       string  `json:"result,omitempty"`
 	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 	NumTurns     int     `json:"num_turns,omitempty"`
+}
+
+// taskPatch is what a task_updated line changes about a task; only the
+// status matters here.
+type taskPatch struct {
+	Status string `json:"status,omitempty"`
 }
 
 // apiMessage is the Anthropic Messages API message embedded in

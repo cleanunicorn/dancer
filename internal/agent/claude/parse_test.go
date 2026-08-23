@@ -10,15 +10,15 @@ import (
 	"github.com/cleanunicorn/dancer/internal/agent"
 )
 
-func TestTranslateFixture(t *testing.T) {
-	f, err := os.Open("testdata/session.jsonl")
+// scanFixture translates every line of a captured session under testdata
+// and hands each to fn.
+func scanFixture(t *testing.T, name string, fn func(parsed)) {
+	t.Helper()
+	f, err := os.Open("testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	var types []agent.EventType
-	var perm *permissionReq
-	var session string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	for sc.Scan() {
@@ -26,6 +26,15 @@ func TestTranslateFixture(t *testing.T) {
 		if err != nil {
 			t.Fatalf("translate: %v", err)
 		}
+		fn(p)
+	}
+}
+
+func TestTranslateFixture(t *testing.T) {
+	var types []agent.EventType
+	var perm *permissionReq
+	var session string
+	scanFixture(t, "session.jsonl", func(p parsed) {
 		for _, ev := range p.Events {
 			types = append(types, ev.Type)
 			if ev.Type == agent.EventInit {
@@ -56,7 +65,7 @@ func TestTranslateFixture(t *testing.T) {
 		if p.Permission != nil {
 			perm = p.Permission
 		}
-	}
+	})
 	want := []agent.EventType{agent.EventInit, agent.EventToolUse, agent.EventToolResult, agent.EventText, agent.EventResult}
 	if len(types) != len(want) {
 		t.Fatalf("events = %v, want %v", types, want)
@@ -156,13 +165,11 @@ func TestArgs(t *testing.T) {
 		joined += a + " "
 	}
 	for _, want := range []string{"--permission-prompt-tool stdio", "--permission-mode acceptEdits", "--model haiku", "--allowedTools Read,Edit", "--resume sess-1"} {
-		if !contains(joined, want) {
+		if !strings.Contains(joined, want) {
 			t.Errorf("args missing %q in %q", want, joined)
 		}
 	}
 }
-
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0) }
 
 // usageLine is a get_usage answer as claude 2.1.240 writes it (trimmed to
 // the fields around the ones dancer reads; the real one is far larger).
@@ -203,13 +210,4 @@ func TestTranslateUsageResponse(t *testing.T) {
 			t.Errorf("%s: usage = %+v, want nil", name, u)
 		}
 	}
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

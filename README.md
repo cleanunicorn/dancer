@@ -48,41 +48,20 @@ bin/dancer run        # or: bin/dancer run -terminal, or bin/dancer run -web
 make service          # systemd unit for the current user
 ```
 
-### Web UI
+### Transports
 
-```toml
-[server]
-transports = ["slack", "web"]   # or just ["web"]
-[web]
-listen = "127.0.0.1:8788"       # plain HTTP: keep it local, or put TLS in front
-channels = ["general"]          # the web UI's own channels, for threads outside Slack
-```
+One dancer can run several at once; conversations are shared between them.
 
-Accounts live in dancer's database, not in the config:
-
-```sh
-bin/dancer user add daniel      # prints a generated password; change it in the UI
-bin/dancer user list            # passwd <name> · rm <name>
-```
-
-Open http://127.0.0.1:8788 and sign in. Everything you send is signed with your account
-name — the agent's closing line and prompts address you by it, and two people in one thread
-are two names. The UI is a React + [HeroUI](https://heroui.com) app under
-`internal/transport/web/ui`; its build is committed in `internal/transport/web/static`, so
-`go build` needs no Node — run `make ui` after changing it (`make ui-dev` for a live dev server).
-The UI is a flight-strip board: every thread is a paper strip racked under its channel, with a
-four-letter flag (`WAIT`, `RUN`, `FAIL`, `DONE`, `IDLE`, `INTR`, `CLSD`) and a lamp — amber when
-the agent waits for a human, green while it works, red when it failed. Strips that need you are
-moved to a *needs you* bay at the top, cocked out of the rack; the open thread is the strip
-pulled across the head of the desk, and while it waits the prompt's Allow/Deny sit on that strip
-(the tab title says so too, and a browser notification fires if allowed). Commands are the same
-as in Slack (`?` in the rack lists them and the flags). `make run-web` starts it on its own, like
-`make run-terminal`. `DESIGN.md` records the visual system.
+- [Slack](docs/slack.md) — the app manifest, tokens, scopes, what a thread looks like.
+- [Web UI](docs/web.md) — `transports = ["slack", "web"]`, accounts (`bin/dancer user add`), the
+  flight-strip board every thread is racked on, the React app.
 
 Full instructions, Slack app manifest, docker/ssh notes: [SETUP.md](SETUP.md).
 Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 
-## Commands in Slack
+## Commands
+
+The same on every transport; on Slack, `@dancer` is the mention, on the web UI and the terminal just type.
 
 | message                      | effect                                      |
 |------------------------------|---------------------------------------------|
