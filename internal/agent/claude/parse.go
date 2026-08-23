@@ -53,10 +53,14 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			emit(ev)
 		}
 	case "assistant":
-		if l.Message == nil {
+		m, err := l.apiMessage()
+		if err != nil {
+			return parsed{}, err
+		}
+		if m == nil {
 			break
 		}
-		for _, c := range l.Message.Content {
+		for _, c := range m.Content {
 			switch c.Type {
 			case "text":
 				ev := base
@@ -73,10 +77,14 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			}
 		}
 	case "user":
-		if l.Message == nil {
+		m, err := l.apiMessage()
+		if err != nil {
+			return parsed{}, err
+		}
+		if m == nil {
 			break
 		}
-		for _, c := range l.Message.Content {
+		for _, c := range m.Content {
 			if c.Type != "tool_result" {
 				continue
 			}

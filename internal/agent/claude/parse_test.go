@@ -94,6 +94,29 @@ func TestTranslateQuestion(t *testing.T) {
 	}
 }
 
+// A tool call refused by the CLI itself (here the auto-mode classifier) is
+// reported on a system line whose "message" is a string, not a Messages API
+// object. It must not be a bad line: the refusal follows as an is_error
+// tool_result, which is what the chat shows.
+func TestTranslatePermissionDenied(t *testing.T) {
+	raw := []byte(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_012ppbtEBUBgHeZtpDBraDSa","decision_reason_type":"classifier","decision_reason":"Blocked by classifier","message":"Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier.","uuid":"3dc0c389-07cc-42dd-978a-69ff7522818d","session_id":"81c8abc4-f8ad-46d1-a026-9a7f966a105a"}`)
+	p, err := translate(raw, time.Now())
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if len(p.Events) != 0 || p.Permission != nil {
+		t.Fatalf("parsed = %+v, want nothing", p)
+	}
+}
+
+// A message field that is an object but malformed is still a bad line.
+func TestTranslateMalformedMessage(t *testing.T) {
+	raw := []byte(`{"type":"assistant","message":{"role":"assistant","content":"not-a-list"}}`)
+	if _, err := translate(raw, time.Now()); err == nil {
+		t.Fatal("translate: want error for malformed message object")
+	}
+}
+
 func TestArgs(t *testing.T) {
 	got, err := args(agent.Definition{Model: "haiku", AllowedTools: []string{"Read", "Edit"}, PermissionMode: agent.PermissionAcceptEdits}, "sess-1")
 	if err != nil {
