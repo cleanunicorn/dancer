@@ -57,7 +57,7 @@ restart: see [Managing agents from chat](#managing-agents-from-chat).
 
 ## 5. Try it
 
-Terminal first (no Slack needed):
+Terminal first (no Slack needed; details in [docs/terminal.md](docs/terminal.md)):
 
 ```sh
 bin/dancer run -terminal
