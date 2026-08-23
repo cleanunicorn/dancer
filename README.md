@@ -70,10 +70,14 @@ name — the agent's closing line and prompts address you by it, and two people 
 are two names. The UI is a React + [HeroUI](https://heroui.com) app under
 `internal/transport/web/ui`; its build is committed in `internal/transport/web/static`, so
 `go build` needs no Node — run `make ui` after changing it (`make ui-dev` for a live dev server).
-The sidebar lists channels per transport and their threads;
-⏳ means the agent is working, ✋ that it waits for an answer (the tab title says so too,
-and a browser notification fires if allowed). Commands are the same as in Slack (`?` in the
-header lists them). `make run-web` starts it on its own, like `make run-terminal`.
+The UI is a flight-strip board: every thread is a paper strip racked under its channel, with a
+four-letter flag (`WAIT`, `RUN`, `FAIL`, `DONE`, `IDLE`, `INTR`, `CLSD`) and a lamp — amber when
+the agent waits for a human, green while it works, red when it failed. Strips that need you are
+moved to a *needs you* bay at the top, cocked out of the rack; the open thread is the strip
+pulled across the head of the desk, and while it waits the prompt's Allow/Deny sit on that strip
+(the tab title says so too, and a browser notification fires if allowed). Commands are the same
+as in Slack (`?` in the rack lists them and the flags). `make run-web` starts it on its own, like
+`make run-terminal`. `DESIGN.md` records the visual system.
 
 Full instructions, Slack app manifest, docker/ssh notes: [SETUP.md](SETUP.md).
 Architecture and conventions: [CLAUDE.md](CLAUDE.md).

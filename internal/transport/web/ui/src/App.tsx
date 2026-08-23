@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
-import { Button, Dropdown, Input, Kbd, Label, Modal, TextField } from "@heroui/react";
+import { Button, Dropdown, Input, Label, Modal, TextField } from "@heroui/react";
 import { Sidebar } from "./Sidebar";
 import { ThreadPane } from "./Thread";
+import { Mark } from "./strip";
 import { store, useStore } from "./store";
 
+// The sign-in is one strip on an empty desk.
 function LoginPage() {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   return (
-    <div className="flex h-full items-center justify-center bg-background px-4">
+    <div className="flex h-full items-center justify-center px-4">
       <form
-        className="flex w-full max-w-sm flex-col gap-4 rounded-md border border-border bg-surface p-6"
+        className="desk-strip flex w-full max-w-sm flex-col gap-4 px-6 py-5"
+        data-state="new"
         onSubmit={async (e) => {
           e.preventDefault();
           setBusy(true);
@@ -25,24 +28,31 @@ function LoginPage() {
           setBusy(false);
         }}
       >
-        <div>
-          <div className="text-lg font-semibold">🕺 dancer</div>
-          <p className="text-sm text-muted">Sign in with your dancer account.</p>
+        <div className="flex items-center gap-2.5">
+          <Mark size={22} />
+          <span className="text-lg font-semibold leading-none">dancer</span>
+          <span className="flag ml-auto" data-state="new">
+            SIGN IN
+          </span>
         </div>
         <TextField aria-label="Name" autoFocus>
-          <Label>Name</Label>
+          <Label className="font-strip text-[10px] uppercase tracking-[0.1em] text-ink-2">Name</Label>
           <Input autoComplete="username" value={name} onChange={(e) => setName(e.target.value)} />
         </TextField>
         <TextField aria-label="Password">
-          <Label>Password</Label>
+          <Label className="font-strip text-[10px] uppercase tracking-[0.1em] text-ink-2">Password</Label>
           <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </TextField>
-        {err ? <p className="text-sm text-danger">{err}</p> : null}
-        <Button type="submit" variant="primary" isDisabled={busy || !name.trim() || !password}>
-          Sign in
+        {err ? (
+          <p className="text-sm text-danger" role="alert">
+            {err}
+          </p>
+        ) : null}
+        <Button type="submit" variant="primary" isDisabled={busy || !name.trim() || !password} className="font-strip uppercase tracking-wider">
+          {busy ? "Signing in…" : "Sign in"}
         </Button>
-        <p className="text-xs text-muted">
-          No account? The operator makes one with <code>dancer user add &lt;name&gt;</code>.
+        <p className="font-strip text-[11px] text-ink-2">
+          no account? the operator makes one with <code>dancer user add &lt;name&gt;</code>
         </p>
       </form>
     </div>
@@ -86,8 +96,12 @@ function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void 
                   <Label>New password</Label>
                   <Input type="password" autoComplete="new-password" minLength={8} value={next} onChange={(e) => setNext(e.target.value)} />
                 </TextField>
-                {err ? <p className="text-sm text-danger">{err}</p> : null}
-                <p className="text-xs text-muted">Your other browsers are signed out.</p>
+                {err ? (
+                  <p className="text-sm text-danger" role="alert">
+                    {err}
+                  </p>
+                ) : null}
+                <p className="text-xs text-muted">At least 8 characters. Your other browsers are signed out.</p>
               </Modal.Body>
               <Modal.Footer>
                 <Button type="submit" variant="primary" isDisabled={!current || next.length < 8}>
@@ -114,6 +128,16 @@ const COMMANDS: [string, string][] = [
   ["agent list", "list agents (agent add / edit / delete)"],
 ];
 
+const FLAGS: [string, string][] = [
+  ["WAIT", "the agent asked something; the strip is lit and cocked"],
+  ["RUN", "the agent is working"],
+  ["IDLE", "turn finished; a reply continues the session"],
+  ["DONE", "the task is over; a reply starts the next turn"],
+  ["FAIL", "the task failed"],
+  ["INTR", "cut short by a restart; a reply resumes it"],
+  ["CLSD", "thread closed; writing to it reopens it"],
+];
+
 function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Modal isOpen={open} onOpenChange={(o) => !o && onClose()}>
@@ -124,21 +148,37 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
             <Modal.Header>
               <Modal.Heading>Commands</Modal.Heading>
             </Modal.Header>
-            <Modal.Body>
+            <Modal.Body className="flex flex-col gap-4">
               <table className="text-sm">
                 <tbody>
                   {COMMANDS.map(([c, d]) => (
                     <tr key={c}>
                       <td className="py-0.5 pr-4 align-top">
-                        <code className="rounded bg-background-secondary px-1">{c}</code>
+                        <code className="font-strip rounded-[2px] bg-surface-secondary px-1 text-[12px]">{c}</code>
                       </td>
                       <td className="py-0.5 text-muted">{d}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="mt-3 flex flex-wrap items-center gap-1 text-xs text-muted">
-                <Kbd>Enter</Kbd> send · <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> newline · <Kbd>/</Kbd> focus the box · <Kbd>Esc</Kbd> close
+              <div>
+                <div className="font-strip mb-1 text-[10px] uppercase tracking-[0.1em] text-muted">Flags on a strip</div>
+                <table className="text-sm">
+                  <tbody>
+                    {FLAGS.map(([f, d]) => (
+                      <tr key={f}>
+                        <td className="py-0.5 pr-4 align-top">
+                          <span className="flag text-foreground">{f}</span>
+                        </td>
+                        <td className="py-0.5 text-muted">{d}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
+                <span className="kbd">Enter</span> send · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> newline · <span className="kbd">/</span> focus the printer ·{" "}
+                <span className="kbd">Esc</span> close
               </p>
             </Modal.Body>
           </Modal.Dialog>
@@ -180,18 +220,21 @@ export default function App() {
   return (
     <div className="flex h-full">
       <aside
-        className={`fixed inset-y-0 left-0 z-20 flex w-72 flex-col border-r border-border bg-background-secondary transition-transform md:static md:translate-x-0 ${menu ? "translate-x-0" : "-translate-x-full"}`}
+        className={`rack fixed inset-y-0 left-0 z-20 flex w-[19.5rem] flex-col transition-transform md:static md:translate-x-0 ${menu ? "translate-x-0" : "-translate-x-full"}`}
+        aria-label="The rack"
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <span className="font-semibold">🕺 dancer</span>
-          <Button isIconOnly size="sm" variant="ghost" aria-label="Commands" onPress={() => setHelp(true)}>
+        <div className="flex items-center gap-2.5 px-4 pb-2 pt-3">
+          <Mark />
+          <span className="text-[15px] font-semibold leading-none text-foreground">dancer</span>
+          <span className="font-strip ml-1 text-[10px] uppercase tracking-[0.12em]">strip board</span>
+          <Button isIconOnly size="sm" variant="ghost" className="-mr-2 ml-auto h-7 w-7 min-w-0 font-strip text-rack-ink" aria-label="Commands and flags" onPress={() => setHelp(true)}>
             ?
           </Button>
         </div>
         <Sidebar onNavigate={() => setMenu(false)} />
-        <div className="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted">
+        <div className="flex items-center justify-between border-t border-rack-rule px-4 py-2">
           <Dropdown>
-            <Button size="sm" variant="ghost" className="-ml-2 text-xs">
+            <Button size="sm" variant="ghost" className="-ml-2 h-7 font-strip text-[11px] text-rack-ink">
               {st.me}
             </Button>
             <Dropdown.Popover>
@@ -207,8 +250,9 @@ export default function App() {
               </Dropdown.Menu>
             </Dropdown.Popover>
           </Dropdown>
-          <span className={st.connected ? "text-success" : "text-danger"} title={st.connected ? "Connected" : "Reconnecting…"}>
-            ●
+          <span className="flex items-center gap-1.5 font-strip text-[10px] uppercase tracking-[0.1em]" title={st.connected ? "Connected" : "Reconnecting…"}>
+            <span className="lamp !static" data-state={st.connected ? "run" : "fail"} aria-hidden="true" />
+            {st.connected ? "link" : "no link"}
           </span>
         </div>
       </aside>
@@ -217,7 +261,9 @@ export default function App() {
       <PasswordDialog open={password} onClose={() => setPassword(false)} />
       <HelpDialog open={help} onClose={() => setHelp(false)} />
       {st.toast ? (
-        <div className="fixed bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-md border border-border bg-surface px-3 py-2 text-sm">{st.toast}</div>
+        <div role="status" className="desk-strip fixed bottom-4 left-1/2 z-30 -translate-x-1/2 px-4 py-2 text-sm" data-state="new">
+          {st.toast}
+        </div>
       ) : null}
     </div>
   );

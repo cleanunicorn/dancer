@@ -1,0 +1,828 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-23T00:00:00Z",
+  "title": "Design System: dancer web UI",
+  "extensions": {
+    "colorMeta": {
+      "console-bg": {
+        "role": "neutral",
+        "displayName": "Daylight Console",
+        "canonical": "oklch(0.905 0.01 250)",
+        "purpose": "The desk: body background, agent text and dancer lines sit directly on it.",
+        "tonalRamp": [
+          "oklch(0.15 0.01 250)",
+          "oklch(0.25 0.01 250)",
+          "oklch(0.35 0.01 250)",
+          "oklch(0.45 0.01 250)",
+          "oklch(0.55 0.01 250)",
+          "oklch(0.65 0.01 250)",
+          "oklch(0.80 0.01 250)",
+          "oklch(0.95 0.01 250)"
+        ],
+        "dark": "oklch(0.235 0.014 250)"
+      },
+      "console-fg": {
+        "role": "neutral",
+        "displayName": "Console Ink",
+        "canonical": "oklch(0.23 0.014 250)",
+        "purpose": "Foreground on the console; desk-strip title is ink, this is the desk's own text.",
+        "tonalRamp": [
+          "oklch(0.15 0.014 250)",
+          "oklch(0.25 0.014 250)",
+          "oklch(0.35 0.014 250)",
+          "oklch(0.45 0.014 250)",
+          "oklch(0.55 0.014 250)",
+          "oklch(0.65 0.014 250)",
+          "oklch(0.80 0.014 250)",
+          "oklch(0.95 0.014 250)"
+        ],
+        "dark": "oklch(0.92 0.012 85)"
+      },
+      "console-surface": {
+        "role": "neutral",
+        "displayName": "Console Surface",
+        "canonical": "oklch(0.94 0.008 250)",
+        "purpose": "Printer bar, choice buttons, kbd, the HeroUI surface layer.",
+        "tonalRamp": [
+          "oklch(0.15 0.008 250)",
+          "oklch(0.25 0.008 250)",
+          "oklch(0.35 0.008 250)",
+          "oklch(0.45 0.008 250)",
+          "oklch(0.55 0.008 250)",
+          "oklch(0.65 0.008 250)",
+          "oklch(0.80 0.008 250)",
+          "oklch(0.95 0.008 250)"
+        ],
+        "dark": "oklch(0.275 0.014 250)"
+      },
+      "console-surface-secondary": {
+        "role": "neutral",
+        "displayName": "Console Surface Low",
+        "canonical": "oklch(0.88 0.01 250)",
+        "purpose": "Markdown table headers and help-dialog code chips.",
+        "tonalRamp": [
+          "oklch(0.15 0.01 250)",
+          "oklch(0.25 0.01 250)",
+          "oklch(0.35 0.01 250)",
+          "oklch(0.45 0.01 250)",
+          "oklch(0.55 0.01 250)",
+          "oklch(0.65 0.01 250)",
+          "oklch(0.80 0.01 250)",
+          "oklch(0.95 0.01 250)"
+        ],
+        "dark": "oklch(0.3 0.014 250)"
+      },
+      "console-muted": {
+        "role": "neutral",
+        "displayName": "Console Muted",
+        "canonical": "oklch(0.46 0.016 250)",
+        "purpose": "Time gutter, speaker labels, dancer's ordinary voice.",
+        "tonalRamp": [
+          "oklch(0.15 0.016 250)",
+          "oklch(0.25 0.016 250)",
+          "oklch(0.35 0.016 250)",
+          "oklch(0.45 0.016 250)",
+          "oklch(0.55 0.016 250)",
+          "oklch(0.65 0.016 250)",
+          "oklch(0.80 0.016 250)",
+          "oklch(0.95 0.016 250)"
+        ],
+        "dark": "oklch(0.7 0.014 250)"
+      },
+      "console-border": {
+        "role": "neutral",
+        "displayName": "Console Rule",
+        "canonical": "oklch(0.8 0.012 250)",
+        "purpose": "1px rules: printer top edge, code fences, table cells, blockquote bar.",
+        "tonalRamp": [
+          "oklch(0.15 0.012 250)",
+          "oklch(0.25 0.012 250)",
+          "oklch(0.35 0.012 250)",
+          "oklch(0.45 0.012 250)",
+          "oklch(0.55 0.012 250)",
+          "oklch(0.65 0.012 250)",
+          "oklch(0.80 0.012 250)",
+          "oklch(0.95 0.012 250)"
+        ],
+        "dark": "oklch(0.34 0.014 250)"
+      },
+      "console-field": {
+        "role": "neutral",
+        "displayName": "Console Field",
+        "canonical": "oklch(0.975 0.005 250)",
+        "purpose": "Textarea and fenced-code background on the desk.",
+        "tonalRamp": [
+          "oklch(0.15 0.005 250)",
+          "oklch(0.25 0.005 250)",
+          "oklch(0.35 0.005 250)",
+          "oklch(0.45 0.005 250)",
+          "oklch(0.55 0.005 250)",
+          "oklch(0.65 0.005 250)",
+          "oklch(0.80 0.005 250)",
+          "oklch(0.95 0.005 250)"
+        ],
+        "dark": "oklch(0.2 0.014 250)"
+      },
+      "console-link": {
+        "role": "neutral",
+        "displayName": "Console Link",
+        "canonical": "oklch(0.42 0.12 250)",
+        "purpose": "Links in agent Markdown and dancer lines.",
+        "tonalRamp": [
+          "oklch(0.15 0.12 250)",
+          "oklch(0.25 0.12 250)",
+          "oklch(0.35 0.12 250)",
+          "oklch(0.45 0.12 250)",
+          "oklch(0.55 0.12 250)",
+          "oklch(0.65 0.12 250)",
+          "oklch(0.80 0.12 250)",
+          "oklch(0.95 0.12 250)"
+        ],
+        "dark": "oklch(0.8 0.09 230)"
+      },
+      "rack": {
+        "role": "neutral",
+        "displayName": "Brushed Aluminium Rack",
+        "canonical": "oklch(0.835 0.012 250)",
+        "purpose": "The sidebar the strips sit in; grained with an 8px repeating rule.",
+        "tonalRamp": [
+          "oklch(0.15 0.012 250)",
+          "oklch(0.25 0.012 250)",
+          "oklch(0.35 0.012 250)",
+          "oklch(0.45 0.012 250)",
+          "oklch(0.55 0.012 250)",
+          "oklch(0.65 0.012 250)",
+          "oklch(0.80 0.012 250)",
+          "oklch(0.95 0.012 250)"
+        ],
+        "dark": "oklch(0.19 0.014 250)"
+      },
+      "rack-ink": {
+        "role": "neutral",
+        "displayName": "Rack Stamp",
+        "canonical": "oklch(0.3 0.016 250)",
+        "purpose": "Bay labels, the wordmark's 'strip board', ghost buttons on the rack.",
+        "tonalRamp": [
+          "oklch(0.15 0.016 250)",
+          "oklch(0.25 0.016 250)",
+          "oklch(0.35 0.016 250)",
+          "oklch(0.45 0.016 250)",
+          "oklch(0.55 0.016 250)",
+          "oklch(0.65 0.016 250)",
+          "oklch(0.80 0.016 250)",
+          "oklch(0.95 0.016 250)"
+        ],
+        "dark": "oklch(0.66 0.014 250)"
+      },
+      "rack-rule": {
+        "role": "neutral",
+        "displayName": "Rack Rule",
+        "canonical": "oklch(0.75 0.012 250)",
+        "purpose": "1px rule running from a bay label to the rack's edge; the rack footer's top edge.",
+        "tonalRamp": [
+          "oklch(0.15 0.012 250)",
+          "oklch(0.25 0.012 250)",
+          "oklch(0.35 0.012 250)",
+          "oklch(0.45 0.012 250)",
+          "oklch(0.55 0.012 250)",
+          "oklch(0.65 0.012 250)",
+          "oklch(0.80 0.012 250)",
+          "oklch(0.95 0.012 250)"
+        ],
+        "dark": "oklch(0.27 0.014 250)"
+      },
+      "paper-buff": {
+        "role": "neutral",
+        "displayName": "Buff Paper",
+        "canonical": "oklch(0.93 0.045 92)",
+        "purpose": "Default strip, slip and desk strip: threads hosted by the web transport.",
+        "tonalRamp": [
+          "oklch(0.15 0.045 92)",
+          "oklch(0.25 0.045 92)",
+          "oklch(0.35 0.045 92)",
+          "oklch(0.45 0.045 92)",
+          "oklch(0.55 0.045 92)",
+          "oklch(0.65 0.045 92)",
+          "oklch(0.80 0.045 92)",
+          "oklch(0.95 0.045 92)"
+        ],
+        "dark": "oklch(0.9 0.045 92)"
+      },
+      "paper-blue": {
+        "role": "neutral",
+        "displayName": "Pale Blue Paper",
+        "canonical": "oklch(0.915 0.035 235)",
+        "purpose": "Strips hosted by Slack and slips written via Slack.",
+        "tonalRamp": [
+          "oklch(0.15 0.035 235)",
+          "oklch(0.25 0.035 235)",
+          "oklch(0.35 0.035 235)",
+          "oklch(0.45 0.035 235)",
+          "oklch(0.55 0.035 235)",
+          "oklch(0.65 0.035 235)",
+          "oklch(0.80 0.035 235)",
+          "oklch(0.95 0.035 235)"
+        ],
+        "dark": "oklch(0.885 0.035 235)"
+      },
+      "paper-amber": {
+        "role": "primary",
+        "displayName": "Amber Paper",
+        "canonical": "oklch(0.91 0.085 80)",
+        "purpose": "A waiting strip, the desk strip while waiting, an open prompt.",
+        "tonalRamp": [
+          "oklch(0.15 0.085 80)",
+          "oklch(0.25 0.085 80)",
+          "oklch(0.35 0.085 80)",
+          "oklch(0.45 0.085 80)",
+          "oklch(0.55 0.085 80)",
+          "oklch(0.65 0.085 80)",
+          "oklch(0.80 0.085 80)",
+          "oklch(0.95 0.085 80)"
+        ],
+        "dark": "oklch(0.89 0.09 80)"
+      },
+      "paper-pink": {
+        "role": "secondary",
+        "displayName": "Pink Paper",
+        "canonical": "oklch(0.92 0.045 18)",
+        "purpose": "A failed strip and the desk strip of a failed thread.",
+        "tonalRamp": [
+          "oklch(0.15 0.045 18)",
+          "oklch(0.25 0.045 18)",
+          "oklch(0.35 0.045 18)",
+          "oklch(0.45 0.045 18)",
+          "oklch(0.55 0.045 18)",
+          "oklch(0.65 0.045 18)",
+          "oklch(0.80 0.045 18)",
+          "oklch(0.95 0.045 18)"
+        ],
+        "dark": "oklch(0.89 0.045 18)"
+      },
+      "paper-grey": {
+        "role": "neutral",
+        "displayName": "Grey Paper",
+        "canonical": "oklch(0.885 0.006 85)",
+        "purpose": "A closed strip, a settled prompt; shadowless.",
+        "tonalRamp": [
+          "oklch(0.15 0.006 85)",
+          "oklch(0.25 0.006 85)",
+          "oklch(0.35 0.006 85)",
+          "oklch(0.45 0.006 85)",
+          "oklch(0.55 0.006 85)",
+          "oklch(0.65 0.006 85)",
+          "oklch(0.80 0.006 85)",
+          "oklch(0.95 0.006 85)"
+        ],
+        "dark": "oklch(0.8 0.006 85)"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Dark Ink",
+        "canonical": "oklch(0.2 0.02 60)",
+        "purpose": "Everything printed on paper: titles, values, links, stamps.",
+        "tonalRamp": [
+          "oklch(0.15 0.02 60)",
+          "oklch(0.25 0.02 60)",
+          "oklch(0.35 0.02 60)",
+          "oklch(0.45 0.02 60)",
+          "oklch(0.55 0.02 60)",
+          "oklch(0.65 0.02 60)",
+          "oklch(0.80 0.02 60)",
+          "oklch(0.95 0.02 60)"
+        ]
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Faded Ink",
+        "canonical": "oklch(0.42 0.035 70)",
+        "purpose": "Second line of a strip, field keys, settled prompt text, ages.",
+        "tonalRamp": [
+          "oklch(0.15 0.035 70)",
+          "oklch(0.25 0.035 70)",
+          "oklch(0.35 0.035 70)",
+          "oklch(0.45 0.035 70)",
+          "oklch(0.55 0.035 70)",
+          "oklch(0.65 0.035 70)",
+          "oklch(0.80 0.035 70)",
+          "oklch(0.95 0.035 70)"
+        ]
+      },
+      "ink-rule": {
+        "role": "neutral",
+        "displayName": "Ink Rule",
+        "canonical": "oklch(0.2 0.02 60 / 0.16)",
+        "purpose": "The dashed perforation on every strip; the dashed rule above a riding prompt.",
+        "tonalRamp": [
+          "oklch(0.15 0.02 60)",
+          "oklch(0.25 0.02 60)",
+          "oklch(0.35 0.02 60)",
+          "oklch(0.45 0.02 60)",
+          "oklch(0.55 0.02 60)",
+          "oklch(0.65 0.02 60)",
+          "oklch(0.80 0.02 60)",
+          "oklch(0.95 0.02 60)"
+        ]
+      },
+      "flag-run-ink": {
+        "role": "secondary",
+        "displayName": "Run Flag Ink",
+        "canonical": "oklch(0.4 0.12 150)",
+        "purpose": "The RUN flag's box and letters, on any paper.",
+        "tonalRamp": [
+          "oklch(0.15 0.12 150)",
+          "oklch(0.25 0.12 150)",
+          "oklch(0.35 0.12 150)",
+          "oklch(0.45 0.12 150)",
+          "oklch(0.55 0.12 150)",
+          "oklch(0.65 0.12 150)",
+          "oklch(0.80 0.12 150)",
+          "oklch(0.95 0.12 150)"
+        ]
+      },
+      "flag-fail-ink": {
+        "role": "secondary",
+        "displayName": "Fail Flag Ink",
+        "canonical": "oklch(0.48 0.19 27)",
+        "purpose": "The FAIL flag's box and letters, on any paper.",
+        "tonalRamp": [
+          "oklch(0.15 0.19 27)",
+          "oklch(0.25 0.19 27)",
+          "oklch(0.35 0.19 27)",
+          "oklch(0.45 0.19 27)",
+          "oklch(0.55 0.19 27)",
+          "oklch(0.65 0.19 27)",
+          "oklch(0.80 0.19 27)",
+          "oklch(0.95 0.19 27)"
+        ]
+      },
+      "lamp-wait": {
+        "role": "primary",
+        "displayName": "Amber Lamp",
+        "canonical": "oklch(0.8 0.17 75)",
+        "purpose": "The lit, pulsing lamp of a strip that needs a human; the mark's lamp.",
+        "tonalRamp": [
+          "oklch(0.15 0.17 75)",
+          "oklch(0.25 0.17 75)",
+          "oklch(0.35 0.17 75)",
+          "oklch(0.45 0.17 75)",
+          "oklch(0.55 0.17 75)",
+          "oklch(0.65 0.17 75)",
+          "oklch(0.80 0.17 75)",
+          "oklch(0.95 0.17 75)"
+        ],
+        "dark": "oklch(0.83 0.17 78)"
+      },
+      "lamp-run": {
+        "role": "secondary",
+        "displayName": "Green Lamp",
+        "canonical": "oklch(0.74 0.18 150)",
+        "purpose": "The lamp of a working thread, the live line, and the link indicator.",
+        "tonalRamp": [
+          "oklch(0.15 0.18 150)",
+          "oklch(0.25 0.18 150)",
+          "oklch(0.35 0.18 150)",
+          "oklch(0.45 0.18 150)",
+          "oklch(0.55 0.18 150)",
+          "oklch(0.65 0.18 150)",
+          "oklch(0.80 0.18 150)",
+          "oklch(0.95 0.18 150)"
+        ],
+        "dark": "oklch(0.78 0.18 150)"
+      },
+      "lamp-fail": {
+        "role": "secondary",
+        "displayName": "Red Lamp",
+        "canonical": "oklch(0.62 0.22 27)",
+        "purpose": "The lamp of a failed thread and a dropped link.",
+        "tonalRamp": [
+          "oklch(0.15 0.22 27)",
+          "oklch(0.25 0.22 27)",
+          "oklch(0.35 0.22 27)",
+          "oklch(0.45 0.22 27)",
+          "oklch(0.55 0.22 27)",
+          "oklch(0.65 0.22 27)",
+          "oklch(0.80 0.22 27)",
+          "oklch(0.95 0.22 27)"
+        ],
+        "dark": "oklch(0.66 0.22 27)"
+      },
+      "lamp-off": {
+        "role": "neutral",
+        "displayName": "Unlit Lamp",
+        "canonical": "oklch(0.2 0.02 60 / 0.18)",
+        "purpose": "The lamp every other state carries: ink at 18%, inset-shadowed.",
+        "tonalRamp": [
+          "oklch(0.15 0.02 60)",
+          "oklch(0.25 0.02 60)",
+          "oklch(0.35 0.02 60)",
+          "oklch(0.45 0.02 60)",
+          "oklch(0.55 0.02 60)",
+          "oklch(0.65 0.02 60)",
+          "oklch(0.80 0.02 60)",
+          "oklch(0.95 0.02 60)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Accent Amber",
+        "canonical": "oklch(0.72 0.155 72)",
+        "purpose": "HeroUI accent: ALLOW, SEND, Sign in; the @mention callout in dancer lines.",
+        "tonalRamp": [
+          "oklch(0.15 0.155 72)",
+          "oklch(0.25 0.155 72)",
+          "oklch(0.35 0.155 72)",
+          "oklch(0.45 0.155 72)",
+          "oklch(0.55 0.155 72)",
+          "oklch(0.65 0.155 72)",
+          "oklch(0.80 0.155 72)",
+          "oklch(0.95 0.155 72)"
+        ],
+        "dark": "oklch(0.8 0.16 75)"
+      },
+      "accent-foreground": {
+        "role": "primary",
+        "displayName": "Accent Ink",
+        "canonical": "oklch(0.2 0.03 70)",
+        "purpose": "Text on accent buttons.",
+        "tonalRamp": [
+          "oklch(0.15 0.03 70)",
+          "oklch(0.25 0.03 70)",
+          "oklch(0.35 0.03 70)",
+          "oklch(0.45 0.03 70)",
+          "oklch(0.55 0.03 70)",
+          "oklch(0.65 0.03 70)",
+          "oklch(0.80 0.03 70)",
+          "oklch(0.95 0.03 70)"
+        ]
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "Signal Green",
+        "canonical": "oklch(0.66 0.16 150)",
+        "purpose": "Dancer lines beginning with a check mark.",
+        "tonalRamp": [
+          "oklch(0.15 0.16 150)",
+          "oklch(0.25 0.16 150)",
+          "oklch(0.35 0.16 150)",
+          "oklch(0.45 0.16 150)",
+          "oklch(0.55 0.16 150)",
+          "oklch(0.65 0.16 150)",
+          "oklch(0.80 0.16 150)",
+          "oklch(0.95 0.16 150)"
+        ],
+        "dark": "oklch(0.76 0.17 150)"
+      },
+      "warning": {
+        "role": "secondary",
+        "displayName": "Signal Amber",
+        "canonical": "oklch(0.76 0.15 72)",
+        "purpose": "Dancer lines beginning with pause/warn/stop/recycle glyphs.",
+        "tonalRamp": [
+          "oklch(0.15 0.15 72)",
+          "oklch(0.25 0.15 72)",
+          "oklch(0.35 0.15 72)",
+          "oklch(0.45 0.15 72)",
+          "oklch(0.55 0.15 72)",
+          "oklch(0.65 0.15 72)",
+          "oklch(0.80 0.15 72)",
+          "oklch(0.95 0.15 72)"
+        ],
+        "dark": "oklch(0.8 0.15 72)"
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Signal Red",
+        "canonical": "oklch(0.58 0.2 27)",
+        "purpose": "DENY button, failed dancer lines, login/password errors.",
+        "tonalRamp": [
+          "oklch(0.15 0.2 27)",
+          "oklch(0.25 0.2 27)",
+          "oklch(0.35 0.2 27)",
+          "oklch(0.45 0.2 27)",
+          "oklch(0.55 0.2 27)",
+          "oklch(0.65 0.2 27)",
+          "oklch(0.80 0.2 27)",
+          "oklch(0.95 0.2 27)"
+        ],
+        "dark": "oklch(0.66 0.2 27)"
+      },
+      "danger-foreground": {
+        "role": "secondary",
+        "displayName": "Danger Ink",
+        "canonical": "oklch(0.98 0.01 27)",
+        "purpose": "Text on the DENY button.",
+        "tonalRamp": [
+          "oklch(0.15 0.01 27)",
+          "oklch(0.25 0.01 27)",
+          "oklch(0.35 0.01 27)",
+          "oklch(0.45 0.01 27)",
+          "oklch(0.55 0.01 27)",
+          "oklch(0.65 0.01 27)",
+          "oklch(0.80 0.01 27)",
+          "oklch(0.95 0.01 27)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus Amber",
+        "canonical": "oklch(0.55 0.16 72)",
+        "purpose": "Focus ring on strips (2px outside a 2px console gap) and HeroUI fields.",
+        "tonalRamp": [
+          "oklch(0.15 0.16 72)",
+          "oklch(0.25 0.16 72)",
+          "oklch(0.35 0.16 72)",
+          "oklch(0.45 0.16 72)",
+          "oklch(0.55 0.16 72)",
+          "oklch(0.65 0.16 72)",
+          "oklch(0.80 0.16 72)",
+          "oklch(0.95 0.16 72)"
+        ],
+        "dark": "oklch(0.8 0.16 75)"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Desk Heading",
+        "purpose": "The pulled strip's title and the wordmark; 15px 600, one line."
+      },
+      "title": {
+        "displayName": "Strip Title",
+        "purpose": "A racked strip's title; 13px 500, 700 while unread."
+      },
+      "body": {
+        "displayName": "Prose",
+        "purpose": "Agent Markdown and human slips at 14px/1.55, 72ch measure."
+      },
+      "sys": {
+        "displayName": "Dancer Line",
+        "purpose": "dancer's own lines at 13px/1.45 in console-muted, 80ch."
+      },
+      "data": {
+        "displayName": "Printed Value",
+        "purpose": "Desk-strip field values, live line, riding prompt text, file names; mono 12px tabular."
+      },
+      "gutter": {
+        "displayName": "Time Gutter",
+        "purpose": "The log's time column, strip second line and age, speaker line; mono 11px tabular."
+      },
+      "label": {
+        "displayName": "Stamped Label",
+        "purpose": "Bay labels, speaker labels, @mention; mono 11px uppercase 0.06em. Field keys and form labels on paper drop to 10px at 0.1em."
+      },
+      "flag": {
+        "displayName": "Flag",
+        "purpose": "Four-letter flags, unread stamps, button faces; mono 10px uppercase 0.08em, 700 for WAIT and FAIL."
+      }
+    },
+    "shadows": [
+      {
+        "name": "paper-shadow",
+        "value": "0 1px 1px oklch(0 0 0 / 0.12), 0 2px 6px -2px oklch(0 0 0 / 0.18)",
+        "dark": "0 1px 1px oklch(0 0 0 / 0.35), 0 2px 8px -2px oklch(0 0 0 / 0.5)",
+        "purpose": "Paper at rest: racked strips, slips, settled prompts, closed desk strip."
+      },
+      {
+        "name": "paper-shadow-up",
+        "value": "0 2px 2px oklch(0 0 0 / 0.14), 0 8px 16px -6px oklch(0 0 0 / 0.3)",
+        "dark": "0 2px 2px oklch(0 0 0 / 0.4), 0 10px 20px -6px oklch(0 0 0 / 0.6)",
+        "purpose": "Paper pulled: current strip, cocked waiting strip, desk strip, open prompt, toast."
+      },
+      {
+        "name": "lamp-glow-wait",
+        "value": "0 0 0 1px oklch(0.5 0.12 75 / 0.5), 0 0 8px 2px oklch(0.8 0.17 75 / 0.55)",
+        "purpose": "Ring and glow on the amber lamp."
+      },
+      {
+        "name": "lamp-glow-run",
+        "value": "0 0 0 1px oklch(0.45 0.12 150 / 0.5), 0 0 6px 1px oklch(0.76 0.18 150 / 0.45)",
+        "purpose": "Ring and glow on the green lamp."
+      },
+      {
+        "name": "lamp-glow-fail",
+        "value": "0 0 0 1px oklch(0.4 0.15 27 / 0.5), 0 0 6px 1px oklch(0.66 0.22 27 / 0.45)",
+        "purpose": "Ring and glow on the red lamp."
+      },
+      {
+        "name": "lamp-inset",
+        "value": "inset 0 1px 1px oklch(0 0 0 / 0.25)",
+        "purpose": "The unlit lamp's recess."
+      },
+      {
+        "name": "strip-focus",
+        "value": "var(--paper-shadow), 0 0 0 2px var(--background), 0 0 0 4px var(--focus)",
+        "purpose": "focus-visible on a racked strip."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-paper",
+        "value": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Strip hover/cock transform and shadow (180ms); the pull-onto-desk animation (220ms)."
+      },
+      {
+        "name": "duration-strip",
+        "value": "180ms",
+        "purpose": "Strip transform and shadow transitions."
+      },
+      {
+        "name": "duration-pull",
+        "value": "220ms",
+        "purpose": "Desk strip entering: translateY(-6px) and opacity 0.6 to rest."
+      },
+      {
+        "name": "lamp-ask",
+        "value": "brightness 1 to 0.7, 1.3s ease-in-out infinite",
+        "purpose": "The waiting lamp's pulse; off under prefers-reduced-motion, as are the strip transitions."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "md",
+        "value": "768px",
+        "purpose": "Above: rack static at 19.5rem, time gutter shown. Below: rack slides in over a backdrop, time moves into the speaker line."
+      }
+    ],
+    "colorSchemes": {
+      "source": "internal/transport/web/ui/src/styles.css @layer base; .dark toggled by main.tsx from prefers-color-scheme",
+      "note": "Every colorMeta entry with a `dark` field is redefined under .dark; ink, ink-2, ink-rule, lamp-off, accent-foreground and danger-foreground are not, by the Paper Is Always Lit Rule."
+    },
+    "mark": {
+      "source": "src/strip.tsx Mark(); favicon in index.html",
+      "liveTokens": [
+        "--paper",
+        "--ink",
+        "--lamp-wait"
+      ],
+      "faviconHex": {
+        "paper": "#f1e7c4",
+        "ink": "#332a1c",
+        "lamp": "#f0b33a"
+      },
+      "note": "The favicon cannot read custom properties, so it carries fixed hex approximations of paper-buff, ink and lamp-wait."
+    },
+    "sysTone": {
+      "ok": "text begins with ✅",
+      "bad": "text begins with ❌",
+      "warn": "text begins with ⏸️ ⚠️ 🚫 ⏹️ or ♻️",
+      "note": "Tone is read off the glyph the coordinator already emits; the UI adds no glyphs of its own."
+    }
+  },
+  "components": [
+    {
+      "name": "Strip (rack)",
+      "kind": "nav",
+      "refersTo": "strip",
+      "description": "A racked thread: lamp, title, printed line, flag and age on paper with a perforated edge. Three strips shown: current, cocked waiting, and a Slack-hosted one.",
+      "html": "<div class=\"ds-rack\"><div class=\"ds-bay\"><span class=\"ds-lamp\" data-state=\"wait\"></span>needs you · 1</div><a class=\"ds-strip\" href=\"#\" data-state=\"wait\"><span class=\"ds-lamp\" data-state=\"wait\"></span><span class=\"ds-title ds-fresh\">fix flaky coordinator test</span><span class=\"ds-line\">#dev</span><span class=\"ds-slot\"><span class=\"ds-stamp\">2 NEW</span><span class=\"ds-flag\" data-state=\"wait\">WAIT</span></span><span class=\"ds-when\">1m</span></a><div class=\"ds-bay\">web · #dev</div><a class=\"ds-strip\" href=\"#\" data-state=\"run\" data-current=\"true\"><span class=\"ds-lamp\" data-state=\"run\"></span><span class=\"ds-title\">migrate sqlite schema</span><span class=\"ds-line\">🔧 Bash go test ./... · 1m05s · 6 tool calls</span><span class=\"ds-slot\"><span class=\"ds-flag\" data-state=\"run\">RUN</span></span><span class=\"ds-when\">now</span></a><div class=\"ds-bay\">slack · #ops</div><a class=\"ds-strip\" href=\"#\" data-state=\"done\" data-host=\"slack\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-title\">rotate deploy keys</span><span class=\"ds-line\">by daniel</span><span class=\"ds-slot\"><span class=\"ds-flag\" data-state=\"done\">DONE</span></span><span class=\"ds-when\">2h</span></a></div>",
+      "css": ".ds-rack{background:var(--rack);color:var(--rack-ink);background-image:repeating-linear-gradient(180deg,transparent 0 7px,oklch(0 0 0 / 0.035) 7px 8px);padding:4px 0 8px;width:19.5rem;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}.ds-bay{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--rack-ink);padding:0.6rem 1rem 0.25rem;display:flex;align-items:center;gap:0.5rem}.ds-bay::after{content:'';flex:1;height:1px;background:var(--rack-rule)}.ds-strip{--strip-paper:var(--paper);display:grid;grid-template-columns:14px minmax(0,1fr) auto;grid-template-rows:auto auto;column-gap:0.5rem;align-items:center;background:var(--strip-paper);color:var(--ink);padding:0.4rem 0.6rem 0.4rem 0.5rem;margin:0 0.5rem 3px;border-radius:2px;box-shadow:var(--paper-shadow);position:relative;text-decoration:none;transition:transform 180ms cubic-bezier(0.2,0.8,0.2,1),box-shadow 180ms cubic-bezier(0.2,0.8,0.2,1);outline:none}.ds-strip::before{content:'';position:absolute;inset:0 auto 0 0;width:3px;border-right:1px dashed var(--ink-rule)}.ds-strip:hover{transform:translateX(3px)}.ds-strip:focus-visible{box-shadow:var(--paper-shadow),0 0 0 2px var(--background),0 0 0 4px var(--focus)}.ds-strip[data-current=true]{transform:translateX(8px);box-shadow:var(--paper-shadow-up)}.ds-strip[data-state=wait]{--strip-paper:var(--paper-amber);transform:translateX(8px) rotate(-0.4deg);box-shadow:var(--paper-shadow-up)}.ds-strip[data-host=slack]{--strip-paper:var(--paper-blue)}.ds-strip[data-state=fail]{--strip-paper:var(--paper-pink)}.ds-strip[data-state=closed]{--strip-paper:var(--paper-grey);color:var(--ink-2);box-shadow:none;opacity:0.85}.ds-strip .ds-lamp{grid-column:1;grid-row:1/3;justify-self:center}.ds-title{grid-column:2;grid-row:1;font-size:13px;line-height:1.25;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-fresh{font-weight:700}.ds-line{grid-column:2;grid-row:2;font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;line-height:1.35;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}.ds-slot{grid-column:3;grid-row:1;justify-self:end;display:flex;align-items:center;gap:4px}.ds-when{grid-column:3;grid-row:2;justify-self:end;font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-2);margin-top:2px}.ds-stamp{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:10px;font-weight:700;line-height:1;padding:3px 5px 2px;border-radius:2px;background:var(--ink);color:var(--strip-paper,var(--paper));white-space:nowrap}.ds-flag{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,monospace);font-size:10px;line-height:1;letter-spacing:0.08em;padding:3px 4px 2px 5px;border:1px solid currentColor;border-radius:2px;color:var(--ink-2);white-space:nowrap}.ds-flag[data-state=wait]{color:var(--ink);border-color:var(--ink);font-weight:700}.ds-flag[data-state=run]{color:oklch(0.4 0.12 150);border-color:oklch(0.4 0.12 150)}.ds-flag[data-state=fail]{color:oklch(0.48 0.19 27);border-color:oklch(0.48 0.19 27);font-weight:700}.ds-flag[data-state=closed]{border-style:dashed}.ds-lamp{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--lamp-off);box-shadow:inset 0 1px 1px oklch(0 0 0 / 0.25);flex:none}.ds-lamp[data-state=wait]{background:var(--lamp-wait);box-shadow:0 0 0 1px oklch(0.5 0.12 75 / 0.5),0 0 8px 2px oklch(0.8 0.17 75 / 0.55);animation:ds-lamp-ask 1.3s ease-in-out infinite}.ds-lamp[data-state=run]{background:var(--lamp-run);box-shadow:0 0 0 1px oklch(0.45 0.12 150 / 0.5),0 0 6px 1px oklch(0.76 0.18 150 / 0.45)}.ds-lamp[data-state=fail]{background:var(--lamp-fail);box-shadow:0 0 0 1px oklch(0.4 0.15 27 / 0.5),0 0 6px 1px oklch(0.66 0.22 27 / 0.45)}@keyframes ds-lamp-ask{0%,100%{filter:brightness(1)}50%{filter:brightness(0.7)}}"
+    },
+    {
+      "name": "Desk strip",
+      "kind": "card",
+      "refersTo": "desk-strip",
+      "description": "The pulled strip across the head of the desk, printed with channel / started by / elapsed / state, and the open prompt riding on it with ALLOW and DENY while waiting.",
+      "html": "<div class=\"ds-desk\" data-state=\"wait\"><div class=\"ds-head\"><div class=\"ds-heading\"><span class=\"ds-lamp\" data-state=\"wait\"></span><h1>fix flaky coordinator test</h1></div><div class=\"ds-field\"><span class=\"ds-k\">channel</span><span class=\"ds-v\">#dev</span></div><div class=\"ds-field\"><span class=\"ds-k\">started by</span><span class=\"ds-v\">daniel</span></div><div class=\"ds-field\"><span class=\"ds-k\">elapsed</span><span class=\"ds-v\">4m12s</span></div><div class=\"ds-field\"><span class=\"ds-k\">state</span><span class=\"ds-v\"><span class=\"ds-flag\" data-state=\"wait\">WAIT</span></span></div></div><div class=\"ds-ask\"><span class=\"ds-text\">Bash: go test -race ./internal/coordinator</span><button class=\"ds-btn ds-btn-allow\">allow</button><button class=\"ds-btn ds-btn-deny\">deny</button></div></div>",
+      "css": ".ds-desk{background:var(--paper);color:var(--ink);box-shadow:var(--paper-shadow-up);border-radius:2px;position:relative;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;animation:ds-pull 220ms cubic-bezier(0.2,0.8,0.2,1)}.ds-desk::before{content:'';position:absolute;inset:0 auto 0 0;width:4px;border-right:1px dashed var(--ink-rule)}.ds-desk[data-host=slack]{background:var(--paper-blue)}.ds-desk[data-state=wait]{background:var(--paper-amber)}.ds-desk[data-state=fail]{background:var(--paper-pink)}.ds-desk[data-state=closed]{background:var(--paper-grey);box-shadow:var(--paper-shadow)}@keyframes ds-pull{from{transform:translateY(-6px);opacity:0.6}to{transform:none;opacity:1}}.ds-head{display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 1.25rem;padding:0.625rem 1.25rem}.ds-heading{display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0}.ds-heading h1{margin:0;font-size:15px;font-weight:600;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ds-field{display:flex;flex-direction:column;gap:1px;min-width:0}.ds-k{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink-2);line-height:1}.ds-v{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;line-height:1.3;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}.ds-ask{border-top:1px dashed var(--ink-rule);margin-left:5px;display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 1rem;padding:0.5rem 1.25rem}.ds-text{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1 1 16rem}.ds-btn{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;border:0;border-radius:0.2rem;padding:0.4rem 0.8rem;cursor:pointer;transition:filter 120ms}.ds-btn:hover{filter:brightness(0.95)}.ds-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-btn-allow{background:var(--accent);color:var(--accent-foreground)}.ds-btn-deny{background:var(--danger);color:var(--danger-foreground)}.ds-flag{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,monospace);font-size:10px;line-height:1;letter-spacing:0.08em;padding:3px 4px 2px 5px;border:1px solid currentColor;border-radius:2px;color:var(--ink-2);white-space:nowrap}.ds-flag[data-state=wait]{color:var(--ink);border-color:var(--ink);font-weight:700}.ds-flag[data-state=run]{color:oklch(0.4 0.12 150);border-color:oklch(0.4 0.12 150)}.ds-flag[data-state=fail]{color:oklch(0.48 0.19 27);border-color:oklch(0.48 0.19 27);font-weight:700}.ds-flag[data-state=closed]{border-style:dashed}.ds-lamp{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--lamp-off);box-shadow:inset 0 1px 1px oklch(0 0 0 / 0.25);flex:none}.ds-lamp[data-state=wait]{background:var(--lamp-wait);box-shadow:0 0 0 1px oklch(0.5 0.12 75 / 0.5),0 0 8px 2px oklch(0.8 0.17 75 / 0.55);animation:ds-lamp-ask 1.3s ease-in-out infinite}.ds-lamp[data-state=run]{background:var(--lamp-run);box-shadow:0 0 0 1px oklch(0.45 0.12 150 / 0.5),0 0 6px 1px oklch(0.76 0.18 150 / 0.45)}.ds-lamp[data-state=fail]{background:var(--lamp-fail);box-shadow:0 0 0 1px oklch(0.4 0.15 27 / 0.5),0 0 6px 1px oklch(0.66 0.22 27 / 0.45)}@keyframes ds-lamp-ask{0%,100%{filter:brightness(1)}50%{filter:brightness(0.7)}}"
+    },
+    {
+      "name": "Log: slip, agent text, dancer line",
+      "kind": "custom",
+      "refersTo": "slip",
+      "description": "Three rows of the time-gutter log: a human slip on paper, agent Markdown on the desk, and a dancer line in the rack's voice.",
+      "html": "<div class=\"ds-log\"><span class=\"ds-t\">14:02</span><div class=\"ds-slip\"><div class=\"ds-who\"><b>daniel</b></div>run coder fix the flaky coordinator test</div><span class=\"ds-t\">14:02</span><div class=\"ds-sys\">task started with agent <code>coder</code> (local)</div><span class=\"ds-t\">14:06</span><div><div class=\"ds-who\"><b>agent</b></div><div class=\"ds-md\"><p>The race is in <code>emit</code>: the heartbeat and the executor both touch the status line. I took the per-thread lock in both paths.</p></div></div><span class=\"ds-t\">14:07</span><div class=\"ds-sys\" data-tone=\"ok\">✅ done · 4m12s · 7 tool calls</div></div>",
+      "css": ".ds-log{display:grid;grid-template-columns:4.25rem minmax(0,1fr);column-gap:0.75rem;row-gap:0.25rem;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;font-size:14px;color:var(--foreground);background:var(--background);padding:1rem}.ds-t{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted);text-align:right;padding-top:5px;line-height:1.2;user-select:none}.ds-who{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);line-height:1.2;margin-bottom:3px}.ds-who b{color:var(--foreground);font-weight:600}.ds-slip{background:var(--paper);color:var(--ink);box-shadow:var(--paper-shadow);border-radius:2px;padding:0.45rem 0.7rem;max-width:72ch;white-space:pre-wrap;overflow-wrap:anywhere}.ds-slip[data-host=slack]{background:var(--paper-blue)}.ds-slip .ds-who{color:var(--ink-2)}.ds-slip .ds-who b{color:var(--ink)}.ds-md{max-width:72ch;font-size:14px;line-height:1.55}.ds-md p{margin:0.45em 0}.ds-md code,.ds-sys code{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:0.92em;background:color-mix(in oklab,currentColor 9%,transparent);border-radius:3px;padding:0.08em 0.35em}.ds-sys{font-size:13px;line-height:1.45;color:var(--muted);max-width:80ch}.ds-sys[data-tone=ok]{color:var(--success)}.ds-sys[data-tone=bad]{color:var(--danger)}.ds-sys[data-tone=warn]{color:var(--warning)}"
+    },
+    {
+      "name": "Prompt",
+      "kind": "card",
+      "refersTo": "prompt",
+      "description": "A lit strip laid across the log with its choices, and the same prompt once settled with its decision stamp.",
+      "html": "<div class=\"ds-stack\"><div class=\"ds-prompt\" data-open=\"true\"><div class=\"ds-who\"><span class=\"ds-lamp\" data-state=\"wait\"></span><b>dancer</b></div><div class=\"ds-text\">Allow <code>Bash</code>: <code>go test -race ./internal/coordinator</code>?</div><div class=\"ds-choices\"><button class=\"ds-btn ds-btn-allow\">allow</button><button class=\"ds-btn ds-btn-deny\">deny</button></div></div><div class=\"ds-prompt\" data-open=\"false\"><div class=\"ds-who\"><span class=\"ds-lamp\" data-state=\"off\"></span><b>dancer</b></div><div class=\"ds-text\">Allow <code>Bash</code>: <code>go test -race ./internal/coordinator</code>?</div><div class=\"ds-answered\"><b>allow</b> daniel via slack · 14:03</div></div></div>",
+      "css": ".ds-stack{display:flex;flex-direction:column;gap:1rem;background:var(--background);padding:1rem;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;font-size:14px}.ds-prompt{background:var(--paper-amber);color:var(--ink);box-shadow:var(--paper-shadow-up);border-radius:2px;padding:0.6rem 0.8rem 0.7rem;max-width:72ch;position:relative}.ds-prompt[data-open=false]{background:var(--paper-grey);box-shadow:var(--paper-shadow);color:var(--ink-2)}.ds-who{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-2);line-height:1.2;display:flex;align-items:center;gap:0.5rem;margin-bottom:3px}.ds-who b{color:var(--ink);font-weight:600}.ds-prompt[data-open=false] .ds-who b{color:var(--ink-2)}.ds-text code{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:0.92em;background:oklch(0 0 0 / 0.07);border-radius:3px;padding:0.08em 0.35em;color:inherit}.ds-choices{margin-top:0.75rem;display:flex;gap:0.5rem}.ds-btn{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;border:0;border-radius:0.2rem;padding:0.4rem 0.8rem;cursor:pointer}.ds-btn:hover{filter:brightness(0.95)}.ds-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-btn-allow{background:var(--accent);color:var(--accent-foreground)}.ds-btn-deny{background:var(--danger);color:var(--danger-foreground)}.ds-answered{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11.5px;margin-top:0.4rem;color:var(--ink-2)}.ds-answered b{color:var(--ink);border:1.5px solid var(--ink);border-radius:2px;padding:1px 5px 0;letter-spacing:0.06em;text-transform:uppercase;font-size:10.5px;display:inline-block;transform:rotate(-1.5deg);margin-right:2px}.ds-lamp{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--lamp-off);box-shadow:inset 0 1px 1px oklch(0 0 0 / 0.25);flex:none}.ds-lamp[data-state=wait]{background:var(--lamp-wait);box-shadow:0 0 0 1px oklch(0.5 0.12 75 / 0.5),0 0 8px 2px oklch(0.8 0.17 75 / 0.55);animation:ds-lamp-ask 1.3s ease-in-out infinite}.ds-lamp[data-state=run]{background:var(--lamp-run);box-shadow:0 0 0 1px oklch(0.45 0.12 150 / 0.5),0 0 6px 1px oklch(0.76 0.18 150 / 0.45)}.ds-lamp[data-state=fail]{background:var(--lamp-fail);box-shadow:0 0 0 1px oklch(0.4 0.15 27 / 0.5),0 0 6px 1px oklch(0.66 0.22 27 / 0.45)}@keyframes ds-lamp-ask{0%,100%{filter:brightness(1)}50%{filter:brightness(0.7)}}"
+    },
+    {
+      "name": "Allow button",
+      "kind": "button",
+      "refersTo": "button-allow",
+      "description": "The primary action: HeroUI primary wearing the amber accent, face in flag type.",
+      "html": "<button class=\"ds-btn-allow\">allow</button>",
+      "css": ".ds-btn-allow{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;background:var(--accent);color:var(--accent-foreground);border:0;border-radius:0.2rem;padding:0.4rem 0.8rem;cursor:pointer;transition:filter 120ms}.ds-btn-allow:hover{filter:brightness(0.95)}.ds-btn-allow:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-btn-allow:active{filter:brightness(0.9)}"
+    },
+    {
+      "name": "Deny button",
+      "kind": "button",
+      "refersTo": "button-deny",
+      "description": "The refusing action: HeroUI danger, face in flag type.",
+      "html": "<button class=\"ds-btn-deny\">deny</button>",
+      "css": ".ds-btn-deny{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;background:var(--danger);color:var(--danger-foreground);border:0;border-radius:0.2rem;padding:0.4rem 0.8rem;cursor:pointer;transition:filter 120ms}.ds-btn-deny:hover{filter:brightness(0.95)}.ds-btn-deny:focus-visible{outline:2px solid var(--focus);outline-offset:2px}"
+    },
+    {
+      "name": "Choice button",
+      "kind": "button",
+      "refersTo": "button-choice",
+      "description": "A question's option or any non-allow/deny choice: secondary on console surface with a 25% ink border.",
+      "html": "<button class=\"ds-btn-choice\"><span>Use the worktree</span><span class=\"ds-desc\">keeps main clean</span></button>",
+      "css": ".ds-btn-choice{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;font-size:13px;display:inline-flex;flex-direction:column;align-items:flex-start;background:var(--surface);color:var(--foreground);border:1px solid color-mix(in oklab,var(--ink) 25%,transparent);border-radius:0.2rem;padding:0.375rem 0.75rem;cursor:pointer;text-align:left}.ds-btn-choice:hover{background:var(--surface-secondary)}.ds-btn-choice:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-desc{font-size:12px;color:var(--muted);font-weight:400}"
+    },
+    {
+      "name": "Printer",
+      "kind": "input",
+      "refersTo": "printer-field",
+      "description": "The composer along the bottom: a textarea on the console field with SEND in flag type.",
+      "html": "<form class=\"ds-printer\"><textarea class=\"ds-ta\" rows=\"1\" placeholder=\"Reply — Enter sends, Shift+Enter for a new line\"></textarea><button type=\"button\" class=\"ds-send\">send</button></form>",
+      "css": ".ds-printer{background:var(--surface);border-top:1px solid var(--border);padding:0.75rem 1.25rem;display:flex;align-items:flex-end;gap:0.5rem;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}.ds-ta{flex:1;min-height:2.5rem;max-height:12rem;resize:none;font:inherit;font-size:14px;line-height:1.5;padding:0.5rem 0.75rem;background:var(--field-background);color:var(--field-foreground);border:1px solid var(--field-border);border-radius:0.2rem}.ds-ta::placeholder{color:var(--muted)}.ds-ta:focus-visible{outline:2px solid var(--focus);outline-offset:1px}.ds-send{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;background:var(--accent);color:var(--accent-foreground);border:0;border-radius:0.2rem;padding:0.6rem 0.9rem;cursor:pointer}.ds-send:hover{filter:brightness(0.95)}.ds-send:disabled{opacity:0.5;cursor:default}"
+    },
+    {
+      "name": "Flag and lamp",
+      "kind": "chip",
+      "refersTo": "flag",
+      "description": "The state vocabulary: every flag with its lamp, as printed on paper.",
+      "html": "<div class=\"ds-sheet\"><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"wait\"></span><span class=\"ds-flag\" data-state=\"wait\">WAIT</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"run\"></span><span class=\"ds-flag\" data-state=\"run\">RUN</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"fail\"></span><span class=\"ds-flag\" data-state=\"fail\">FAIL</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"done\">DONE</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"idle\">IDLE</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"queue\">QUED</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"intr\">INTR</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"cncl\">CNCL</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"closed\">CLSD</span></span><span class=\"ds-pair\"><span class=\"ds-lamp\" data-state=\"off\"></span><span class=\"ds-flag\" data-state=\"new\">NEW</span></span><span class=\"ds-stamp\">3 NEW</span></div>",
+      "css": ".ds-sheet{display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center;background:var(--paper);color:var(--ink);padding:0.75rem 1rem;border-radius:2px;box-shadow:var(--paper-shadow)}.ds-pair{display:inline-flex;align-items:center;gap:6px}.ds-stamp{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:10px;font-weight:700;line-height:1;padding:3px 5px 2px;border-radius:2px;background:var(--ink);color:var(--paper)}.ds-flag{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,monospace);font-size:10px;line-height:1;letter-spacing:0.08em;padding:3px 4px 2px 5px;border:1px solid currentColor;border-radius:2px;color:var(--ink-2);white-space:nowrap}.ds-flag[data-state=wait]{color:var(--ink);border-color:var(--ink);font-weight:700}.ds-flag[data-state=run]{color:oklch(0.4 0.12 150);border-color:oklch(0.4 0.12 150)}.ds-flag[data-state=fail]{color:oklch(0.48 0.19 27);border-color:oklch(0.48 0.19 27);font-weight:700}.ds-flag[data-state=closed]{border-style:dashed}.ds-lamp{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--lamp-off);box-shadow:inset 0 1px 1px oklch(0 0 0 / 0.25);flex:none}.ds-lamp[data-state=wait]{background:var(--lamp-wait);box-shadow:0 0 0 1px oklch(0.5 0.12 75 / 0.5),0 0 8px 2px oklch(0.8 0.17 75 / 0.55);animation:ds-lamp-ask 1.3s ease-in-out infinite}.ds-lamp[data-state=run]{background:var(--lamp-run);box-shadow:0 0 0 1px oklch(0.45 0.12 150 / 0.5),0 0 6px 1px oklch(0.76 0.18 150 / 0.45)}.ds-lamp[data-state=fail]{background:var(--lamp-fail);box-shadow:0 0 0 1px oklch(0.4 0.15 27 / 0.5),0 0 6px 1px oklch(0.66 0.22 27 / 0.45)}@keyframes ds-lamp-ask{0%,100%{filter:brightness(1)}50%{filter:brightness(0.7)}}"
+    },
+    {
+      "name": "Bay label",
+      "kind": "nav",
+      "refersTo": "bay-label",
+      "description": "A bay's label stamped into the rack with its rule, plus the ghost '+' for a new strip.",
+      "html": "<div class=\"ds-rackbit\"><div class=\"ds-bay\"><span>web · #dev</span><button class=\"ds-plus\" aria-label=\"New thread in #dev\">+</button></div></div>",
+      "css": ".ds-rackbit{background:var(--rack);width:19.5rem;padding:4px 0}.ds-bay{font-family:var(--font-strip,ui-monospace,'SF Mono',Menlo,Consolas,'DejaVu Sans Mono',monospace);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--rack-ink);padding:0.6rem 1rem 0.25rem;display:flex;align-items:center;gap:0.5rem}.ds-bay::after{content:'';flex:1;height:1px;background:var(--rack-rule)}.ds-plus{order:2;width:1.5rem;height:1.5rem;margin:-0.25rem 0;border:0;border-radius:0.2rem;background:transparent;color:var(--rack-ink);font:inherit;font-size:14px;cursor:pointer}.ds-plus:hover{background:color-mix(in oklab,var(--rack-ink) 12%,transparent)}.ds-plus:focus-visible{outline:2px solid var(--focus)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Flight-Strip Board",
+    "overview": "Every thread is a paper flight-progress strip. The operator reads a rack of printed strips down the left edge and pulls one onto the desk; the open strip sits across the head of the desk with its fields printed on it, the log runs beneath it in a time-gutter grid, and the printer (the composer) sits along the bottom. The console is brushed aluminium in daylight and graphite-blue at night; the paper is always light and the ink is always dark, whichever the scheme. State is carried by a lamp (amber asks, green runs, red failed) and a four-letter printed flag, never by colour alone, and a strip that needs a human is lit and cocked out of the rack so it is found without hunting.\n\nThe world refuses the chat-app scaffold: no avatars, no bubbles, no sidebar list of conversations. Instead the material says who is speaking. Humans write on paper (strips, slips, prompts); the machine speaks on the desk (agent Markdown, dancer's own lines in the rack's muted voice). Density is high and quiet: an all-day second-monitor surface that earns trust by being legible from across the room and calm up close.\n\nType follows the same split. Anything printed on a strip or measured (flags, field values, elapsed times, the time gutter, labels, the live line) is set in the system monospace; prose (titles, agent text, dancer's lines, help) is the system sans. No fonts are bundled.",
+    "keyCharacteristics": [
+      "Paper on a console: warm buff and pale-blue strips lift off a cool grey-blue rack and desk.",
+      "Lamp plus flag for every state; only WAIT, RUN and FAIL light a lamp.",
+      "A cocked strip (translated 8px, rotated -0.4deg, lifted shadow) is the one dramatic gesture.",
+      "Mono for printed data, sans for prose; 10-15px, tabular numerals throughout.",
+      "Two shadows only: paper at rest, paper pulled.",
+      "2px corners on paper; perforated (dashed) left edge on every strip."
+    ],
+    "rules": [
+      {
+        "name": "The Lamp Rule",
+        "body": "State is a lamp plus a printed flag. Only WAIT, RUN and FAIL light a lamp (amber, green, red); every other state shows the unlit lamp and its four-letter flag. Colour is never the sole carrier.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Is Always Lit Rule",
+        "body": "Paper stays light and ink stays dark in both colour schemes; the dark scheme darkens the console and the rack, lowers paper by ~0.03 L, and leaves every `ink` token untouched.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper/Desk Rule",
+        "body": "What a human writes or must answer is printed on paper; what the machine says sits on the desk. Agent Markdown and dancer's own lines never get a paper background.",
+        "section": "colors"
+      },
+      {
+        "name": "The Host Colour Rule",
+        "body": "Blue paper means Slack hosts or wrote it; buff means the web. The host colour yields to state: a waiting strip is amber and a failed strip is pink whoever hosts it.",
+        "section": "colors"
+      },
+      {
+        "name": "The Printed Data Rule",
+        "body": "If it is a value a controller reads off a strip (flag, field, time, count, tool name), it is mono with tabular numerals. If it is a sentence, it is sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The Four-Letter Flag Rule",
+        "body": "A state is printed as exactly four uppercase letters in a 1px box: WAIT RUN FAIL CLSD DONE IDLE QUED INTR CNCL NEW. New states join this set; nothing else is boxed like a flag except the SIGN IN card's flag.",
+        "section": "typography"
+      },
+      {
+        "name": "The Two Shadows Rule",
+        "body": "Paper is at rest or pulled; there is no third elevation. A strip rises by changing shadow and translating 8px, never by scaling or adding a border.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Cocked Strip Rule",
+        "body": "A waiting strip is pulled 8px out of the rack and rotated -0.4deg (10px, no rotation, when it is also the current one). Hover nudges a strip 3px; nothing else on the board moves sideways.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** put a lamp and a four-letter flag on anything that has a state; light the lamp only for WAIT, RUN and FAIL.",
+      "**Do** print what humans write or must answer on paper (buff, blue for Slack, amber while asking, pink when failed, grey once settled or closed), and leave what the machine says on the desk.",
+      "**Do** keep paper light and ink dark in both colour schemes; change only the console, the rack and the shadows for dark.",
+      "**Do** set printed data (flags, fields, times, counts, tool names, button faces) in the system mono with tabular numerals, and prose in the system sans.",
+      "**Do** use the two paper shadows only: at rest for racked and settled paper, pulled for current, cocked, desk and open-prompt paper.",
+      "**Do** give every strip its perforated left edge (1px dashed `ink-rule`) and 2px corners.",
+      "**Do** keep the answer on the strip: while a thread waits, the open prompt's choices ride on the desk strip.",
+      "**Do** keep the ramp between 10px and 15px and measures at 72ch (prose on paper or agent text) and 80ch (dancer lines)."
+    ],
+    "donts": [
+      "**Don't** draw avatars, chat bubbles, or a plain list of conversations; the rack of strips and the desk are the scaffold.",
+      "**Don't** let colour carry state alone; a tinted line or paper always has its lamp, flag, or leading glyph.",
+      "**Don't** give agent Markdown or dancer's own lines a paper background or shadow.",
+      "**Don't** add a third elevation, a border-on-hover, or scale transforms; paper rises by shadow and an 8px translate only.",
+      "**Don't** round anything past 3px except HeroUI's 0.2rem controls and the 8px lamp; no pills.",
+      "**Don't** rotate anything except the cocked waiting strip (-0.4deg) and the decision stamp (-1.5deg).",
+      "**Don't** bundle a webfont or introduce a third family; the system sans and system mono stacks are the type.",
+      "**Don't** invent a state name that is not four uppercase letters, and don't print a flag without its box.",
+      "**Don't** let the blue host paper override a waiting (amber) or failed (pink) strip."
+    ]
+  }
+}
