@@ -27,9 +27,10 @@ func TestFormatCost(t *testing.T) {
 	}
 }
 
-// On a subscription the closing line says how much of the plan is used,
-// not what the turn would have cost on an API key; a nearly spent window
-// says when it resets.
+// On a subscription the result says how much of the plan is used, not
+// what the turn would have cost on an API key: a short phrase for the
+// feed, a line of meters for the chat. A nearly spent window says when
+// it resets.
 func TestFormatCostUsage(t *testing.T) {
 	at := time.Date(2026, 8, 23, 6, 0, 0, 0, time.UTC)
 	usage := &agent.Usage{Plan: "max", Windows: []agent.UsageWindow{
@@ -42,9 +43,9 @@ func TestFormatCostUsage(t *testing.T) {
 		ev   agent.Event
 		want string
 	}{
-		{"windows", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: usage}, "usage 5h 3% · 7d 26% · Fable 37%"},
+		{"windows", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: usage}, "5h 3% · 7d 26% · Fable 37%"},
 		{"nearly spent", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: &agent.Usage{Windows: []agent.UsageWindow{
-			{Name: "5h", Used: 92, ResetsAt: at.Add(80 * time.Minute)}, {Name: "7d", Used: 85}}}}, "usage 5h 92% (resets in 1h20m) · 7d 85%"},
+			{Name: "5h", Used: 92, ResetsAt: at.Add(80 * time.Minute)}, {Name: "7d", Used: 85}}}}, "5h 92% (resets in 1h20m) · 7d 85%"},
 		// No windows: the estimate is still better than nothing.
 		{"empty", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: &agent.Usage{Plan: "max"}}, "≈$2.27 API-equiv"},
 		// An API key is metered; usage is not what it pays for.
@@ -53,6 +54,21 @@ func TestFormatCostUsage(t *testing.T) {
 	for _, c := range cases {
 		if got := FormatCost(&c.ev); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+	}
+	meters := []struct {
+		name string
+		ev   agent.Event
+		want string
+	}{
+		{"windows", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: usage}, "📊 5h ▱▱▱▱▱▱▱▱▱▱ 3% · 7d ▰▰▰▱▱▱▱▱▱▱ 26% · Fable ▰▰▰▰▱▱▱▱▱▱ 37%"},
+		{"edges", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: &agent.Usage{Windows: []agent.UsageWindow{
+			{Name: "5h", Used: 0}, {Name: "7d", Used: 100, ResetsAt: at.Add(26 * time.Hour)}}}}, "📊 5h ▱▱▱▱▱▱▱▱▱▱ 0% · 7d ▰▰▰▰▰▰▰▰▰▰ 100% (resets in 26h00m)"},
+		{"none", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 1}, ""},
+	}
+	for _, c := range meters {
+		if got := UsageMeter(&c.ev); got != c.want {
+			t.Errorf("meter %s: got %q want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -307,6 +323,17 @@ func TestStatusLine(t *testing.T) {
 	check("result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.0125, Billing: agent.BillingAPIKey})),
 		"[remove status]", "✅ done · 1m05s · 1 tool call · $0.013")
 	check("finished", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusIdle}}))
+
+	// On a subscription the closing line carries no cost; the usage
+	// meter under it is the cost, and it addresses nobody.
+	check("subscription turn", s.Render(agentEv(agent.Event{Type: agent.EventText, Text: "ok"})), "ok", "[status] ⏳ thinking · 0s")
+	sub := s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.31, Billing: agent.BillingSubscription,
+		Usage: &agent.Usage{Windows: []agent.UsageWindow{{Name: "5h", Used: 15}, {Name: "7d", Used: 28}}}}))
+	check("subscription result", sub, "[remove status]", "✅ done · 0s", "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%")
+	if sub[1].Mention != task.Requester || sub[2].Mention != "" {
+		t.Fatalf("mentions: done=%q meter=%q", sub[1].Mention, sub[2].Mention)
+	}
+	check("finished again", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusIdle}}))
 
 	// A follow-up to the live process has no started event: the first
 	// agent event opens the next turn.

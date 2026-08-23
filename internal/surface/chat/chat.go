@@ -9,8 +9,9 @@
 // so Slack edits it in place and the terminal redraws it. The line goes
 // away when the agent asks the human something (the prompt says it all)
 // and when the turn ends, replaced by a closing line with the outcome,
-// duration, tool count and what it cost — a charge on an API key, how
-// much of the plan is used on a subscription.
+// duration, tool count and the charge on an API key — on a subscription
+// the charge is nobody's bill, so a usage meter follows instead: one bar
+// per plan window, percent used.
 //
 // The lines that need the human — a turn's closing line, an error, a
 // permission or question prompt, a notice that a restart left the task
@@ -25,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -228,7 +230,11 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		}
 		text = "⚠️ tool error: " + truncate(a.Text, 300)
 	case agent.EventResult:
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Mention: requester(ev), Files: files(a)}})
+		closing := []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Mention: requester(ev), Files: files(a)}}
+		if meter := UsageMeter(a); meter != "" {
+			closing = append(closing, transport.Outbound{Thread: ev.Thread, Text: meter})
+		}
+		return s.endWith(ev.Thread, closing)
 	case agent.EventError:
 		if t != nil {
 			t.errored = true
@@ -396,17 +402,21 @@ func statusLine(t *turn, now time.Time) string {
 }
 
 // doneLine is the turn's closing line: outcome, how long it took, how
-// many tools it used and what it cost. Without a tracked turn (a restart
-// in between) it is just outcome and cost.
+// many tools it used and what it cost — unless the usage meter under it
+// says that. Without a tracked turn (a restart in between) it is just
+// outcome and cost.
 func doneLine(t *turn, a *agent.Event, now time.Time) string {
-	if t == nil {
-		return "✅ done · " + FormatCost(a)
+	parts := []string{"✅ done"}
+	if t != nil {
+		parts = append(parts, formatDuration(now.Sub(t.started)))
+		if t.tools > 0 {
+			parts = append(parts, plural(t.tools, "tool call"))
+		}
 	}
-	parts := []string{"✅ done", formatDuration(now.Sub(t.started))}
-	if t.tools > 0 {
-		parts = append(parts, plural(t.tools, "tool call"))
+	if a.Usage == nil || len(a.Usage.Windows) == 0 {
+		parts = append(parts, FormatCost(a))
 	}
-	return strings.Join(append(parts, FormatCost(a)), " · ")
+	return strings.Join(parts, " · ")
 }
 
 // describeTool names a tool call for the status line: the tool and the
@@ -497,14 +507,14 @@ func describeInit(ev surface.Event) string {
 	return "🤖 " + strings.Join(parts, " · ")
 }
 
-// FormatCost renders what a result cost: a plain charge for API-key runs;
-// for subscription logins how much of the plan's windows is used (the
-// estimate in dollars is not what the human pays), falling back to the
-// API-equivalent estimate when the agent could not report usage.
+// FormatCost renders what a result cost, in one short phrase: a plain
+// charge for API-key runs; for subscription logins how much of the plan's
+// windows is used ("5h 15% · 7d 28%" — the estimate in dollars is not what
+// the human pays), or that estimate when the agent could not report usage.
 func FormatCost(a *agent.Event) string {
 	switch a.Billing {
 	case agent.BillingSubscription:
-		if s := formatUsage(a); s != "" {
+		if s := formatUsage(a, false); s != "" {
 			return s
 		}
 		return fmt.Sprintf("≈$%.2f API-equiv", a.Cost)
@@ -514,27 +524,51 @@ func FormatCost(a *agent.Event) string {
 	return fmt.Sprintf("$%.3f", a.Cost)
 }
 
-// formatUsage renders a result's plan usage — "usage 5h 3% · 7d 26% ·
-// Fable 37%", percent used per window — and, for a window that is nearly
-// spent, when it resets. "" when the result carries no usage.
-func formatUsage(a *agent.Event) string {
+// UsageMeter renders a result's plan usage as a line of meters, one per
+// window — "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%" — and, for a window
+// that is nearly spent, when it resets. "" when the result carries no
+// usage (an API key, or an agent that could not say).
+func UsageMeter(a *agent.Event) string {
+	if s := formatUsage(a, true); s != "" {
+		return "📊 " + s
+	}
+	return ""
+}
+
+// formatUsage is the windows of a result's usage, percent used each,
+// joined with " · "; bars draws a meter in front of every percentage.
+func formatUsage(a *agent.Event, bars bool) string {
 	if a.Usage == nil || len(a.Usage.Windows) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(a.Usage.Windows))
 	for _, w := range a.Usage.Windows {
-		part := fmt.Sprintf("%s %.0f%%", w.Name, w.Used)
+		part := w.Name
+		if bars {
+			part += " " + meter(w.Used)
+		}
+		part += fmt.Sprintf(" %.0f%%", w.Used)
 		if w.Used >= usageResetAt && !w.ResetsAt.IsZero() && w.ResetsAt.After(a.At) {
 			part += fmt.Sprintf(" (resets in %s)", formatDuration(w.ResetsAt.Sub(a.At)))
 		}
 		parts = append(parts, part)
 	}
-	return "usage " + strings.Join(parts, " · ")
+	return strings.Join(parts, " · ")
 }
 
-// usageResetAt is the percent used from which a window's reset time is
-// worth a few more characters on the closing line.
-const usageResetAt = 80
+// meter draws percent used as meterCells cells: ▰ filled, ▱ empty.
+func meter(used float64) string {
+	filled := int(math.Round(used / 100 * meterCells))
+	filled = max(0, min(meterCells, filled))
+	return strings.Repeat("▰", filled) + strings.Repeat("▱", meterCells-filled)
+}
+
+// meterCells is a meter's width; usageResetAt is the percent used from
+// which a window's reset time is worth a few more characters.
+const (
+	meterCells   = 10
+	usageResetAt = 80
+)
 
 // questionText renders a question with its numbered options.
 func questionText(q *agent.Question) string {
