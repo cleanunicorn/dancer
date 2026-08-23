@@ -256,6 +256,9 @@ func TestStatusLine(t *testing.T) {
 	now = now.Add(5 * time.Second)
 	check("tool result", s.Render(agentEv(agent.Event{Type: agent.EventToolResult, ToolID: "1", Text: "ok"})),
 		"[status] ⏳ thinking · 15s · 1 tool call")
+	// A refusal by the agent's own policy is posted even when tool calls are not.
+	check("tool denied", s.Render(agentEv(agent.Event{Type: agent.EventToolDenied, Tool: "Bash", ToolID: "1b", Text: "Blocked by classifier"})),
+		"[remove status]", "🚫 *Bash* refused by the agent's own policy: Blocked by classifier", "[status] ⏳ thinking · 15s · 1 tool call")
 	out := s.Render(agentEv(agent.Event{Type: agent.EventText, Text: "**Looking** at it"}))
 	check("text", out, "[remove status]", "**Looking** at it", "[status] ⏳ thinking · 15s · 1 tool call")
 	if !out[1].Markdown {

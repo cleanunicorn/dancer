@@ -3,6 +3,7 @@ package claude
 import (
 	"bufio"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,26 +95,54 @@ func TestTranslateQuestion(t *testing.T) {
 	}
 }
 
-// A tool call refused by the CLI itself (here the auto-mode classifier) is
-// reported on a system line whose "message" is a string, not a Messages API
-// object. It must not be a bad line: the refusal follows as an is_error
-// tool_result, which is what the chat shows.
+// A tool call refused by the CLI itself (here the auto-mode classifier) is a
+// system line whose "message" is a string, not a Messages API object, and the
+// refusal then reaches the agent as an is_error tool_result on the next line.
+// The system line becomes EventToolDenied (policy said no, not the tool) and
+// the pair shares the tool id.
 func TestTranslatePermissionDenied(t *testing.T) {
-	raw := []byte(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_012ppbtEBUBgHeZtpDBraDSa","decision_reason_type":"classifier","decision_reason":"Blocked by classifier","message":"Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier.","uuid":"3dc0c389-07cc-42dd-978a-69ff7522818d","session_id":"81c8abc4-f8ad-46d1-a026-9a7f966a105a"}`)
-	p, err := translate(raw, time.Now())
+	denied := []byte(`{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"toolu_012ppbtEBUBgHeZtpDBraDSa","decision_reason_type":"classifier","decision_reason":"Blocked by classifier","message":"Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier.","uuid":"3dc0c389-07cc-42dd-978a-69ff7522818d","session_id":"81c8abc4-f8ad-46d1-a026-9a7f966a105a"}`)
+	result := []byte(`{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_012ppbtEBUBgHeZtpDBraDSa","type":"tool_result","content":"Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier.","is_error":true}]},"parent_tool_use_id":null,"session_id":"81c8abc4-f8ad-46d1-a026-9a7f966a105a","uuid":"5d1f0b2e-2c8a-4e0b-9a1c-7f3d2b6e8c41"}`)
+
+	p, err := translate(denied, time.Now())
 	if err != nil {
-		t.Fatalf("translate: %v", err)
+		t.Fatalf("translate denied: %v", err)
 	}
-	if len(p.Events) != 0 || p.Permission != nil {
-		t.Fatalf("parsed = %+v, want nothing", p)
+	if len(p.Events) != 1 || p.Permission != nil || p.Control != nil {
+		t.Fatalf("denied parsed = %+v, want one event", p)
+	}
+	ev := p.Events[0]
+	if ev.Type != agent.EventToolDenied || ev.Tool != "Bash" || ev.ToolID != "toolu_012ppbtEBUBgHeZtpDBraDSa" {
+		t.Errorf("denied event = %+v", ev)
+	}
+	if !strings.Contains(ev.Text, "Blocked by classifier") {
+		t.Errorf("denied text = %q, want the CLI's reason", ev.Text)
+	}
+
+	p, err = translate(result, time.Now())
+	if err != nil {
+		t.Fatalf("translate result: %v", err)
+	}
+	if len(p.Events) != 1 {
+		t.Fatalf("result parsed = %+v, want one event", p)
+	}
+	if got := p.Events[0]; got.Type != agent.EventToolResult || got.Tool != "error" || got.ToolID != ev.ToolID {
+		t.Errorf("result event = %+v, want is_error tool_result for the same tool id", got)
 	}
 }
 
-// A message field that is an object but malformed is still a bad line.
+// The leniency is for system lines only. On an assistant/user line the
+// message must be a well-formed Messages API object: a malformed object or a
+// bare string is still a bad line, so a protocol change does not go dark.
 func TestTranslateMalformedMessage(t *testing.T) {
-	raw := []byte(`{"type":"assistant","message":{"role":"assistant","content":"not-a-list"}}`)
-	if _, err := translate(raw, time.Now()); err == nil {
-		t.Fatal("translate: want error for malformed message object")
+	for _, raw := range []string{
+		`{"type":"assistant","message":{"role":"assistant","content":"not-a-list"}}`,
+		`{"type":"assistant","message":"Done."}`,
+		`{"type":"user","message":[]}`,
+	} {
+		if _, err := translate([]byte(raw), time.Now()); err == nil {
+			t.Errorf("translate(%s): want error", raw)
+		}
 	}
 }
 

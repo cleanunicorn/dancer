@@ -346,7 +346,7 @@ func (c *Coordinator) factsForResume(ctx context.Context, t store.TaskState) res
 			if p := touchedFile(ev); p != "" {
 				files[p] = true
 			}
-		case agent.EventToolResult:
+		case agent.EventToolResult, agent.EventToolDenied:
 			delete(inflight, ev.ToolID)
 		}
 	}
@@ -377,6 +377,8 @@ func describeEvent(ev agent.Event) string {
 			s += " " + d
 		}
 		return truncate(s, factLine)
+	case agent.EventToolDenied:
+		return truncate(string(ev.Type)+" "+ev.Tool+": "+oneLine(ev.Text), factLine)
 	case agent.EventText, agent.EventResult, agent.EventError:
 		if strings.TrimSpace(ev.Text) == "" {
 			return string(ev.Type)

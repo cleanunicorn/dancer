@@ -11,9 +11,16 @@ type line struct {
 	Subtype         string          `json:"subtype,omitempty"`
 	SessionID       string          `json:"session_id,omitempty"`
 	ParentToolUseID *string         `json:"parent_tool_use_id,omitempty"`
-	Message         json.RawMessage `json:"message,omitempty"` // object on assistant/user lines, plain string on some system lines
+	Message         json.RawMessage `json:"message,omitempty"` // apiMessage on assistant/user lines; a string on system/permission_denied
 	RequestID       string          `json:"request_id,omitempty"`
 	Request         *controlRequest `json:"request,omitempty"`
+
+	// type=system subtype=permission_denied: the CLI's own policy (a rule,
+	// hook or the auto-mode classifier) refused a tool call. Message is a
+	// human-readable string here.
+	ToolName       string `json:"tool_name,omitempty"`
+	ToolUseID      string `json:"tool_use_id,omitempty"`
+	DecisionReason string `json:"decision_reason,omitempty"`
 
 	// type=system subtype=init
 	Model          string `json:"model,omitempty"`
@@ -34,22 +41,6 @@ type line struct {
 type apiMessage struct {
 	Role    string         `json:"role"`
 	Content []contentBlock `json:"content"`
-}
-
-// apiMessage decodes the line's message field. It is nil when the line has
-// none or when the field is not an object: type=system subtype=permission_denied
-// (a tool call refused by the CLI's own policy, e.g. the auto-mode classifier)
-// puts a human-readable string there, and the refusal reaches the agent as an
-// ordinary is_error tool_result on the next line, so there is nothing to read.
-func (l *line) apiMessage() (*apiMessage, error) {
-	if len(l.Message) == 0 || l.Message[0] != '{' {
-		return nil, nil
-	}
-	var m apiMessage
-	if err := json.Unmarshal(l.Message, &m); err != nil {
-		return nil, err
-	}
-	return &m, nil
 }
 
 type contentBlock struct {
