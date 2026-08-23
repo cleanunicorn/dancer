@@ -420,7 +420,7 @@ func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState, decided
 	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: t.Thread, TaskID: t.ID, Task: &t})
 	c.Log.Info("auto-resuming task", "task", t.ID, "thread", t.Thread, "session", t.Session)
 	c.drives.Add(1)
-	go c.drive(ctx, t, prompt)
+	go c.drive(ctx, t, prompt, nil)
 }
 
 func (c *Coordinator) resumePrompt() string {
@@ -728,6 +728,7 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	}
 	if it.Agent == "" && strings.TrimSpace(it.Prompt) == "" {
 		// Bare `run`: ask for the agent and the prompt on the thread.
+		c.dropFiles(ctx, s, it.Thread, it.Files)
 		c.startPick(ctx, s, it.Thread, "", it.User)
 		return
 	}
@@ -741,8 +742,9 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: fmt.Sprintf("unknown agent %q — try `agents`", it.Agent)}, s)
 		return
 	}
-	if strings.TrimSpace(prompt) == "" {
-		// `run <agent>` without a prompt: ask for it.
+	if strings.TrimSpace(prompt) == "" && len(it.Files) == 0 {
+		// `run <agent>` without a prompt: ask for it. With attachments
+		// the files are the prompt.
 		c.startPick(ctx, s, it.Thread, def.Name, it.User)
 		return
 	}
@@ -759,7 +761,27 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	c.bind(it.Thread, id, s.Name())
 	c.broadcast(ctx, surface.Event{Kind: surface.EventStarted, Thread: it.Thread, TaskID: id, Task: &st})
 	c.drives.Add(1)
-	go c.drive(ctx, st, prompt)
+	go c.drive(ctx, st, prompt, attachments(it.Files))
+}
+
+// attachments turns what a transport received into what an executor
+// copies into the environment.
+func attachments(files []transport.File) []agent.File {
+	var out []agent.File
+	for _, f := range files {
+		out = append(out, agent.File{Name: f.Name, Data: f.Data})
+	}
+	return out
+}
+
+// dropFiles tells the thread that attachments sent with a message that
+// opens a wizard (a bare `run`) went nowhere: the prompt comes later, as
+// text, and files cannot be sent with it.
+func (c *Coordinator) dropFiles(ctx context.Context, s surface.Surface, th transport.ThreadID, files []transport.File) {
+	if len(files) == 0 {
+		return
+	}
+	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "📎 attachments are dropped here — send them together with the prompt"}, s)
 }
 
 // resolveEnv fills in the parts of a Spec that only the coordinator knows:
@@ -821,7 +843,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	}
 	id, ok := c.lookup(it.Thread)
 	if ok {
-		if err := c.Executor.Send(ctx, id, it.Text); err == nil {
+		if err := c.Executor.Send(ctx, id, it.Text, attachments(it.Files)); err == nil {
 			c.wake(ctx, id)
 			return
 		} else if !errors.Is(err, execlocal.ErrNotRunning) {
@@ -832,7 +854,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
 	if def := c.defaultAgent(s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
 		// A fresh thread with plain text: start a task with the channel's default agent.
-		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User})
+		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User, Files: it.Files})
 		return
 	}
 	if err != nil {
@@ -849,11 +871,13 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	c.bind(it.Thread, st.ID, s.Name())
 	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: it.Thread, TaskID: st.ID, Task: &st})
 	c.drives.Add(1)
-	go c.drive(ctx, st, it.Text)
+	go c.drive(ctx, st, it.Text, attachments(it.Files))
 }
 
 // drive runs one executor turn-loop for a task and records the outcome.
-func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt string) {
+// files are the attachments that came with prompt; a restart's re-run has
+// none (they were copied into the environment when the turn first ran).
+func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt string, files []agent.File) {
 	defer c.drives.Done()
 	st.Status = store.StatusRunning
 	st.Prompt = prompt
@@ -864,7 +888,7 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	c.mu.Unlock()
 	c.mark(ctx, st.Transport, st.Thread, store.StatusRunning)
 	stopBeat := c.beat(ctx, sink)
-	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session}, sink)
+	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session, Files: files}, sink)
 	stopBeat()
 	c.mu.Lock()
 	delete(c.sinks, st.ID)

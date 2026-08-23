@@ -20,6 +20,12 @@ type Inbound struct {
 	UserID    string    // transport-specific user identifier
 	Text      string    // raw text as typed
 	Decision  *Decision // set when the message answers a Prompt
+	// Files are the attachments the human sent with the message — an
+	// image pasted into Slack, a log, a PDF — already downloaded by the
+	// transport. A transport that cannot carry uploads (the terminal)
+	// never sets it. The surface hands them to the task and the executor
+	// copies them into the agent's environment.
+	Files []File
 }
 
 // Decision is a human's answer to a Prompt.
@@ -59,10 +65,12 @@ type Outbound struct {
 	Key string
 }
 
-// File is an attachment.
+// File is an attachment, either way: one the human sent (Inbound.Files)
+// or one the agent produced (Outbound.Files). Data stays out of the event
+// log, which records the message around it; only Name is kept there.
 type File struct {
 	Name string
-	Data []byte
+	Data []byte `json:"-"`
 }
 
 // Prompt asks the human for a decision.

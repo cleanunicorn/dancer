@@ -69,6 +69,7 @@ const help = "Commands:\n" +
 	"• `run` — pick the agent from a list, then type the prompt\n" +
 	"• `default <agent>` — set this channel's default agent (`default` shows it)\n" +
 	"• any other message in a task thread — follow-up to that task\n" +
+	"• attach files or images to a prompt or follow-up — they are copied into the agent's environment\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
@@ -87,16 +88,18 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Decide{PromptID: in.Decision.PromptID, Choice: in.Decision.Choice}}, true
 	}
 	text := strings.TrimSpace(in.Text)
-	if text == "" {
+	if text == "" && len(in.Files) == 0 {
 		return nil, true
 	}
+	// Attachments ride along with a prompt or a follow-up; a command
+	// (`status`, `cancel`, …) has no use for them and drops them.
 	cmd, rest := splitWord(text)
 	switch strings.ToLower(cmd) {
 	case "help", "?":
 		return []surface.Intent{surface.Say{Thread: in.Thread, Text: help}}, true
 	case "run":
 		name, prompt := splitWord(rest)
-		return []surface.Intent{surface.RunTask{Thread: in.Thread, Agent: name, Prompt: prompt, User: in.UserID}}, true
+		return []surface.Intent{surface.RunTask{Thread: in.Thread, Agent: name, Prompt: prompt, User: in.UserID, Files: in.Files}}, true
 	case "default":
 		name, extra := splitWord(rest)
 		if extra != "" {
@@ -120,7 +123,7 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 			return []surface.Intent{surface.Say{Thread: in.Thread, Text: fmt.Sprintf("`%s agent` is now `agent %s` — %s", strings.ToLower(cmd), strings.ToLower(cmd), agentUsage)}}, true
 		}
 	}
-	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text, User: in.UserID}}, true
+	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text, User: in.UserID, Files: in.Files}}, true
 }
 
 // Render turns a coordinator event into messages. Besides the lines a

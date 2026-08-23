@@ -122,7 +122,7 @@ func TestRunPermissionFollowUpIdle(t *testing.T) {
 	if !ex.IsRunning("task1") {
 		t.Fatal("task should be running during idle window")
 	}
-	if err := ex.Send(context.Background(), "task1", "more"); err != nil {
+	if err := ex.Send(context.Background(), "task1", "more", nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -146,7 +146,7 @@ func TestRunPermissionFollowUpIdle(t *testing.T) {
 	if ex.IsRunning("task1") {
 		t.Fatal("task still registered after exit")
 	}
-	if err := ex.Send(context.Background(), "task1", "x"); err != ErrNotRunning {
+	if err := ex.Send(context.Background(), "task1", "x", nil); err != ErrNotRunning {
 		t.Fatalf("send after exit = %v", err)
 	}
 }

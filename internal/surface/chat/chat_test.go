@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +101,7 @@ func TestHandleCommands(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, ok := s.Handle(context.Background(), transport.Inbound{Transport: "slack", Thread: th, Text: c.text})
-		if !ok || len(got) != 1 || got[0] != c.want {
+		if !ok || len(got) != 1 || !reflect.DeepEqual(got[0], c.want) {
 			t.Errorf("%q → %+v (ok=%v), want %+v", c.text, got, ok, c.want)
 		}
 	}

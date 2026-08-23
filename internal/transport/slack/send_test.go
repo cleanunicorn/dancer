@@ -24,6 +24,10 @@ import (
 type fakeSlack struct {
 	mu    sync.Mutex
 	calls []url.Values
+	// url is where the fake listens; files are served under url/files/<name>
+	// to a request carrying the bot token, as Slack serves url_private.
+	url   string
+	files map[string][]byte
 }
 
 // newFakeSlack returns a fake Web API and a transport wired to it. Only the
@@ -32,8 +36,23 @@ type fakeSlack struct {
 // list lets every user through, like the real thing.
 func newFakeSlack(t *testing.T, allowed ...string) (*fakeSlack, *Transport) {
 	t.Helper()
-	f := &fakeSlack{}
+	f := &fakeSlack{files: map[string][]byte{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if name, ok := strings.CutPrefix(r.URL.Path, "/files/"); ok {
+			if r.Header.Get("Authorization") != "Bearer xoxb-test" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			f.mu.Lock()
+			data, have := f.files[name]
+			f.mu.Unlock()
+			if !have {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write(data)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
@@ -46,6 +65,7 @@ func newFakeSlack(t *testing.T, allowed ...string) (*fakeSlack, *Transport) {
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"C1","ts":"1.1"}`))
 	}))
 	t.Cleanup(srv.Close)
+	f.url = srv.URL
 	return f, newTransport(slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/")), "UBOT", allowed, slog.Default())
 }
 
