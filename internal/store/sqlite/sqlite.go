@@ -206,6 +206,17 @@ func (s *Store) ThreadRecordsOfKind(ctx context.Context, thread transport.Thread
 		string(thread), kind, limit)
 }
 
+func (s *Store) ThreadHeadOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]store.Record, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	recs, err := s.tail(ctx,
+		`SELECT seq, at, task, thread, kind, payload FROM log WHERE thread = ? AND kind = ? ORDER BY seq ASC LIMIT ?`,
+		string(thread), kind, limit)
+	slices.Reverse(recs) // tail reversed a newest-first scan; this one was oldest-first already
+	return recs, err
+}
+
 func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind string, limit int) ([]store.Record, error) {
 	if limit <= 0 {
 		limit = 50

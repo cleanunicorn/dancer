@@ -131,7 +131,15 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 // running (see status): posted under statusKey so the transport edits it
 // in place, moved below every ordinary message so it stays the last thing
 // in the thread, and taken down when the turn ends or waits for a human.
+//
+// Task events reach every surface; this one renders those of the tasks
+// hosted on its own transport (the coordinator shows the result to
+// every transport that follows the thread). Events without a task are
+// answers to this surface's own inbound and always render.
 func (s *Surface) Render(ev surface.Event) []transport.Outbound {
+	if ev.Task != nil && ev.Task.Transport != "" && ev.Task.Transport != s.transport {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()

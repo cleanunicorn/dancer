@@ -94,7 +94,12 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		return nil
 	}
 	c.closeLine()
-	if msg.Text != "" {
+	switch {
+	case msg.From != nil && msg.Decision != nil:
+		fmt.Fprintf(c.Out, "→ %s by %s via %s\n", msg.Decision.Choice, msg.From.Display(), msg.From.Via)
+	case msg.From != nil:
+		fmt.Fprintf(c.Out, "💬 %s via %s: %s\n", msg.From.Display(), msg.From.Via, msg.Text)
+	case msg.Text != "":
 		fmt.Fprintln(c.Out, msg.Text)
 	}
 	for _, f := range msg.Files {

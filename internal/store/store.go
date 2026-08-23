@@ -66,6 +66,10 @@ type Store interface {
 	// message of a thread is one "inbound" record, however much the agent
 	// and dancer posted after it.
 	ThreadRecordsOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]Record, error)
+	// ThreadHeadOfKind is the opposite end: the first limit records of
+	// one kind on a thread, oldest first. The first "inbound" record is
+	// what a thread is about, whatever was said after.
+	ThreadHeadOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]Record, error)
 	// TaskRecords returns the last limit records of one kind about a task,
 	// oldest first. Counting and reading back a task's verdicts goes
 	// through here, so that state is a projection of the log rather than

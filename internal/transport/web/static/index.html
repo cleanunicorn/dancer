@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>dancer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%95%BA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="app" hidden>
+  <aside id="sidebar" class="sidebar">
+    <header class="sidebar-head">
+      <span class="brand">🕺 dancer</span>
+    </header>
+    <nav id="channels" class="channels"></nav>
+    <footer class="sidebar-foot">
+      <span id="me" class="me" title="Change your name"></span>
+      <span id="conn" class="conn" title="Connection">●</span>
+    </footer>
+  </aside>
+  <main class="main">
+    <header class="main-head">
+      <button id="btn-menu" class="icon-btn menu-btn" title="Channels">☰</button>
+      <div class="head-text">
+        <div id="head-title" class="head-title">Pick a thread</div>
+        <div id="head-sub" class="head-sub"></div>
+      </div>
+      <button id="btn-help" class="icon-btn" title="Commands">?</button>
+    </header>
+    <section id="messages" class="messages">
+      <div id="empty" class="empty">
+        <div class="empty-art">🕺</div>
+        <p>Pick a thread on the left, or start one in a channel.</p>
+      </div>
+    </section>
+    <form id="composer" class="composer" hidden>
+      <textarea id="input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button id="send" type="submit" class="send-btn" title="Send">➤</button>
+    </form>
+  </main>
+</div>
+
+<dialog id="dlg-name">
+  <form method="dialog" class="dlg">
+    <h2>What should dancer call you?</h2>
+    <p class="muted">Your messages are signed with it, and the agent addresses you by it.</p>
+    <input id="name-input" maxlength="40" autocomplete="nickname" placeholder="your name" required>
+    <menu><button value="ok" class="primary">Continue</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-login">
+  <form method="dialog" class="dlg">
+    <h2>Access token</h2>
+    <p class="muted">This dancer asks for the token from its config (<code>[web] token</code>).</p>
+    <input id="token-input" type="password" autocomplete="current-password" placeholder="token" required>
+    <p id="login-error" class="error" hidden></p>
+    <menu><button value="ok" class="primary">Sign in</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-help">
+  <div class="dlg">
+    <h2>Commands</h2>
+    <table class="help">
+      <tr><td><code>&lt;prompt&gt;</code></td><td>start a task with the channel's default agent</td></tr>
+      <tr><td><code>run &lt;agent&gt; &lt;prompt&gt;</code></td><td>start a task with a specific agent</td></tr>
+      <tr><td><code>run</code></td><td>pick the agent from a list, then type the prompt</td></tr>
+      <tr><td><code>default &lt;agent&gt;</code></td><td>set this channel's default agent</td></tr>
+      <tr><td>anything else</td><td>follow-up to the task in this thread</td></tr>
+      <tr><td><code>status</code></td><td>state of the task in this thread</td></tr>
+      <tr><td><code>cancel</code></td><td>stop the task</td></tr>
+      <tr><td><code>close</code></td><td>stop the task and end the thread</td></tr>
+      <tr><td><code>agent list</code></td><td>list agents (<code>agent add</code>, <code>agent edit</code>, <code>agent delete</code>)</td></tr>
+    </table>
+    <p class="muted">Keys: <kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> newline · <kbd>/</kbd> focus the box · <kbd>Esc</kbd> close</p>
+    <menu><form method="dialog"><button value="ok" class="primary">Close</button></form></menu>
+  </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

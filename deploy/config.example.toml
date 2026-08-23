@@ -8,7 +8,7 @@ idle_timeout = "10m"        # keep a finished turn's process alive this long for
 drain_timeout = "2m"        # on restart, let in-flight tool calls finish before stopping agents
 verbose = false             # true: post every tool call to the thread
 default_agent = "coder"     # used by `run <prompt>` without an agent name
-transports = ["slack"]      # "slack", "terminal"
+transports = ["slack"]      # "slack", "web", "terminal" — any mix; conversations are shared between them
 auto_resume = true          # after a restart, continue cut-short tasks without waiting for a reply
 auto_resume_within = "12h"  # skip tasks last touched longer ago than this
 max_auto_resumes = 3        # consecutive automatic resumes of one task before it waits for a human
@@ -51,6 +51,13 @@ app_token = "xapp-..."      # App-level token with connections:write
 bot_token = "xoxb-..."      # Bot User OAuth token
 allowed_users = []          # Slack user IDs allowed to command dancer; empty = everyone
 
+# The browser UI (transports = [..., "web"]). It shows every conversation,
+# Slack's included, and reads its history from dancer's own log.
+[web]
+listen = "127.0.0.1:8788"   # anything but a loopback address needs a token
+token = ""                  # shared secret the browser asks for once; keep this file 0600
+channels = ["general"]      # the web UI's own channels, for threads that do not live in Slack
+
 # --- per-channel defaults ----------------------------------------------------
 # Plain messages in a channel run its default agent instead of
 # server.default_agent. `@dancer default <agent>` appends one of these; when a
@@ -59,6 +66,10 @@ allowed_users = []          # Slack user IDs allowed to command dancer; empty = 
 [[channels]]
 id = "C0123ABCDEF"          # Slack channel id (channel details → "Channel ID")
 agent = "sandbox"
+# [[channels]]
+# transport = "web"         # a web channel from [web].channels
+# id = "general"
+# agent = "coder"
 
 # --- agent definitions -------------------------------------------------------
 

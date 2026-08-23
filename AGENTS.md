@@ -69,6 +69,7 @@ make lint             # gofmt -l check + go vet   (run before finishing a change
 make fmt tidy
 make run              # bin/dancer run -config $CONFIG   (Slack)
 make run-terminal     # same, but the terminal transport — the fastest way to try a chat change
+make run-web          # same, but the web transport (browser UI on web.listen)
 make doctor           # config, claude login, docker, ssh hosts, Slack tokens
 make help             # every target
 ```
@@ -108,12 +109,20 @@ transports <-Outbound-- surfaces <--Event--- Coordinator <-----agent.Event------
 Each layer is an interface defined in the package doc of `internal/<pkg>/<pkg>.go`; read those
 files first — they carry the contract, the concrete packages under them are implementations.
 
-- **`transport`** (slack, terminal) — dumb on purpose: text, prompt-with-choices, files, `ThreadID`
-  (Slack: `"<channel>/<thread_ts>"`, `"<channel>/"` posts top level). It never interprets a message.
-  Files go both ways: `Outbound.Files` are uploaded after the text; `Inbound.Files` are the
-  attachments a human sent, downloaded by the transport (Slack: `files:read`), and the executor
-  copies them into the environment under `/tmp/dancer/inbox/<task>/` and appends the paths to the
-  message. `File.Data` is never written to the event log, only the name.
+- **`transport`** (slack, web, terminal) — dumb on purpose: text, prompt-with-choices, `ThreadID`
+  (Slack: `"<channel>/<thread_ts>"`; web: `"<channel>/<id>"`). It never interprets a message.
+  **A conversation belongs to dancer, not to a transport.** The transport that minted the id
+  *hosts* it (`TaskState.Transport`) and renders it natively; a `transport.Observer` (the web UI)
+  is shown every thread of every transport, and anyone may write into any thread. The
+  coordinator relays what humans write to the host and the observers as `Outbound.From`
+  (`Decision` for answers), so each transport shows the whole exchange its own way — Slack
+  posts "💬 *name* via web: …" and settles a prompt's buttons, the web shows a bubble — and the
+  log keeps one record (the inbound), never the relays. An inbound to `"<channel>/"` asks the
+  channel's owner (`ChannelLister`) to open a thread (`ThreadOpener`), so a web user can start
+  work in a Slack channel. The web transport has no memory: lists and history come from the
+  coordinator through `transport.History` (`coordinator/threads.go`); only the live status line
+  and open prompts are kept in memory. `Inbound.UserName` is the display name when a transport
+  has one (Slack: users.info, cached).
   Keyed messages (`Outbound.Key`) are its one stateful feature: Slack edits/deletes the message it
   posted under the key and mirrors the text into the thread's assistant status; the terminal redraws
   the line. `Outbound.Mention` addresses one user (Slack: `<@U…>` in front of the text; terminal
@@ -126,7 +135,9 @@ files first — they carry the contract, the concrete packages under them are im
   so a new interaction style on Slack is a **new surface, not a new Slack client**. The chat surface
   keeps one live status line per running turn (what tool, for how long, how many calls) as a *keyed*
   message (`Outbound.Key`): the transport edits it in place, and the surface moves it below every
-  ordinary message and takes it down when the turn ends or a prompt is open.
+  ordinary message and takes it down when the turn ends or a prompt is open. Task events reach
+  every surface; `chat` renders only the tasks hosted on its own transport (the coordinator
+  copies the result to observers), `feed` renders everything into its own thread.
 - **`coordinator`** — the only stateful brain: intents → tasks, event fan-out to every surface,
   permission/question decision relay (`pending`/`askText` maps keyed by prompt id), guided wizards
   (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), restart recovery. It is also
@@ -160,7 +171,9 @@ files first — they carry the contract, the concrete packages under them are im
 - **Permission prompts are first-class and cross-surface.** `agent.EventNeedsPermission` →
   `surface.Event` (with `PromptID`) → `transport.Prompt` → `transport.Decision` → `surface.Decide`
   → `agent.PermissionDecision`. Any surface that rendered a prompt may answer it, so prompt ids are
-  namespaced per surface and resolved on a base id in the coordinator.
+  namespaced per surface and resolved on a base id in the coordinator; a decision is offered to
+  every surface whatever transport it came from, so a prompt rendered by `chat-slack` can be
+  answered from the web UI.
 - **`AskUserQuestion` reuses the same path** as permissions, via `EventQuestion` + `Question.Answers`.
 - **Output on a thread is ordered, and keyed messages depend on it.** `emit` renders and sends under
   a per-thread lock, because a heartbeat (ticker goroutine) and an agent event (executor goroutine)
