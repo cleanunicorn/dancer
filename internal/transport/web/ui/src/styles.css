@@ -327,6 +327,12 @@ body {
 .flag[data-state="closed"] {
   border-style: dashed;
 }
+/* a flag printed away from the paper — in a dialog, on the console — is
+   inked in the console's own foreground, or it disappears at night */
+.flag[data-surface="console"] {
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--foreground) 60%, transparent);
+}
 /* unread count is printed as a stamp over the flag */
 .stamp {
   font-family: var(--font-strip);
@@ -382,7 +388,8 @@ body {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .lamp[data-state="wait"] {
+  .lamp[data-state="wait"],
+  .desk-strip {
     animation: none;
   }
   .strip,

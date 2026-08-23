@@ -168,7 +168,7 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
                     {FLAGS.map(([f, d]) => (
                       <tr key={f}>
                         <td className="py-0.5 pr-4 align-top">
-                          <span className="flag text-foreground">{f}</span>
+                          <span className="flag" data-surface="console">{f}</span>
                         </td>
                         <td className="py-0.5 text-muted">{d}</td>
                       </tr>
