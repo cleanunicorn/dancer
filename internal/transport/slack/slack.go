@@ -39,6 +39,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/slack-go/slack"
@@ -254,8 +255,15 @@ func (c *Transport) fetch(ctx context.Context, th transport.ThreadID, files []sl
 	return out
 }
 
+// downloadTimeout bounds one attachment transfer. Downloads happen on the
+// single Socket Mode event loop, so a stalled one would otherwise hold up
+// every other Slack event — including the buttons that answer a running
+// task's permission prompt — for as long as the connection hangs.
+const downloadTimeout = 2 * time.Minute
+
 // download fetches one file's bytes with the bot token, refusing past
-// maxFileBytes before (Slack says the size) and during the transfer.
+// maxFileBytes before (Slack says the size) and during the transfer, and
+// giving up after downloadTimeout.
 func (c *Transport) download(ctx context.Context, f slack.File) ([]byte, error) {
 	url := f.URLPrivateDownload
 	if url == "" {
@@ -267,6 +275,8 @@ func (c *Transport) download(ctx context.Context, f slack.File) ([]byte, error) 
 	if int64(f.Size) > maxFileBytes {
 		return nil, errTooBig
 	}
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
 	w := &capWriter{max: maxFileBytes}
 	if err := c.api.GetFileContext(ctx, url, w); err != nil {
 		return nil, err
