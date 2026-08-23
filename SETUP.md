@@ -33,6 +33,9 @@ dancer drives `claude -p` as a subprocess; it uses whatever login that user has.
 The manifest enables Socket Mode, so the machine needs outbound HTTPS only —
 no public URL, no inbound ports.
 
+Scopes, what each one is for, and the thread UI are in [docs/slack.md](docs/slack.md);
+the browser UI, which can run next to Slack, is in [docs/web.md](docs/web.md).
+
 To find your Slack user ID (for `allowed_users`): click your profile → **⋯** →
 **Copy member ID**.
 

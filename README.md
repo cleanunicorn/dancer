@@ -48,37 +48,19 @@ bin/dancer run        # or: bin/dancer run -terminal, or bin/dancer run -web
 make service          # systemd unit for the current user
 ```
 
-### Web UI
+### Transports
 
-```toml
-[server]
-transports = ["slack", "web"]   # or just ["web"]
-[web]
-listen = "127.0.0.1:8788"       # plain HTTP: keep it local, or put TLS in front
-channels = ["general"]          # the web UI's own channels, for threads outside Slack
-```
+One dancer can run several at once; conversations are shared between them.
 
-Accounts live in dancer's database, not in the config:
-
-```sh
-bin/dancer user add daniel      # prints a generated password; change it in the UI
-bin/dancer user list            # passwd <name> · rm <name>
-```
-
-Open http://127.0.0.1:8788 and sign in. Everything you send is signed with your account
-name — the agent's closing line and prompts address you by it, and two people in one thread
-are two names. The UI is a React + [HeroUI](https://heroui.com) app under
-`internal/transport/web/ui`; its build is committed in `internal/transport/web/static`, so
-`go build` needs no Node — run `make ui` after changing it (`make ui-dev` for a live dev server).
-The sidebar lists channels per transport and their threads;
-⏳ means the agent is working, ✋ that it waits for an answer (the tab title says so too,
-and a browser notification fires if allowed). Commands are the same as in Slack (`?` in the
-header lists them). `make run-web` starts it on its own, like `make run-terminal`.
+- [Slack](docs/slack.md) — the app manifest, tokens, scopes, what a thread looks like.
+- [Web UI](docs/web.md) — `transports = ["slack", "web"]`, accounts (`bin/dancer user add`), the React app.
 
 Full instructions, Slack app manifest, docker/ssh notes: [SETUP.md](SETUP.md).
 Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 
-## Commands in Slack
+## Commands
+
+The same on every transport; on Slack, `@dancer` is the mention, on the web UI and the terminal just type.
 
 | message                      | effect                                      |
 |------------------------------|---------------------------------------------|
