@@ -100,8 +100,10 @@ reuse = "thread"                           # task (default) | thread | definitio
                                            # between messages, with a persistent $HOME so
                                            # `claude --resume` and any login survive.
 workdir = ""                               # host dir mounted at /work; empty = dancer manages it
-[definitions.environment.env]
-CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-..."   # or ANTHROPIC_API_KEY; the container has no ~/.claude login
+# The container runs with the host's claude login: dancer copies the host's
+# ~/.claude/.credentials.json in before every turn. Give it its own instead:
+# [definitions.environment.env]
+# CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-..."   # from `claude setup-token`; or ANTHROPIC_API_KEY
 
 [[definitions]]
 name = "buildbox"

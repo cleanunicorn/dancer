@@ -423,9 +423,23 @@ image yourself:
 kind  = "docker"
 image = "ubuntu:24.04"
 reuse = "thread"
+```
+
+The container runs with your login. A container has no `~/.claude` of its
+own, so before every turn dancer copies the host's
+`~/.claude/.credentials.json` (the login of the user running dancer) into
+the container's `$HOME/.claude`; the CLI inside refreshes the token itself
+from there, and a copy the container refreshed more recently than the host
+is left alone. To give a container its own identity instead, put a key in
+its env — dancer then lends nothing:
+
+```toml
 [definitions.environment.env]
 CLAUDE_CODE_OAUTH_TOKEN = "…"     # from `claude setup-token` on a logged-in machine, or use ANTHROPIC_API_KEY
 ```
+
+When neither exists the turn ends with `Not logged in`, and dancer says so
+in the thread along with what to do about it.
 
 ### Provisioning
 

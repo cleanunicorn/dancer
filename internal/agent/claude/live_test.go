@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dancer/internal/environment/docker"
 	"github.com/cleanunicorn/dancer/internal/environment/local"
 )
 
@@ -244,5 +246,71 @@ loop:
 	}
 	if !subAgentSpoke || len(results) != 1 || !strings.Contains(strings.ToUpper(results[0]), "PONG") {
 		t.Fatalf("sub-agent spoke=%v results=%q, want one result carrying the sub-agent's answer", subAgentSpoke, results)
+	}
+}
+
+// TestLiveDockerLogin runs a turn inside a container provisioned from
+// ubuntu:24.04 with nothing but the host's lent login, once as a throwaway
+// container and once as a reused one whose $HOME is a volume. Run with
+// DANCER_LIVE=1 and a docker daemon; the first run builds the image (~60s).
+func TestLiveDockerLogin(t *testing.T) {
+	if os.Getenv("DANCER_LIVE") == "" {
+		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker not available")
+	}
+	if _, err := os.Stat(hostCredentials()); err != nil {
+		t.Skip("no host login to lend")
+	}
+	for _, reuse := range []environment.Reuse{environment.ReuseTask, environment.ReuseThread} {
+		t.Run(string(reuse), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+			defer cancel()
+			spec := environment.Spec{Kind: environment.KindDocker, Image: "ubuntu:24.04", Workdir: t.TempDir(), Provision: &environment.Provision{Agents: []string{"claude"}}}
+			if reuse == environment.ReuseThread {
+				spec.Reuse, spec.ReuseKey = reuse, "livelogin/"+filepath.Base(spec.Workdir)
+			}
+			env, err := docker.Factory{}.New(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := env.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			defer env.Stop(context.Background())
+			if name := env.(*docker.Env).ContainerName(); name != "" {
+				defer func() {
+					_ = exec.Command("docker", "rm", "-f", name).Run()
+					out, _ := exec.Command("docker", "volume", "ls", "-q", "--filter", "name=dancer-home-livelogin").Output()
+					for _, v := range strings.Fields(string(out)) {
+						_ = exec.Command("docker", "volume", "rm", v).Run()
+					}
+				}()
+			}
+
+			def := agent.Definition{Kind: agent.KindClaude, Model: "haiku", PermissionMode: agent.PermissionManual, Environment: spec}
+			run, err := New().Start(ctx, env, def, "Reply with exactly: hi")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer run.Stop()
+			var result string
+			for ev := range run.Events() {
+				t.Logf("event %-16s text=%.80q", ev.Type, ev.Text)
+				switch ev.Type {
+				case agent.EventError:
+					t.Fatalf("agent error: %s", ev.Text)
+				case agent.EventResult:
+					result = ev.Text
+				}
+				if result != "" {
+					break
+				}
+			}
+			if !strings.Contains(result, "hi") {
+				t.Fatalf("result = %q", result)
+			}
+		})
 	}
 }
