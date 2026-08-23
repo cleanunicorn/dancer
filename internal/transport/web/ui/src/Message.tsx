@@ -48,7 +48,7 @@ function Files({ files }: { files: NonNullable<Message["files"]> }) {
       {files.map((f, i) =>
         !urls[i] ? (
           <span key={i} className="text-sm text-muted">
-            📎 {f.name} ({size(f.size)}, too large to show)
+            📎 {f.name} ({size(f.size)}{f.size > 0 ? ", too large to show" : ", not kept in the log"})
           </span>
         ) : /\.(png|jpe?g|gif|webp|svg)$/i.test(f.name) ? (
           <a key={i} href={urls[i]} target="_blank" rel="noopener">

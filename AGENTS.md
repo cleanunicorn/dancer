@@ -109,8 +109,13 @@ transports <-Outbound-- surfaces <--Event--- Coordinator <-----agent.Event------
 Each layer is an interface defined in the package doc of `internal/<pkg>/<pkg>.go`; read those
 files first — they carry the contract, the concrete packages under them are implementations.
 
-- **`transport`** (slack, web, terminal) — dumb on purpose: text, prompt-with-choices, `ThreadID`
+- **`transport`** (slack, web, terminal) — dumb on purpose: text, prompt-with-choices, files, `ThreadID`
   (Slack: `"<channel>/<thread_ts>"`; web: `"<channel>/<id>"`). It never interprets a message.
+  Files go both ways: `Outbound.Files` are uploaded after the text; `Inbound.Files` are the
+  attachments a human sent, downloaded by the transport (Slack: `files:read`), and the executor
+  copies them into the environment under `/tmp/dancer/inbox/<task>/` and appends the paths to the
+  message. `File.Data` is never written to the event log, only the name — so the web UI shows a
+  thread's past attachments by name only, and the bytes while the page is open.
   **A conversation belongs to dancer, not to a transport.** The transport that minted the id
   *hosts* it (`TaskState.Transport`) and renders it natively; a `transport.Observer` (the web UI)
   is shown every thread of every transport, and anyone may write into any thread. The

@@ -264,8 +264,10 @@ func convert(msg transport.Outbound, id int64, at time.Time) *Message {
 		m.From = &Author{ID: msg.From.ID, Name: msg.From.Display(), Via: msg.From.Via}
 	}
 	for _, f := range msg.Files {
+		// From the log a file is a name only (transport.File keeps Data
+		// out of it); live, the bytes come along when they fit.
 		ref := File{Name: f.Name, Size: len(f.Data)}
-		if len(f.Data) <= maxInlineFile {
+		if len(f.Data) > 0 && len(f.Data) <= maxInlineFile {
 			ref.Data = f.Data
 		}
 		m.Files = append(m.Files, ref)
