@@ -3,7 +3,7 @@
 dancer's first transport: a Slack app over Socket Mode. Outbound HTTPS is all the
 machine needs — no public URL, no inbound ports.
 
-Other transports: [Web UI](web.md). Every conversation is shared between them
+Other transports: [Web UI](web.md), [Terminal](terminal.md). Every conversation is shared between them
 (see [One conversation, every transport](#one-conversation-every-transport)).
 
 ## Create the app
