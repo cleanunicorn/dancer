@@ -3,6 +3,7 @@
 //	dancer run    [-config path] [-terminal] [-web]   start the coordinator (default)
 //	dancer setup  [-config path]               interactive first-time setup
 //	dancer doctor [-config path]               check config, claude, docker, ssh, slack
+//	dancer user   add|passwd|rm|list [name]    accounts of the web UI
 package main
 
 import (
@@ -57,10 +58,12 @@ func main() {
 		err = runSetup(*cfgPath)
 	case "doctor":
 		err = runDoctor(*cfgPath)
+	case "user":
+		err = runUser(*cfgPath, fs.Args())
 	case "help", "-h", "--help":
-		fmt.Println("usage: dancer [run|setup|doctor] [-config path] [-terminal]")
+		fmt.Println("usage: dancer [run|setup|doctor|user] [-config path] [-terminal|-web]")
 	default:
-		err = fmt.Errorf("unknown command %q (run|setup|doctor)", sub)
+		err = fmt.Errorf("unknown command %q (run|setup|doctor|user)", sub)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dancer:", err)
@@ -147,7 +150,7 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 			}
 			transports = append(transports, sc)
 		case "web":
-			web = trweb.New(cfg.Web.Listen, cfg.Web.Token, cfg.Web.Channels, log)
+			web = trweb.New(cfg.Web.Listen, cfg.Web.Channels, st, log)
 			transports = append(transports, web)
 		default:
 			return fmt.Errorf("unknown transport %q", name)

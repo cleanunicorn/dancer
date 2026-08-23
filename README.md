@@ -54,12 +54,20 @@ make service          # systemd unit for the current user
 [server]
 transports = ["slack", "web"]   # or just ["web"]
 [web]
-listen = "127.0.0.1:8788"       # a non-loopback address needs a token
-token = ""                      # shared secret the browser asks for once
+listen = "127.0.0.1:8788"       # plain HTTP: keep it local, or put TLS in front
 channels = ["general"]          # the web UI's own channels, for threads outside Slack
 ```
 
-Open http://127.0.0.1:8788. The UI is a React + [HeroUI](https://heroui.com) app under
+Accounts live in dancer's database, not in the config:
+
+```sh
+bin/dancer user add daniel      # prints a generated password; change it in the UI
+bin/dancer user list            # passwd <name> · rm <name>
+```
+
+Open http://127.0.0.1:8788 and sign in. Everything you send is signed with your account
+name — the agent's closing line and prompts address you by it, and two people in one thread
+are two names. The UI is a React + [HeroUI](https://heroui.com) app under
 `internal/transport/web/ui`; its build is committed in `internal/transport/web/static`, so
 `go build` needs no Node — run `make ui` after changing it (`make ui-dev` for a live dev server).
 The sidebar lists channels per transport and their threads;

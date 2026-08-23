@@ -52,10 +52,10 @@ bot_token = "xoxb-..."      # Bot User OAuth token
 allowed_users = []          # Slack user IDs allowed to command dancer; empty = everyone
 
 # The browser UI (transports = [..., "web"]). It shows every conversation,
-# Slack's included, and reads its history from dancer's own log.
+# Slack's included, and reads its history from dancer's own log. Accounts
+# are made with `dancer user add <name>` and live in the database.
 [web]
-listen = "127.0.0.1:8788"   # anything but a loopback address needs a token
-token = ""                  # shared secret the browser asks for once; keep this file 0600
+listen = "127.0.0.1:8788"   # plain HTTP — keep it on localhost or put TLS in front
 channels = ["general"]      # the web UI's own channels, for threads that do not live in Slack
 
 # --- per-channel defaults ----------------------------------------------------

@@ -1,86 +1,104 @@
 import { useEffect, useState } from "react";
-import { Button, Input, Kbd, Modal, TextField } from "@heroui/react";
+import { Button, Dropdown, Input, Kbd, Label, Modal, TextField } from "@heroui/react";
 import { Sidebar } from "./Sidebar";
 import { ThreadPane } from "./Thread";
 import { store, useStore } from "./store";
 
-function Dialog({ open, title, children }: { open: boolean; title: string; children: React.ReactNode }) {
+function LoginPage() {
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   return (
-    <Modal isOpen={open}>
-      <Modal.Backdrop isDismissable={false}>
+    <div className="flex h-full items-center justify-center bg-background px-4">
+      <form
+        className="flex w-full max-w-sm flex-col gap-4 rounded-md border border-border bg-surface p-6"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setErr("");
+          try {
+            await store.login(name.trim(), password);
+          } catch (x) {
+            setErr(String(x).replace(/^Error: /, ""));
+          }
+          setBusy(false);
+        }}
+      >
+        <div>
+          <div className="text-lg font-semibold">🕺 dancer</div>
+          <p className="text-sm text-muted">Sign in with your dancer account.</p>
+        </div>
+        <TextField aria-label="Name" autoFocus>
+          <Label>Name</Label>
+          <Input autoComplete="username" value={name} onChange={(e) => setName(e.target.value)} />
+        </TextField>
+        <TextField aria-label="Password">
+          <Label>Password</Label>
+          <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </TextField>
+        {err ? <p className="text-sm text-danger">{err}</p> : null}
+        <Button type="submit" variant="primary" isDisabled={busy || !name.trim() || !password}>
+          Sign in
+        </Button>
+        <p className="text-xs text-muted">
+          No account? The operator makes one with <code>dancer user add &lt;name&gt;</code>.
+        </p>
+      </form>
+    </div>
+  );
+}
+
+function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [err, setErr] = useState("");
+  return (
+    <Modal isOpen={open} onOpenChange={(o) => !o && onClose()}>
+      <Modal.Backdrop>
         <Modal.Container size="sm">
           <Modal.Dialog>
-            <Modal.Header>
-              <Modal.Heading>{title}</Modal.Heading>
-            </Modal.Header>
-            {children}
+            <Modal.CloseTrigger />
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                try {
+                  await store.changePassword(current, next);
+                  setCurrent("");
+                  setNext("");
+                  setErr("");
+                  store.toast("Password changed");
+                  onClose();
+                } catch (x) {
+                  setErr(String(x).replace(/^Error: /, ""));
+                }
+              }}
+            >
+              <Modal.Header>
+                <Modal.Heading>Change password</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="flex flex-col gap-3">
+                <TextField aria-label="Current password">
+                  <Label>Current password</Label>
+                  <Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+                </TextField>
+                <TextField aria-label="New password">
+                  <Label>New password</Label>
+                  <Input type="password" autoComplete="new-password" minLength={8} value={next} onChange={(e) => setNext(e.target.value)} />
+                </TextField>
+                {err ? <p className="text-sm text-danger">{err}</p> : null}
+                <p className="text-xs text-muted">Your other browsers are signed out.</p>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button type="submit" variant="primary" isDisabled={!current || next.length < 8}>
+                  Change
+                </Button>
+              </Modal.Footer>
+            </form>
           </Modal.Dialog>
         </Modal.Container>
       </Modal.Backdrop>
     </Modal>
-  );
-}
-
-function NameDialog({ open, onDone }: { open: boolean; onDone: () => void }) {
-  const st = useStore();
-  const [name, setName] = useState(st.me);
-  return (
-    <Dialog open={open} title="What should dancer call you?">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim()) return;
-          store.setName(name.trim());
-          onDone();
-        }}
-      >
-        <Modal.Body className="flex flex-col gap-3">
-          <p className="text-sm text-muted">Your messages are signed with it, and the agent addresses you by it.</p>
-          <TextField aria-label="Name" autoFocus>
-            <Input placeholder="your name" maxLength={40} value={name} onChange={(e) => setName(e.target.value)} />
-          </TextField>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button type="submit" variant="primary" isDisabled={!name.trim()}>
-            Continue
-          </Button>
-        </Modal.Footer>
-      </form>
-    </Dialog>
-  );
-}
-
-function LoginDialog({ open }: { open: boolean }) {
-  const [token, setToken] = useState("");
-  const [err, setErr] = useState("");
-  return (
-    <Dialog open={open} title="Access token">
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          try {
-            await store.login(token);
-          } catch (x) {
-            setErr(String(x).replace(/^Error: /, ""));
-          }
-        }}
-      >
-        <Modal.Body className="flex flex-col gap-3">
-          <p className="text-sm text-muted">
-            This dancer asks for the token from its config (<code>[web] token</code>).
-          </p>
-          <TextField aria-label="Token" autoFocus>
-            <Input type="password" placeholder="token" value={token} onChange={(e) => setToken(e.target.value)} />
-          </TextField>
-          {err ? <p className="text-sm text-danger">{err}</p> : null}
-        </Modal.Body>
-        <Modal.Footer>
-          <Button type="submit" variant="primary" isDisabled={!token}>
-            Sign in
-          </Button>
-        </Modal.Footer>
-      </form>
-    </Dialog>
   );
 }
 
@@ -132,7 +150,7 @@ function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 export default function App() {
   const st = useStore();
-  const [askName, setAskName] = useState(!st.me);
+  const [password, setPassword] = useState(false);
   const [help, setHelp] = useState(false);
   const [menu, setMenu] = useState(false);
 
@@ -156,6 +174,9 @@ export default function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  if (st.needLogin) return <LoginPage />;
+  if (!st.me) return null;
+
   return (
     <div className="flex h-full">
       <aside
@@ -169,9 +190,23 @@ export default function App() {
         </div>
         <Sidebar onNavigate={() => setMenu(false)} />
         <div className="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted">
-          <button className="hover:text-foreground hover:underline" onClick={() => setAskName(true)} title="Change your name">
-            {st.me || "—"}
-          </button>
+          <Dropdown>
+            <Button size="sm" variant="ghost" className="-ml-2 text-xs">
+              {st.me}
+            </Button>
+            <Dropdown.Popover>
+              <Dropdown.Menu
+                aria-label="Account"
+                onAction={(key) => {
+                  if (key === "password") setPassword(true);
+                  if (key === "logout") store.logout();
+                }}
+              >
+                <Dropdown.Item id="password">Change password…</Dropdown.Item>
+                <Dropdown.Item id="logout">Sign out</Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
           <span className={st.connected ? "text-success" : "text-danger"} title={st.connected ? "Connected" : "Reconnecting…"}>
             ●
           </span>
@@ -179,8 +214,7 @@ export default function App() {
       </aside>
       {menu ? <div className="fixed inset-0 z-10 bg-backdrop md:hidden" onClick={() => setMenu(false)} /> : null}
       <ThreadPane menu={() => setMenu(true)} />
-      <NameDialog open={askName && !st.needLogin} onDone={() => setAskName(false)} />
-      <LoginDialog open={st.needLogin} />
+      <PasswordDialog open={password} onClose={() => setPassword(false)} />
       <HelpDialog open={help} onClose={() => setHelp(false)} />
       {st.toast ? (
         <div className="fixed bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-md border border-border bg-surface px-3 py-2 text-sm">{st.toast}</div>

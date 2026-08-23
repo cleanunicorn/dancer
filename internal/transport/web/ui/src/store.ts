@@ -25,7 +25,7 @@ type Listener = () => void;
 
 class Store {
   state: State = {
-    me: storage.get("name", ""),
+    me: "",
     needLogin: false,
     channels: new Map(),
     threads: new Map(),
@@ -60,6 +60,8 @@ class Store {
 
   async start() {
     try {
+      const me = await api<{ user: string }>("GET", "/api/me");
+      this.set({ me: me.user, needLogin: false });
       await this.loadState();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
@@ -70,22 +72,32 @@ class Store {
     }
     this.connect();
     this.route();
-    window.addEventListener("hashchange", () => this.route());
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && this.state.current) this.markSeen(this.state.current);
-    });
+    if (!this.listening) {
+      this.listening = true;
+      window.addEventListener("hashchange", () => this.route());
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && this.state.current) this.markSeen(this.state.current);
+      });
+    }
   }
+  private listening = false;
 
-  async login(token: string) {
-    await api("POST", "/api/login", { token });
-    this.set({ needLogin: false });
+  async login(name: string, password: string) {
+    await api("POST", "/api/login", { name, password });
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
     await this.start();
   }
 
-  setName(name: string) {
-    storage.set("name", name);
-    this.set({ me: name });
-    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  async logout() {
+    await api("POST", "/api/logout", {});
+    this.es?.close();
+    this.es = null;
+    this.set({ me: "", needLogin: true, current: null, draft: null, messages: new Map(), threads: new Map(), channels: new Map() });
+    location.hash = "";
+  }
+
+  async changePassword(current: string, next: string) {
+    await api("POST", "/api/password", { current, new: next });
   }
 
   async loadState() {
@@ -282,7 +294,7 @@ class Store {
   /* ---------- actions ---------- */
 
   async send(text: string): Promise<boolean> {
-    const body: Record<string, string> = { text, user: this.state.me };
+    const body: Record<string, string> = { text };
     if (this.state.current) body.thread = this.state.current;
     else if (this.state.draft) {
       body.channel = this.state.draft.channel;
@@ -306,7 +318,7 @@ class Store {
   }
 
   async decide(thread: string, promptId: string, choice: string) {
-    await api("POST", "/api/decide", { thread, promptId, choice, user: this.state.me });
+    await api("POST", "/api/decide", { thread, promptId, choice });
     // the relayed decision arrives on the stream and settles the prompt
   }
 

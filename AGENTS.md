@@ -97,7 +97,7 @@ is the reference for every key.
 
 ## Architecture
 
-One Go binary (`cmd/dancer`: `run` | `setup` | `doctor`). Data flows in one loop:
+One Go binary (`cmd/dancer`: `run` | `setup` | `doctor` | `user`). Data flows in one loop:
 
 ```
 transports --Inbound--> surfaces --Intent--> Coordinator --Task--> Executor --> Agent --> Environment
@@ -121,8 +121,10 @@ files first — they carry the contract, the concrete packages under them are im
   channel's owner (`ChannelLister`) to open a thread (`ThreadOpener`), so a web user can start
   work in a Slack channel. The web transport has no memory: lists and history come from the
   coordinator through `transport.History` (`coordinator/threads.go`); only the live status line
-  and open prompts are kept in memory. `Inbound.UserName` is the display name when a transport
-  has one (Slack: users.info, cached).
+  and open prompts are kept in memory. Its users are accounts in the store (`dancer user add`,
+  `web/auth.go`: PBKDF2 hashes, sessions by token hash); the session's name is the
+  `Inbound.UserID`. `Inbound.UserName` is the display name when a transport has one (Slack:
+  users.info, cached).
   Keyed messages (`Outbound.Key`) are its one stateful feature: Slack edits/deletes the message it
   posted under the key and mirrors the text into the thread's assistant status; the terminal redraws
   the line. `Outbound.Mention` addresses one user (Slack: `<@U…>` in front of the text; terminal

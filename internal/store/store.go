@@ -97,6 +97,35 @@ type Store interface {
 	PutFlow(ctx context.Context, f FlowState) error
 	ListFlows(ctx context.Context) ([]FlowState, error)
 	DeleteFlow(ctx context.Context, thread transport.ThreadID) error
+
+	// Users of the web UI and their sessions (see transport/web). PutUser
+	// replaces an existing one; GetUser and GetSession return ErrNotFound.
+	PutUser(ctx context.Context, u User) error
+	GetUser(ctx context.Context, name string) (User, error)
+	ListUsers(ctx context.Context) ([]User, error)
+	DeleteUser(ctx context.Context, name string) error
+	PutSession(ctx context.Context, s Session) error
+	GetSession(ctx context.Context, token string) (Session, error)
+	DeleteSession(ctx context.Context, token string) error
+	DeleteUserSessions(ctx context.Context, user string) error
+}
+
+// User is an account of the web UI. Password is the encoded hash
+// (transport/web makes and checks it); the name is the Inbound.UserID
+// the user's messages carry.
+type User struct {
+	Name      string
+	Password  string
+	CreatedAt time.Time
+}
+
+// Session is a web login. Token is the hash of what the browser holds,
+// so a copy of the database logs nobody in.
+type Session struct {
+	Token     string
+	User      string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 // FlowState is a multi-step conversation with a human (e.g. "agent add")

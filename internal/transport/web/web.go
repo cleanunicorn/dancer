@@ -21,17 +21,17 @@
 // thread in a Slack channel is opened by the Slack transport on the
 // coordinator's request and shows up here like any other.
 //
-// Identity is what the browser says it is: the UI asks for a display
-// name once and sends it with every message (Inbound.UserID and
-// UserName), and a mention (Outbound.Mention) of that name lights up for
-// whoever carries it. Access is a shared token (Token): the UI asks for
-// it once and keeps it in a cookie. Without one, config only lets the
-// server listen on the loopback interface.
+// Identity is an account (auth.go): the UI is a login page until a
+// session cookie names a user, and that name is the Inbound.UserID and
+// UserName of everything they send — so a mention (Outbound.Mention) of
+// it lights up for them and nobody else. Accounts come from
+// `dancer user add`; there is no anonymous mode. The server speaks plain
+// HTTP: listen on the loopback interface (the default) or put TLS in
+// front of it.
 package web
 
 import (
 	"context"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -61,10 +61,8 @@ const Name = "web"
 type Transport struct {
 	// Listen is the address the HTTP server binds ("127.0.0.1:8788").
 	Listen string
-	// Token, when set, is required from every browser (a login form
-	// asks for it once). Empty means open; config only allows that on
-	// the loopback interface.
-	Token string
+	// Users is where accounts and sessions live (the store).
+	Users Users
 	// OwnChannels are this transport's own channels, by id.
 	OwnChannels []string
 	// History is where the lists and the past come from (the
@@ -89,12 +87,12 @@ type Transport struct {
 }
 
 // New returns a web transport.
-func New(listen, token string, channels []string, log *slog.Logger) *Transport {
+func New(listen string, channels []string, users Users, log *slog.Logger) *Transport {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Transport{
-		Listen: listen, Token: token, OwnChannels: channels, log: log,
+		Listen: listen, OwnChannels: channels, Users: users, log: log,
 		hub: newHub(), ready: make(chan struct{}), now: time.Now,
 		live:   map[transport.ThreadID]map[string]*Message{},
 		open:   map[transport.ThreadID]bool{},
@@ -356,19 +354,31 @@ func (t *Transport) Handler() http.Handler {
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("POST /api/login", sameSite(t.login))
+	mux.HandleFunc("POST /api/logout", t.auth(sameSiteUser(t.logout)))
+	mux.HandleFunc("GET /api/me", t.auth(t.me))
+	mux.HandleFunc("POST /api/password", t.auth(sameSiteUser(t.password)))
 	mux.HandleFunc("GET /api/state", t.auth(t.state))
 	mux.HandleFunc("GET /api/events", t.auth(t.events))
 	mux.HandleFunc("GET /api/threads/{channel}/{thread}", t.auth(t.thread))
-	mux.HandleFunc("POST /api/messages", t.auth(sameSite(t.post)))
-	mux.HandleFunc("POST /api/decide", t.auth(sameSite(t.decide)))
+	mux.HandleFunc("POST /api/messages", t.auth(sameSiteUser(t.post)))
+	mux.HandleFunc("POST /api/decide", t.auth(sameSiteUser(t.decide)))
 	return mux
 }
 
-// sameSite refuses a POST another site made the browser send. Without a
-// token (the loopback default) the cookie is no guard, and even with one
-// the browser attaches it: a page the operator has open elsewhere could
-// otherwise start a task here. The page's own requests are JSON and
-// same-origin; a cross-site form can be neither.
+// userHandler is an API handler that knows who is asking.
+type userHandler func(w http.ResponseWriter, r *http.Request, user string)
+
+func sameSiteUser(h userHandler) userHandler {
+	return func(w http.ResponseWriter, r *http.Request, user string) {
+		sameSite(func(w http.ResponseWriter, r *http.Request) { h(w, r, user) })(w, r)
+	}
+}
+
+// sameSite refuses a POST another site made the browser send: the
+// browser attaches the session cookie to any request, so a page the
+// operator has open elsewhere could otherwise start a task here. The
+// page's own requests are JSON and same-origin; a cross-site form can be
+// neither.
 func sameSite(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
@@ -389,52 +399,8 @@ func sameSite(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-const cookieName = "dancer_web"
-
-// auth wraps an API handler with the token check.
-func (t *Transport) auth(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !t.authorized(r) {
-			jsonError(w, http.StatusUnauthorized, "login required")
-			return
-		}
-		h(w, r)
-	}
-}
-
-func (t *Transport) authorized(r *http.Request) bool {
-	if t.Token == "" {
-		return true
-	}
-	got := ""
-	if c, err := r.Cookie(cookieName); err == nil {
-		got = c.Value
-	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		got = strings.TrimPrefix(h, "Bearer ")
-	}
-	return got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(t.Token)) == 1
-}
-
-func (t *Transport) login(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Token string `json:"token"`
-	}
-	if err := readJSON(r, &body); err != nil {
-		jsonError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if t.Token != "" && subtle.ConstantTimeCompare([]byte(body.Token), []byte(t.Token)) != 1 {
-		jsonError(w, http.StatusUnauthorized, "wrong token")
-		return
-	}
-	if t.Token != "" {
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: t.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 365 * 24 * 3600})
-	}
-	writeJSON(w, map[string]any{"ok": true})
-}
-
 // state is the sidebar: every channel and thread dancer knows.
-func (t *Transport) state(w http.ResponseWriter, r *http.Request) {
+func (t *Transport) state(w http.ResponseWriter, r *http.Request, _ string) {
 	var channels []Channel
 	var threads []Thread
 	if t.History != nil {
@@ -499,7 +465,7 @@ func (t *Transport) decorate(th *Thread) {
 }
 
 // thread is one thread's messages: the log, then the live line.
-func (t *Transport) thread(w http.ResponseWriter, r *http.Request) {
+func (t *Transport) thread(w http.ResponseWriter, r *http.Request, _ string) {
 	th := transport.ThreadID(r.PathValue("channel") + "/" + r.PathValue("thread"))
 	msgs := []*Message{}
 	if t.History != nil {
@@ -526,12 +492,11 @@ const historyLimit = 2000
 
 // post is what the human typed: in a thread, or in a channel to start
 // one (the coordinator opens it and the page hears about it live).
-func (t *Transport) post(w http.ResponseWriter, r *http.Request) {
+func (t *Transport) post(w http.ResponseWriter, r *http.Request, user string) {
 	var body struct {
 		Thread  string `json:"thread"`
 		Channel string `json:"channel"`
 		Text    string `json:"text"`
-		User    string `json:"user"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -550,7 +515,6 @@ func (t *Transport) post(w http.ResponseWriter, r *http.Request) {
 		}
 		th = transport.ThreadID(body.Channel + "/")
 	}
-	user := userName(body.User)
 	in := transport.Inbound{Transport: Name, Thread: th, UserID: user, UserName: user, Text: body.Text}
 	if err := t.deliver(r.Context(), in); err != nil {
 		jsonError(w, http.StatusServiceUnavailable, err.Error())
@@ -560,12 +524,11 @@ func (t *Transport) post(w http.ResponseWriter, r *http.Request) {
 }
 
 // decide answers a prompt.
-func (t *Transport) decide(w http.ResponseWriter, r *http.Request) {
+func (t *Transport) decide(w http.ResponseWriter, r *http.Request, user string) {
 	var body struct {
 		Thread   string `json:"thread"`
 		PromptID string `json:"promptId"`
 		Choice   string `json:"choice"`
-		User     string `json:"user"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -576,7 +539,6 @@ func (t *Transport) decide(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "thread, promptId and choice are needed")
 		return
 	}
-	user := userName(body.User)
 	in := transport.Inbound{Transport: Name, Thread: transport.ThreadID(body.Thread), UserID: user, UserName: user,
 		Decision: &transport.Decision{PromptID: body.PromptID, Choice: body.Choice}}
 	if err := t.deliver(r.Context(), in); err != nil {
@@ -606,7 +568,7 @@ func (t *Transport) deliver(ctx context.Context, in transport.Inbound) error {
 }
 
 // events streams every change as server-sent events.
-func (t *Transport) events(w http.ResponseWriter, r *http.Request) {
+func (t *Transport) events(w http.ResponseWriter, r *http.Request, _ string) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		jsonError(w, http.StatusInternalServerError, "streaming unsupported")
@@ -698,19 +660,6 @@ func (h *hub) closeAll() {
 		delete(h.subs, ch)
 		close(ch)
 	}
-}
-
-// userName is the display name the browser gave, tidied; "web" when it
-// gave none.
-func userName(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "web"
-	}
-	if r := []rune(s); len(r) > 40 {
-		s = string(r[:40])
-	}
-	return s
 }
 
 func firstLine(s string) string {

@@ -48,8 +48,8 @@ type Channel struct {
 // transport. validate calls it when "web" is configured; `dancer run
 // -web` calls it itself, since it forces the transport in after Load.
 func (c *Config) CheckWeb() error {
-	if c.Web.Token == "" && !loopback(c.Web.Listen) {
-		return fmt.Errorf("config: web transport on %s needs web.token (only a loopback address may go without)", c.Web.Listen)
+	if _, _, err := net.SplitHostPort(c.Web.Listen); err != nil {
+		return fmt.Errorf("config: web.listen %q: %v", c.Web.Listen, err)
 	}
 	for _, ch := range c.Web.Channels {
 		if ch == "" || strings.ContainsAny(ch, "/ \t") {
@@ -57,20 +57,6 @@ func (c *Config) CheckWeb() error {
 		}
 	}
 	return nil
-}
-
-// loopback reports whether a listen address is on the loopback
-// interface (or on no interface at all: a bare port binds everything).
-func loopback(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil || host == "" {
-		return false
-	}
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // Key identifies the channel across transports: "<transport>/<id>".
@@ -175,13 +161,12 @@ type Slack struct {
 	AllowedUsers []string `toml:"allowed_users"`
 }
 
-// Web is the browser transport (internal/transport/web).
+// Web is the browser transport (internal/transport/web). Accounts are
+// not config: `dancer user add <name>` keeps them in the store.
 type Web struct {
-	// Listen is the address to serve on (default "127.0.0.1:8788").
+	// Listen is the address to serve on (default "127.0.0.1:8788"). It is
+	// plain HTTP: keep it on the loopback interface or put TLS in front.
 	Listen string `toml:"listen"`
-	// Token, when set, is what the browser has to present (a login form
-	// asks once). Required unless Listen is on the loopback interface.
-	Token string `toml:"token"`
 	// Channels are the web UI's own channels, for threads that do not
 	// live in Slack (default ["general"]).
 	Channels []string `toml:"channels"`
