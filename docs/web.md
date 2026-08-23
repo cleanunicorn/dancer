@@ -4,6 +4,8 @@ A browser transport: dancer serves a single-page chat UI and streams it every me
 It is an *observer* — it shows every conversation dancer has, whichever transport hosts
 it — so one dancer serves the browser and [Slack](slack.md) at the same time.
 
+Other transports: [Slack](slack.md), [Terminal](terminal.md).
+
 ## Configure
 
 ```toml
