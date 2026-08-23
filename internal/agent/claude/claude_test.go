@@ -18,6 +18,7 @@ type fakeProc struct {
 	stdoutR *io.PipeReader
 	stdoutW *io.PipeWriter
 	exited  chan struct{}
+	code    int         // what Wait reports once exited
 	got     chan string // every line dancer wrote to stdin
 }
 
@@ -37,7 +38,7 @@ func newFakeProc() *fakeProc {
 func (f *fakeProc) Stdin() io.WriteCloser { return f.stdinW }
 func (f *fakeProc) Stdout() io.Reader     { return f.stdoutR }
 func (f *fakeProc) Stderr() io.Reader     { return strings.NewReader("") }
-func (f *fakeProc) Wait() (int, error)    { <-f.exited; return 0, nil }
+func (f *fakeProc) Wait() (int, error)    { <-f.exited; return f.code, nil }
 func (f *fakeProc) Kill() error           { f.exit(); return nil }
 func (f *fakeProc) exit() {
 	select {
@@ -81,8 +82,11 @@ func next(t *testing.T, r *run) agent.Event {
 	}
 }
 
-const initLine = `{"type":"system","subtype":"init","session_id":"s1","apiKeySource":"none","model":"m"}`
-const resultLine = `{"type":"result","subtype":"success","session_id":"s1","result":"hi","total_cost_usd":0.01}`
+const (
+	initLine   = `{"type":"system","subtype":"init","session_id":"s1","apiKeySource":"none","model":"m"}`
+	resultLine = `{"type":"result","subtype":"success","session_id":"s1","result":"hi","total_cost_usd":0.01}`
+	errorLine  = `{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"s1","result":"limit reached"}`
+)
 
 // A subscription result goes out at once; the usage the CLI reports
 // after it follows as its own event.
@@ -106,7 +110,7 @@ func TestUsageFollowsResult(t *testing.T) {
 		t.Fatalf("usage event = %+v usage = %+v", ev, ev.Usage)
 	}
 	// An error turn asks too: a spent window is the likeliest cause.
-	f.say(`{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"s1","result":"limit reached"}`)
+	f.say(errorLine)
 	if ev := next(t, r); ev.Type != agent.EventError {
 		t.Fatalf("error = %+v", ev)
 	}

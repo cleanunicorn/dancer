@@ -104,7 +104,7 @@ func TestLivePermissionRoundTrip(t *testing.T) {
 			t.Fatalf("resume error: %s", ev.Text)
 		}
 	}
-	if answer == "" || !containsStr(answer, "created.txt") {
+	if answer == "" || !strings.Contains(answer, "created.txt") {
 		t.Fatalf("resume answer = %q", answer)
 	}
 }
@@ -143,7 +143,7 @@ func TestLiveQuestion(t *testing.T) {
 			break
 		}
 	}
-	if !containsStr(answer, "Banana") {
+	if !strings.Contains(answer, "Banana") {
 		t.Fatalf("answer = %q", answer)
 	}
 }
@@ -190,8 +190,6 @@ func TestLiveUsage(t *testing.T) {
 	t.Fatal("no usage event")
 }
 
-func containsStr(s, sub string) bool { return indexOf(s, sub) >= 0 }
-
 // TestLiveSubAgentOneResult spawns a real sub-agent. The CLI ends the
 // model's turn while the sub-agent runs and starts another when it is
 // done; dancer must report one result, after the sub-agent's answer.
@@ -216,8 +214,7 @@ func TestLiveSubAgentOneResult(t *testing.T) {
 	var results []string
 	var subAgentSpoke bool
 	deadline := time.After(3 * time.Minute)
-	// The turn must outlast the sub-agent: keep reading well past the first
-	// result and count what arrives.
+	var quiet <-chan time.Time // armed by the result after the sub-agent spoke: a second one would follow soon
 loop:
 	for {
 		select {
@@ -235,18 +232,12 @@ loop:
 				t.Fatalf("agent error: %s", ev.Text)
 			case agent.EventResult:
 				results = append(results, ev.Text)
-				if subAgentSpoke {
-					// Give a second result, if the CLI sends one, time to show up.
-					time.Sleep(5 * time.Second)
-					for len(run.Events()) > 0 {
-						ev := <-run.Events()
-						if ev.Type == agent.EventResult {
-							results = append(results, ev.Text)
-						}
-					}
-					break loop
+				if subAgentSpoke && quiet == nil {
+					quiet = time.After(10 * time.Second)
 				}
 			}
+		case <-quiet:
+			break loop
 		case <-deadline:
 			t.Fatal("no final result in time")
 		}

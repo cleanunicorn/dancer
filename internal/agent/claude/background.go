@@ -2,9 +2,8 @@ package claude
 
 import "github.com/cleanunicorn/dancer/internal/agent"
 
-// background tracks the tasks the CLI runs behind the main session — a
-// sub-agent spawned by the Agent tool, a shell command started with
-// run_in_background — because they change what a result line means.
+// background tracks the sub-agents the CLI runs behind the main session,
+// because they change what a result line means.
 //
 // The Agent tool returns at once ("launched") and the model goes on; its
 // turn often ends, with a result line, while the sub-agent still runs.
@@ -15,31 +14,32 @@ import "github.com/cleanunicorn/dancer/internal/agent"
 // the turn the human is waiting on when no such task is running and no
 // finished task is waiting to be told. Verified against claude 2.1.240;
 // testdata/background.jsonl is a captured session.
+//
+// Only sub-agents (task_type local_agent) are tracked. A shell command
+// started with run_in_background gets the same treatment from the CLI
+// when it finishes — but a dev server or a watcher never finishes, and a
+// result held for it would never be released: no closing line, a process
+// the executor never idles, a turn that looks cut short at every restart.
+// The CLI reports such a task ended only when its stdin closes. A
+// finished command therefore still costs a second turn (init, result) in
+// the thread; a sub-agent always ends, so holding for it is safe.
 type background struct {
-	running map[string]bool // this session's backgrounded tasks, by task id, until the CLI reports them finished
-	unread  bool            // a task finished and the model has not had a request built since
+	running map[string]bool // this session's backgrounded sub-agents, by task id, until the CLI reports them finished
+	unread  bool            // a tracked task finished and the model has not had a request built since
 }
 
 // observe updates the tracker from one translated line.
 func (b *background) observe(p parsed) {
 	if t := p.Task; t != nil {
-		switch t.Subtype {
-		case "task_started":
-			if t.Background && !t.Owned {
-				if b.running == nil {
-					b.running = map[string]bool{}
-				}
-				b.running[t.ID] = true
+		switch {
+		case t.Started && t.Background && !t.Owned && t.Kind == "local_agent":
+			if b.running == nil {
+				b.running = map[string]bool{}
 			}
-		case "task_notification", "task_updated":
-			// task_updated also carries progress patches; only an end counts.
-			if t.Subtype == "task_updated" && (t.Status == "" || t.Status == "running" || t.Status == "pending") {
-				break
-			}
-			if b.running[t.ID] {
-				delete(b.running, t.ID)
-				b.unread = true
-			}
+			b.running[t.ID] = true
+		case t.Ended && b.running[t.ID]:
+			delete(b.running, t.ID)
+			b.unread = true
 		}
 	}
 	for _, ev := range p.Events {

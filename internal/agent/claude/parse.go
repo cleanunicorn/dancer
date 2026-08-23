@@ -16,14 +16,25 @@ type parsed struct {
 	Task       *taskLine        // system/task_*: a background task of this session changed state
 }
 
-// taskLine is what the background tracker needs from a system task_started,
-// task_notification or task_updated line.
+// taskLine is a system task_started, task_notification or task_updated
+// line reduced to what the background tracker needs: which task, and
+// whether the line starts it or ends it.
 type taskLine struct {
-	Subtype    string
 	ID         string
+	Started    bool   // task_started
 	Background bool   // task_started: the spawning call returned at once
 	Owned      bool   // task_started: belongs to a sub-agent, not this session
-	Status     string // task_notification/task_updated: completed, failed, killed
+	Kind       string // task_started: local_agent, local_bash, ...
+	Ended      bool   // task_notification, or task_updated with a terminal status
+}
+
+// taskEnded reports whether a task status is a terminal one.
+func taskEnded(status string) bool {
+	switch status {
+	case "completed", "failed", "killed", "stopped":
+		return true
+	}
+	return false
 }
 
 type permissionReq struct {
@@ -88,12 +99,15 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 				ev.Text = reason
 			}
 			emit(ev)
-		case "task_started", "task_notification", "task_updated":
-			tl := &taskLine{Subtype: l.Subtype, ID: l.TaskID, Background: l.IsBackgrounded, Owned: l.OwnedBySubagent, Status: l.Status}
-			if l.Patch != nil {
-				tl.Status = l.Patch.Status
+		case "task_started":
+			p.Task = &taskLine{ID: l.TaskID, Started: true, Background: l.IsBackgrounded, Owned: l.OwnedBySubagent, Kind: l.TaskType}
+		case "task_notification":
+			p.Task = &taskLine{ID: l.TaskID, Ended: true}
+		case "task_updated":
+			// Also carries progress patches; only an end counts.
+			if l.Patch != nil && taskEnded(l.Patch.Status) {
+				p.Task = &taskLine{ID: l.TaskID, Ended: true}
 			}
-			p.Task = tl
 		}
 	case "assistant":
 		for _, c := range msg.Content {

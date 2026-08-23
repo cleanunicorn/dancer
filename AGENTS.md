@@ -194,11 +194,13 @@ files first — they carry the contract, the concrete packages under them are im
   `can_use_tool` with a `control_response`. After each turn on a subscription login it also sends a
   `get_usage` control request and emits the answer as `agent.EventUsage` (claude 2.1.240+; older CLIs
   answer with an error and are not asked again). A `result` line is not always the turn's end: the
-  CLI runs sub-agents (and `run_in_background` commands) behind the model's turn, emits a `result`
-  when the model stops, and starts a *second* turn (new `init`, another `result`) when the background
-  task finishes. `background.go` tracks those tasks from the `system/task_*` lines and withholds a
-  `result` until nothing is running or waiting to be delivered, so every layer above sees one
-  `EventResult` per turn. Verified against claude 2.1.240; `parse_test.go` fixtures pin the
+  CLI runs sub-agents behind the model's turn, emits a `result` when the model stops, and starts a
+  *second* turn (new `init`, another `result`) when the sub-agent finishes. `background.go` tracks
+  this session's sub-agents from the `system/task_*` lines and withholds a `result` until none is
+  running or waiting to be delivered, so every layer above sees one `EventResult` per turn; a held
+  result is delivered if the process exits on it. Only sub-agents (`task_type: local_agent`) are
+  tracked: a `run_in_background` command may never end (a dev server), and a result held for it would
+  never be released. Verified against claude 2.1.240; `parse_test.go` fixtures pin the
   stream-json → `agent.Event` mapping, `testdata/session.jsonl` is a real captured session and
   `testdata/background.jsonl` a captured sub-agent one.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +

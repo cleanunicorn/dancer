@@ -5,18 +5,20 @@
 // driver sends one more control request: on a subscription login it asks
 // get_usage after each result and emits the answer — how much of the
 // plan's 5-hour, 7-day and per-model windows is used — as its own
-// agent.EventUsage, after the result. The result never waits for it: a
-// turn ends when the CLI says so, and the usage line lands a moment later
-// or, when the CLI cannot say (older version, offline), not at all. The
-// CLI does the lookup itself, with its own login, so it works the same in
-// a container or over SSH. Needs claude 2.1.240.
+// agent.EventUsage, after the result. The result never waits for it: the
+// usage line lands a moment after the result or, when the CLI cannot say
+// (older version, offline), not at all. The CLI does the lookup itself,
+// with its own login, so it works the same in a container or over SSH.
+// Needs claude 2.1.240.
 //
 // A result line is not always the end of the turn: the CLI emits one
-// whenever the model stops, and with a sub-agent or a backgrounded command
-// still running it will start the model again to deliver the outcome. The
-// background tracker withholds such results so the layers above — which
-// close the turn, idle the process and tell the human "done" on
-// EventResult — only hear the last one.
+// whenever the model stops, and with a sub-agent still running it will
+// start the model again (a second system/init, then another result) to
+// deliver the outcome. The background tracker withholds such results so
+// the layers above — which close the turn, idle the process and tell the
+// human "done" on EventResult — only hear the last one; the second init
+// passes through. If the process exits while a result is held, that
+// result is delivered: nothing more is coming.
 package claude
 
 import (
@@ -259,7 +261,7 @@ func (r *run) drainStderr() {
 func (r *run) loop() {
 	defer close(r.events)
 	defer close(r.done)
-	sawResult := false
+	sawResult := false // a result or error reached the caller this turn
 	sc := bufio.NewScanner(r.proc.Stdout())
 	sc.Buffer(make([]byte, 0, 256*1024), 16<<20)
 	for sc.Scan() {
@@ -277,14 +279,14 @@ func (r *run) loop() {
 			switch ev.Type {
 			case agent.EventInit:
 				r.billing = ev.Billing
+				sawResult = false
 			case agent.EventResult, agent.EventError:
 				ev.Billing = r.billing
 				if ev.Type == agent.EventResult && !r.bg.settled() {
-					// The model stopped, but a sub-agent or background command
-					// is still owed to this turn: the CLI will run the model
-					// again when it finishes. The turn goes on.
-					h := ev
-					r.held = &h
+					// The model stopped, but a sub-agent is still owed to
+					// this turn: the CLI will run the model again when it
+					// finishes. The turn goes on.
+					r.held = &ev
 					continue
 				}
 				sawResult = true
@@ -313,10 +315,14 @@ func (r *run) loop() {
 		}
 	}
 	code, _ := r.proc.Wait()
-	if code == 0 && !sawResult && r.held != nil {
-		// The process ended cleanly on a result dancer was still holding:
-		// whatever was outstanding is not coming, so that result was the end.
+	if r.held != nil {
+		// The process is gone with a result still held: whatever was
+		// outstanding is not coming, so that result was the end — whichever
+		// way the process went. A cancel or shutdown closes stdin on a CLI
+		// still driving its sub-agent, which may outlive Stop's grace and
+		// be killed; the model's last words beat an exit code.
 		r.events <- *r.held
+		r.held = nil
 		sawResult = true
 	}
 	if code != 0 && !sawResult {

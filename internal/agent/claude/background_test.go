@@ -1,8 +1,6 @@
 package claude
 
 import (
-	"bufio"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,27 +13,16 @@ import (
 // sub-agent still runs, and when the sub-agent finishes the CLI starts a
 // second turn — init, text, result. Only the second result ends the turn.
 func TestBackgroundFixture(t *testing.T) {
-	f, err := os.Open("testdata/background.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
 	var bg background
 	var results []bool // settled at each result line
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
-	for sc.Scan() {
-		p, err := translate(sc.Bytes(), time.Now())
-		if err != nil {
-			t.Fatalf("translate: %v", err)
-		}
+	scanFixture(t, "background.jsonl", func(p parsed) {
 		bg.observe(p)
 		for _, ev := range p.Events {
 			if ev.Type == agent.EventResult {
 				results = append(results, bg.settled())
 			}
 		}
-	}
+	})
 	if len(results) != 2 || results[0] || !results[1] {
 		t.Fatalf("settled at each result = %v, want [false true]", results)
 	}
@@ -50,11 +37,11 @@ const (
 	pongLine    = `{"type":"result","subtype":"success","session_id":"s1","result":"pong","total_cost_usd":0.02}`
 )
 
-// The result that ends the model's turn while a sub-agent runs is held
-// back; the one after the CLI's follow-up turn is the turn's end.
-func TestResultWaitsForSubAgent(t *testing.T) {
-	f := newFakeProc()
-	r := newTestRun(f)
+// launchAgent plays the start of a turn in which the model launches a
+// sub-agent: init, the Agent call, task_started, the "launched" result of
+// the call. The three events it produces are consumed.
+func launchAgent(t *testing.T, f *fakeProc, r *run) {
+	t.Helper()
 	f.say(initLine)
 	next(t, r) // init
 	f.say(agentCall)
@@ -62,10 +49,16 @@ func TestResultWaitsForSubAgent(t *testing.T) {
 	f.say(agentStart)
 	f.say(agentLaunch)
 	next(t, r) // tool_result
+}
+
+// The result that ends the model's turn while a sub-agent runs is held
+// back; the one after the CLI's follow-up turn is the turn's end, and the
+// first get_usage is asked for that one only.
+func TestResultWaitsForSubAgent(t *testing.T) {
+	f := newFakeProc()
+	r := newTestRun(f)
+	launchAgent(t, f, r)
 	f.say(waitingLine)
-	if req := f.wrote(`"get_usage"`, 200*time.Millisecond); req != "" {
-		t.Fatalf("asked for usage on a held result: %s", req)
-	}
 	// The sub-agent speaks with parent_tool_use_id set: not a main-session request.
 	f.say(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"pong"}]},"parent_tool_use_id":"toolu_1","session_id":"s1"}`)
 	if ev := next(t, r); ev.Type != agent.EventText || ev.ParentID != "toolu_1" {
@@ -80,7 +73,7 @@ func TestResultWaitsForSubAgent(t *testing.T) {
 		t.Fatalf("result = %+v, want the follow-up turn's", ev)
 	}
 	if req := f.wrote(`"get_usage"`, 2*time.Second); !strings.Contains(req, `"request_id":"usage-1"`) {
-		t.Fatalf("get_usage after the real result = %q", req)
+		t.Fatalf("get_usage after the real result = %q, want the first one asked", req)
 	}
 	f.exit()
 	if ev, ok := <-r.events; ok {
@@ -94,13 +87,7 @@ func TestResultWaitsForSubAgent(t *testing.T) {
 func TestSubAgentReportedInTurn(t *testing.T) {
 	f := newFakeProc()
 	r := newTestRun(f)
-	f.say(initLine)
-	next(t, r)
-	f.say(agentCall)
-	next(t, r)
-	f.say(agentStart)
-	f.say(agentLaunch)
-	next(t, r)
+	launchAgent(t, f, r)
 	f.say(agentDone)
 	f.say(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"sleep 1"}}]},"parent_tool_use_id":null,"session_id":"s1"}`)
 	next(t, r)
@@ -122,7 +109,7 @@ func TestSubAgentOwnedTaskHoldsNothing(t *testing.T) {
 	r := newTestRun(f)
 	f.say(initLine)
 	next(t, r)
-	f.say(`{"type":"system","subtype":"task_started","task_id":"b2","owned_by_subagent":true,"tool_use_id":"toolu_9","is_backgrounded":true,"task_type":"local_bash","session_id":"s1"}`)
+	f.say(`{"type":"system","subtype":"task_started","task_id":"b2","owned_by_subagent":true,"tool_use_id":"toolu_9","is_backgrounded":true,"task_type":"local_agent","session_id":"s1"}`)
 	f.say(resultLine)
 	if ev := next(t, r); ev.Type != agent.EventResult {
 		t.Fatalf("result = %+v", ev)
@@ -130,25 +117,69 @@ func TestSubAgentOwnedTaskHoldsNothing(t *testing.T) {
 	f.exit()
 }
 
-// If the process ends cleanly on a held result, nothing more is coming:
-// that result was the end after all.
-func TestHeldResultDeliveredOnExit(t *testing.T) {
+// A shell command started with run_in_background may never end (a dev
+// server, a watcher): its result is not held, whatever the CLI does when
+// it does end.
+func TestBackgroundCommandHoldsNothing(t *testing.T) {
 	f := newFakeProc()
 	r := newTestRun(f)
 	f.say(initLine)
 	next(t, r)
-	f.say(agentCall)
-	next(t, r)
-	f.say(agentStart)
-	f.say(agentLaunch)
-	next(t, r)
-	f.say(waitingLine)
-	f.exit()
-	if ev := next(t, r); ev.Type != agent.EventResult || ev.Text != "waiting for the agent" || ev.Billing != agent.BillingSubscription {
-		t.Fatalf("result on exit = %+v", ev)
+	f.say(`{"type":"system","subtype":"task_started","task_id":"b3","tool_use_id":"toolu_3","description":"npm run dev","is_backgrounded":true,"task_type":"local_bash","session_id":"s1"}`)
+	f.say(resultLine)
+	if ev := next(t, r); ev.Type != agent.EventResult {
+		t.Fatalf("result = %+v", ev)
 	}
-	if _, ok := <-r.events; ok {
-		t.Fatal("events not closed")
+	f.exit()
+}
+
+// If the process ends on a held result, nothing more is coming: that
+// result was the end after all — on a later turn of the process as much
+// as on its first, and whether or not the exit was clean (a cancel kills
+// a CLI that is still driving its sub-agent).
+func TestHeldResultDeliveredOnExit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code int
+	}{{"clean", 0}, {"killed", 137}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeProc()
+			f.code = tc.code
+			r := newTestRun(f)
+			f.say(initLine)
+			next(t, r)
+			f.say(resultLine)
+			if ev := next(t, r); ev.Type != agent.EventResult || ev.Text != "hi" {
+				t.Fatalf("first turn's result = %+v", ev)
+			}
+			launchAgent(t, f, r) // the follow-up turn
+			f.say(waitingLine)
+			f.exit()
+			if ev := next(t, r); ev.Type != agent.EventResult || ev.Text != "waiting for the agent" || ev.Billing != agent.BillingSubscription {
+				t.Fatalf("result on exit = %+v", ev)
+			}
+			if ev, ok := <-r.events; ok {
+				t.Fatalf("extra event after the held result: %+v", ev)
+			}
+		})
+	}
+}
+
+// A process that dies mid-turn without any result is still reported,
+// even when an earlier turn of it had one.
+func TestExitErrorPerTurn(t *testing.T) {
+	f := newFakeProc()
+	f.code = 1
+	r := newTestRun(f)
+	f.say(initLine)
+	next(t, r)
+	f.say(resultLine)
+	next(t, r)
+	f.say(initLine) // a follow-up turn that never finishes
+	next(t, r)
+	f.exit()
+	if ev := next(t, r); ev.Type != agent.EventError || !strings.Contains(ev.Text, "exited with code 1") {
+		t.Fatalf("on exit = %+v, want the exit error", ev)
 	}
 }
 
@@ -160,7 +191,7 @@ func TestErrorResultNotHeld(t *testing.T) {
 	f.say(initLine)
 	next(t, r)
 	f.say(agentStart)
-	f.say(`{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"s1","result":"limit reached"}`)
+	f.say(errorLine)
 	if ev := next(t, r); ev.Type != agent.EventError {
 		t.Fatalf("error = %+v", ev)
 	}
