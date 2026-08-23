@@ -13,7 +13,9 @@ restarts — a restarted dancer resumes the tasks it cut short by itself.
   @you 🔐 Bash wants to run: go test ./...        [Allow] [Deny]
   Added exponential backoff in client.go; 12 tests pass.
   @you ✅ done · 2m13s · 7 tool calls
-  📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%
+  📊 max plan
+  ▰▰▱▱▱▱▱▱▱▱ 15% · 5h
+  ▰▰▰▱▱▱▱▱▱▱ 28% · 7d
 ```
 
 While the agent works, the last message in the thread is a live status line
