@@ -11,9 +11,16 @@ type line struct {
 	Subtype         string          `json:"subtype,omitempty"`
 	SessionID       string          `json:"session_id,omitempty"`
 	ParentToolUseID *string         `json:"parent_tool_use_id,omitempty"`
-	Message         *apiMessage     `json:"message,omitempty"`
+	Message         json.RawMessage `json:"message,omitempty"` // apiMessage on assistant/user lines; a string on system/permission_denied
 	RequestID       string          `json:"request_id,omitempty"`
 	Request         *controlRequest `json:"request,omitempty"`
+
+	// type=system subtype=permission_denied: the CLI's own policy (a rule,
+	// hook or the auto-mode classifier) refused a tool call. Message is a
+	// human-readable string here.
+	ToolName       string `json:"tool_name,omitempty"`
+	ToolUseID      string `json:"tool_use_id,omitempty"`
+	DecisionReason string `json:"decision_reason,omitempty"`
 
 	// type=system subtype=init
 	Model          string `json:"model,omitempty"`

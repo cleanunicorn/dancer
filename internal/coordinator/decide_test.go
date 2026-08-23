@@ -280,3 +280,13 @@ func TestBudgetSurvivesARestart(t *testing.T) {
 		t.Fatalf("verdicts on record = %d, want 3", got)
 	}
 }
+
+// A refusal by the agent's own policy is a fact the decider sees, and it
+// closes the refused call so it is not reported as still in flight.
+func TestFactsRecordAPolicyRefusal(t *testing.T) {
+	ev := agent.Event{Type: agent.EventToolDenied, Tool: "Bash", ToolID: "1", Text: "Permission for this action was denied by the Claude Code auto mode classifier. Reason: Blocked by classifier."}
+	got := describeEvent(ev)
+	if !strings.HasPrefix(got, "tool_denied Bash: Permission") {
+		t.Errorf("describeEvent = %q", got)
+	}
+}
