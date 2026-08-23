@@ -1,13 +1,13 @@
 // The desk: the open thread's strip pulled out of the rack at full width,
 // the log beneath it, and the printer (composer) along the bottom edge.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Button, TextArea, TextField } from "@heroui/react";
+import { Button, TextArea, TextField, Tooltip } from "@heroui/react";
 import type { Message, Thread } from "./api";
 import { ME } from "./api";
-import { Choices, LiveLine, MessageRow } from "./Message";
+import { Choices, LiveLine, MessageRow, ToolStrip } from "./Message";
 import { plain } from "./mrkdwn";
 import { label, promptOpen, store, useStore } from "./store";
-import { FLAG, Flag, Lamp, Mark, TITLE, elapsed, state } from "./strip";
+import { FLAG, Flag, Lamp, Mark, TITLE, elapsed, state, type StripState } from "./strip";
 
 function useNarrow(): boolean {
   const [narrow, set] = useState(
@@ -31,6 +31,42 @@ function useTick(on: boolean, ms = 1000) {
   }, [on, ms]);
 }
 
+// askOf is the rack's copy of a thread's open prompt as a log line, for
+// the pulled strip to answer from before the log is fetched.
+function askOf(t: Thread): Message {
+  return { id: 0, thread: t.id, at: t.updated, text: t.ask || "", prompt: t.prompt, mention: t.mention };
+}
+
+// Actions are the chat commands that fit the strip's state, printed on
+// it: cancel while the agent moves, close once it stopped, status always.
+// Each sends the command as if typed.
+function Actions({ t, state: s }: { t: Thread; state: StripState }) {
+  const [busy, setBusy] = useState("");
+  if (!t.status || s === "closed") return null;
+  const run = async (cmd: string) => {
+    setBusy(cmd);
+    await store.send(cmd);
+    setBusy("");
+  };
+  const moving = s === "run" || s === "wait" || s === "queue";
+  return (
+    <div className="actions ml-auto flex items-center gap-1.5">
+      {moving ? (
+        <Button size="sm" variant="danger" isDisabled={!!busy} onPress={() => run("cancel")} className="font-strip h-7 text-[11px] uppercase tracking-wider">
+          {busy === "cancel" ? "cancelling…" : "cancel"}
+        </Button>
+      ) : (
+        <Button size="sm" variant="secondary" isDisabled={!!busy} onPress={() => run("close")} className="font-strip h-7 border border-ink/25 bg-surface text-[11px] uppercase tracking-wider">
+          {busy === "close" ? "closing…" : "close"}
+        </Button>
+      )}
+      <Button size="sm" variant="ghost" isDisabled={!!busy} onPress={() => run("status")} className="font-strip h-7 text-[11px] uppercase tracking-wider text-ink">
+        status
+      </Button>
+    </div>
+  );
+}
+
 function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
   const st = useStore();
   const s = state(t);
@@ -45,6 +81,8 @@ function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
       }
     }
   }
+  // until the log is fetched, the rack's own copy of the prompt will do
+  if (s === "wait" && !ask && !list && t.prompt) ask = askOf(t);
   const running = s === "run" || s === "wait";
   // the clock counts this turn, not the whole thread: from the prompt that
   // waits, or from the last thing a human said, which is what set the agent
@@ -106,12 +144,44 @@ function DeskStrip({ t, menu }: { t: Thread; menu: () => void }) {
               <span className="k">{running ? (ask ? "waiting" : "elapsed") : "updated"}</span>
               <span className="v">{running || stamp === "—" ? stamp : stamp + " ago"}</span>
             </div>
+            {t.agent ? (
+              <div className="field md:w-[6rem]" title={[t.model, t.env].filter(Boolean).join(" · ")}>
+                <span className="k">agent</span>
+                <span className="v">{t.agent}</span>
+              </div>
+            ) : null}
+            {t.model ? (
+              <div className="field md:w-[9rem]" title={t.model}>
+                <span className="k">model</span>
+                <span className="v">{t.model.replace(/^claude-/, "")}</span>
+              </div>
+            ) : null}
+            {t.env ? (
+              <div className="field md:w-[4rem]">
+                <span className="k">env</span>
+                <span className="v">{t.env}</span>
+              </div>
+            ) : null}
+            {t.session ? (
+              <div className="field md:w-[5rem]">
+                <span className="k">session</span>
+                <button
+                  type="button"
+                  className="v cursor-copy text-left hover:underline"
+                  title={t.session + " — click to copy"}
+                  onClick={() => navigator.clipboard?.writeText(t.session!).then(() => store.toast("session id copied"))}
+                >
+                  {t.session.slice(0, 8)}
+                </button>
+              </div>
+            ) : null}
             <div className="field" title={TITLE[s]}>
               <span className="k">state</span>
               <span className="v">
                 <Flag state={s} />
               </span>
             </div>
+            <Actions t={t} state={s} />
           </div>
         </div>
         {ask ? (
@@ -169,6 +239,20 @@ function DraftStrip({
   );
 }
 
+// group folds each run of consecutive tool calls into one array, so the
+// log prints them as one line between the messages around them.
+function group(list: Message[]): (Message | Message[])[] {
+  const out: (Message | Message[])[] = [];
+  for (const m of list) {
+    if (m.tool) {
+      const last = out[out.length - 1];
+      if (Array.isArray(last)) last.push(m);
+      else out.push([m]);
+    } else out.push(m);
+  }
+  return out;
+}
+
 function Messages({ list, me }: { list: Message[]; me: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [stick, setStick] = useState(true);
@@ -192,14 +276,16 @@ function Messages({ list, me }: { list: Message[]; me: string }) {
       }}
     >
       <div className="log mx-auto max-w-[56rem]">
-        {list.map((m, i) =>
-          m.key ? null : m.decision &&
-            list.some((p) => p.prompt?.id === m.decision!.promptId) ? null : (
+        {group(list).map((g) =>
+          Array.isArray(g) ? (
+            <ToolStrip key={"t" + g[0].id} calls={g} />
+          ) : g.key ? null : g.decision &&
+            list.some((p) => p.prompt?.id === g.decision!.promptId) ? null : (
             <MessageRow
-              key={m.id}
-              m={m}
+              key={g.id}
+              m={g}
               list={list}
-              open={!!m.prompt && promptOpen(list, i)}
+              open={!!g.prompt && promptOpen(list, list.indexOf(g))}
               me={me}
             />
           ),
@@ -224,6 +310,34 @@ function Messages({ list, me }: { list: Message[]; me: string }) {
   );
 }
 
+// Suggestions sit on the printer's edge and change with what is open: a
+// new strip offers the agents (one fills in `run <agent> `), a closed
+// strip says a reply reopens it.
+function Suggestions({ thread, draft, pick }: { thread: Thread | null; draft: boolean; pick: (text: string) => void }) {
+  const st = useStore();
+  if (draft && st.agents.length) {
+    return (
+      <div className="mx-auto flex w-full max-w-[56rem] flex-wrap items-center gap-x-2 gap-y-1 pb-2 font-strip text-[11px] text-muted">
+        <span className="uppercase tracking-wider">agent</span>
+        {st.agents.map((a) => (
+          <Tooltip key={a.name} delay={400}>
+            <Tooltip.Trigger>
+              <button type="button" className="chip" onClick={() => pick(`run ${a.name} `)}>
+                {a.name}
+              </button>
+            </Tooltip.Trigger>
+            <Tooltip.Content>{[a.model, a.env].filter(Boolean).join(" · ") || "default model"} — fills in `run {a.name}`</Tooltip.Content>
+          </Tooltip>
+        ))}
+      </div>
+    );
+  }
+  if (thread?.closed) {
+    return <div className="mx-auto w-full max-w-[56rem] pb-2 font-strip text-[11px] text-muted">this strip is closed — a reply reopens it and reaches the agent</div>;
+  }
+  return null;
+}
+
 function Printer({
   placeholder,
   short,
@@ -232,6 +346,8 @@ function Printer({
   short: string;
 }) {
   const narrow = useNarrow();
+  const st = useStore();
+  const thread = st.current ? st.threads.get(st.current) || null : null;
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -259,12 +375,20 @@ function Printer({
   };
   return (
     <form
-      className="printer flex items-end gap-2 px-3 py-3 md:px-5"
+      className="printer flex flex-col px-3 py-3 md:px-5"
       onSubmit={(e) => {
         e.preventDefault();
         send();
       }}
     >
+      <Suggestions
+        thread={thread}
+        draft={!st.current && !!st.draft}
+        pick={(t) => {
+          setText(t);
+          ref.current?.focus();
+        }}
+      />
       <div className="mx-auto flex w-full max-w-[56rem] items-end gap-2">
         <TextField className="flex-1" aria-label="Message">
           <TextArea
@@ -364,7 +488,9 @@ export function ThreadPane({ menu }: { menu: () => void }) {
         <Printer
           placeholder={
             st.current
-              ? "Reply — Enter sends, Shift+Enter for a new line"
+              ? t?.closed
+                ? "Reply to reopen — Enter sends, Shift+Enter for a new line"
+                : "Reply — Enter sends, Shift+Enter for a new line"
               : "Describe the task, or `run <agent> <prompt>` to pick the agent"
           }
           short={st.current ? "Reply…" : "What should the agent do?"}

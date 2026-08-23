@@ -2,7 +2,7 @@
 // human is looking at. Everything shown comes from the server; the page
 // keeps only the thread it has open and a few per-session counters.
 import { useSyncExternalStore } from "react";
-import { ME, api, ApiError, storage, type Channel, type Event, type Message, type Thread } from "./api";
+import { ME, api, ApiError, storage, type Agent, type Channel, type Event, type Message, type Thread } from "./api";
 
 export interface Draft {
   channel: string;
@@ -20,6 +20,7 @@ export interface State {
   connected: boolean;
   toast: string | null;
   answering: Set<string>; // prompt ids with a decision in flight
+  agents: Agent[]; // definitions a human can run
 }
 
 type Listener = () => void;
@@ -36,6 +37,7 @@ class Store {
     connected: false,
     toast: null,
     answering: new Set(),
+    agents: [],
   };
   private listeners = new Set<Listener>();
   private seen = storage.get<Record<string, string>>("seen", {});
@@ -103,16 +105,18 @@ class Store {
   }
 
   async loadState() {
-    const st = await api<{ channels: Channel[]; threads: Thread[] }>("GET", "/api/state");
+    const st = await api<{ channels: Channel[]; threads: Thread[]; agents?: Agent[] }>("GET", "/api/state");
     const channels = new Map(st.channels.map((c) => [c.id, c]));
     const threads = new Map<string, Thread>();
     for (const t of st.threads) {
       const prev = this.state.threads.get(t.id);
-      threads.set(t.id, prev ? { ...prev, ...t } : t);
+      // the server's view wins, also where it says nothing (a reopened
+      // thread has no closed flag, a settled prompt is not listed)
+      threads.set(t.id, prev ? { ...prev, ...t, closed: !!t.closed, waiting: !!t.waiting, ask: t.ask, prompt: t.prompt, mention: t.mention } : t);
     }
     // threads we opened this session that the server does not list yet
     for (const [id, t] of this.state.threads) if (!threads.has(id) && !t.status) threads.set(id, t);
-    this.set({ channels, threads });
+    this.set({ channels, threads, agents: st.agents || [] });
   }
 
   private route() {
@@ -194,8 +198,15 @@ class Store {
     const t = this.thread(m.thread);
     t.updated = m.at;
     if (!t.title && m.from && m.text) t.title = firstLine(m.text);
-    if (m.prompt) t.waiting = true;
-    else if (m.decision || !m.from) t.waiting = false;
+    if (m.prompt) {
+      t.waiting = true;
+      t.ask = firstLine(m.text);
+      t.prompt = m.prompt;
+      t.mention = m.mention;
+    } else if (m.decision || !m.from) {
+      t.waiting = false;
+      t.ask = t.prompt = t.mention = undefined;
+    }
     // the decision landed: the buttons are gone, stop holding the id
     if (m.decision && this.state.answering.has(m.decision.promptId)) {
       const left = new Set(this.state.answering);
@@ -212,6 +223,15 @@ class Store {
     if (this.state.current === m.thread && !document.hidden) this.markSeen(m.thread);
     this.touch();
     this.notify(m, t);
+    // A line from dancer or the agent means the task moved (a turn
+    // ended, a thread closed, a session resolved): re-read the facts.
+    if (!m.from && !m.key) this.refreshSoon();
+  }
+
+  private refreshTimer: number | undefined;
+  private refreshSoon() {
+    window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = window.setTimeout(() => this.loadState().catch((e) => this.toast(String(e))), 500);
   }
 
   private editMessage(m: Message) {
@@ -232,6 +252,21 @@ class Store {
     const t = this.state.threads.get(th);
     if (t) t.live = "";
     this.touch();
+    // The status line comes down when a turn ends or a prompt opens: the
+    // tool calls it summarised are in the log now, so read them back.
+    if (list) this.reloadSoon(th);
+  }
+
+  private reloads = new Map<string, number>();
+  private reloadSoon(id: string) {
+    window.clearTimeout(this.reloads.get(id));
+    this.reloads.set(
+      id,
+      window.setTimeout(() => {
+        this.reloads.delete(id);
+        this.reloadThread(id);
+      }, 400),
+    );
   }
 
   private notify(m: Message, t: Thread) {
@@ -362,6 +397,7 @@ export function useStore(): State {
 export function sameMessage(a: Message, b: Message): boolean {
   if (a.id === b.id) return true;
   if (a.key || b.key) return false;
+  if (a.tool || b.tool) return !!a.tool && !!b.tool && a.tool.id === b.tool.id;
   return (
     a.text === b.text &&
     a.from?.name === b.from?.name &&
@@ -382,7 +418,9 @@ export function promptOpen(list: Message[], i: number): boolean {
   if (!p) return false;
   for (let j = i + 1; j < list.length; j++) {
     const x = list[j];
-    if (x.key) continue;
+    // a status line describes a moment; a tool call may run beside the
+    // prompt (the agent asked for two tools at once) — neither settles it
+    if (x.key || x.tool) continue;
     if (x.decision?.promptId === p.id) return false;
     if (!x.from) return false;
   }

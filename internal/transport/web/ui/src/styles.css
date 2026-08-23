@@ -636,6 +636,121 @@ body {
   margin-right: 0.35rem;
 }
 
+/* what a cocked strip waits for, under it in the bay */
+.strip-ask {
+  margin: -2px 0.75rem 0.5rem 1.75rem;
+  padding: 0.35rem 0.5rem 0.45rem;
+  background: var(--paper-amber);
+  color: var(--ink);
+  border-radius: 0 0 2px 2px;
+  box-shadow: var(--paper-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--font-strip);
+  font-size: 11px;
+}
+.strip-ask .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strip-ask .hint {
+  color: var(--ink-2);
+}
+
+/* a run of tool calls: one line in the rack's voice, the calls on request */
+.tools {
+  font-family: var(--font-strip);
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 80ch;
+  min-width: 0;
+}
+.tools > button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 2px 4px;
+  margin-left: -4px;
+  border-radius: 2px;
+  color: inherit;
+  cursor: pointer;
+}
+.tools > button:hover {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+.tools .dim {
+  opacity: 0.75;
+}
+.tools .bad {
+  color: var(--danger);
+}
+.tools ol {
+  margin: 2px 0 2px 5px;
+  padding-left: 0.6rem;
+  border-left: 1px dashed var(--foreground);
+  border-image: none;
+  border-color: color-mix(in oklch, var(--foreground) 25%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tools li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.tools .mark {
+  width: 0.9rem;
+  flex-shrink: 0;
+}
+.tools .mark[data-tone="ok"] {
+  color: var(--success);
+}
+.tools .mark[data-tone="bad"] {
+  color: var(--danger);
+}
+.tools .mark[data-tone="warn"] {
+  color: var(--warning);
+}
+.tools .name {
+  color: var(--foreground);
+  flex-shrink: 0;
+}
+.tools .gist {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* a suggestion on the printer's edge: an agent to run */
+.chip {
+  font-family: var(--font-strip);
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 30%, transparent);
+  border-radius: 2px;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.chip:hover {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+/* the strip's own buttons: cancel, close, status */
+.desk-strip .actions {
+  flex-basis: 100%;
+}
+@media (min-width: 768px) {
+  .desk-strip .actions {
+    flex-basis: auto;
+  }
+}
+
 /* the live line while the agent works */
 .live {
   font-family: var(--font-strip);

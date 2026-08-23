@@ -65,14 +65,24 @@ human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE
   shows the same, plus an unread count, and a browser notification fires when a prompt
   needs you, if you allowed them.
 - **The desk** shows the strip you pulled, at full width, with its channel, who started it,
-  how long the turn has run and its flag. While it waits, the prompt's Allow/Deny sit on
-  that strip, so the answer is never below the fold — the log below repeats it in place.
+  how long the turn has run, what is working on it — agent, model, environment, session
+  id (click to copy) — and its flag. It carries the actions that fit the moment: **cancel**
+  while the agent moves, **close** once it stopped, **status** always; each sends the
+  command you could have typed. While it waits, the prompt's Allow/Deny sit on that strip,
+  so the answer is never below the fold — the log below repeats it in place. A permission
+  prompt is also answered straight from the *needs you* bay, under its strip; a question
+  needs the strip pulled.
 - **The log** reads down a time gutter: humans write on paper slips (buff for the web, blue
   for Slack), the agent speaks on the desk in Markdown, dancer's own lines are the rack's
   voice, and a settled prompt keeps its stamped decision.
+- Between the log's lines, a folded line sums up the tools the agent ran (`Bash ×4 · Edit
+  ×2 · 38s · 1 failed`); open it for each call, its input, how it ended and how long it
+  took. It is read from the log when a turn ends — while the turn runs, the live line is
+  the view.
 - Pull a strip to read it, write in it, or answer its prompts. `+` next to a channel starts
-  a new thread there — in a Slack channel, the bot posts your text at top level and the
-  thread lives in Slack from then on.
+  a new thread there; the agent chips on the printer's edge fill in `run <agent> ` for
+  you. In a Slack channel, the bot posts your text at top level and the thread lives in
+  Slack from then on. A closed strip says so above the printer; a reply reopens it.
 - Commands are the same as on every other transport (`?` in the rack lists them and what
   each flag means; the table is in the [README](../README.md#commands)).
 - Attachments: a thread's past attachments are shown by name only (dancer never logs file

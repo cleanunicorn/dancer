@@ -28,15 +28,16 @@ function dur(ms: number): string {
   return Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
 }
 
-function mark(tc: ToolCall): { text: string; cls: string; title: string } {
-  if (tc.denied) return { text: "⛔", cls: "text-warning", title: "refused" };
-  if (tc.error) return { text: "✗", cls: "text-danger", title: "failed" };
-  if (tc.done) return { text: "✓", cls: "text-success", title: "ok" };
-  return { text: "…", cls: "text-muted", title: "no result in the log" };
+function mark(tc: ToolCall): { text: string; tone: string; title: string } {
+  if (tc.denied) return { text: "⛔", tone: "warn", title: "refused" };
+  if (tc.error) return { text: "✗", tone: "bad", title: "failed" };
+  if (tc.done) return { text: "✓", tone: "ok", title: "ok" };
+  return { text: "…", tone: "", title: "no result in the log" };
 }
 
-// ToolStrip is a run of tool calls between two messages: one line with
-// the count per tool and the time they took, the calls on request.
+// ToolStrip is a run of tool calls between two lines of the log: one
+// line with the count per tool and the time they took, the calls on
+// request — each with its input, how it ended and how long it ran.
 export function ToolStrip({ calls }: { calls: Message[] }) {
   const [open, setOpen] = useState(false);
   const tools = calls.map((m) => m.tool!);
@@ -46,38 +47,42 @@ export function ToolStrip({ calls }: { calls: Message[] }) {
   const failed = tools.filter((t) => t.error).length;
   const summary = [...counts].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(" · ");
   return (
-    <div className="pl-11 text-xs">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 rounded-md px-1 py-0.5 text-muted hover:bg-surface-hover hover:text-foreground"
-        title={open ? "hide the calls" : "show the calls"}
-      >
-        <span>{open ? "▾" : "▸"}</span>
-        <span>🔧 {summary}</span>
-        {total > 0 ? <span>· {dur(total)}</span> : null}
-        {failed ? <span className="text-danger">· {failed} failed</span> : null}
-      </button>
-      {open ? (
-        <ol className="mt-1 flex flex-col gap-0.5 border-l border-border pl-3">
-          {calls.map((m) => {
-            const t = m.tool!;
-            const k = mark(t);
-            return (
-              <li key={m.id} className="flex items-baseline gap-2 font-mono" title={clock(m.at)}>
-                <span className={`w-3 shrink-0 ${k.cls}`} title={k.title}>
-                  {k.text}
-                </span>
-                {t.sub ? <span className="text-muted" title="run by a sub-agent">↳</span> : null}
-                <span className="shrink-0 text-foreground">{t.name}</span>
-                <span className="min-w-0 truncate text-muted">{t.input}</span>
-                {t.millis ? <span className="ml-auto shrink-0 text-muted">{dur(t.millis)}</span> : null}
-              </li>
-            );
-          })}
-        </ol>
-      ) : null}
-    </div>
+    <>
+      <span className="t" title={calls[0].at}>
+        {clock(calls[0].at)}
+      </span>
+      <div className="tools" data-open={open || undefined}>
+        <button type="button" onClick={() => setOpen(!open)} title={open ? "hide the calls" : "show the calls"} aria-expanded={open}>
+          <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+          <span>{summary}</span>
+          {total > 0 ? <span className="dim">· {dur(total)}</span> : null}
+          {failed ? <span className="bad">· {failed} failed</span> : null}
+        </button>
+        {open ? (
+          <ol>
+            {calls.map((m) => {
+              const t = m.tool!;
+              const k = mark(t);
+              return (
+                <li key={m.id} title={clock(m.at)}>
+                  <span className="mark" data-tone={k.tone || undefined} title={k.title}>
+                    {k.text}
+                  </span>
+                  {t.sub ? (
+                    <span className="dim" title="run by a sub-agent">
+                      ↳
+                    </span>
+                  ) : null}
+                  <span className="name">{t.name}</span>
+                  <span className="gist">{t.input}</span>
+                  {t.millis ? <span className="dim ml-auto shrink-0">{dur(t.millis)}</span> : null}
+                </li>
+              );
+            })}
+          </ol>
+        ) : null}
+      </div>
+    </>
   );
 }
 
