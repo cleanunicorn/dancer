@@ -60,6 +60,20 @@ CREATE TABLE IF NOT EXISTS closed_threads (
 	thread    TEXT PRIMARY KEY,
 	closed_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS web_users (
+	name       TEXT PRIMARY KEY,
+	password   TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+	token      TEXT PRIMARY KEY,
+	user       TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS web_sessions_user ON web_sessions(user);
 `
 
 // Store is a SQLite-backed store.Store.
@@ -206,6 +220,17 @@ func (s *Store) ThreadRecordsOfKind(ctx context.Context, thread transport.Thread
 		string(thread), kind, limit)
 }
 
+func (s *Store) ThreadHeadOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]store.Record, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	recs, err := s.tail(ctx,
+		`SELECT seq, at, task, thread, kind, payload FROM log WHERE thread = ? AND kind = ? ORDER BY seq ASC LIMIT ?`,
+		string(thread), kind, limit)
+	slices.Reverse(recs) // tail reversed a newest-first scan; this one was oldest-first already
+	return recs, err
+}
+
 func (s *Store) TaskRecords(ctx context.Context, task executor.TaskID, kind string, limit int) ([]store.Record, error) {
 	if limit <= 0 {
 		limit = 50
@@ -348,6 +373,93 @@ func (s *Store) ListDefinitions(ctx context.Context) ([]agent.Definition, error)
 // DeleteDefinition removes a definition by name.
 func (s *Store) DeleteDefinition(ctx context.Context, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM definitions WHERE name = ?`, name)
+	return err
+}
+
+func (s *Store) PutUser(ctx context.Context, u store.User) error {
+	if u.Name == "" || u.Password == "" {
+		return fmt.Errorf("sqlite: user name and password are required")
+	}
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = time.Now()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO web_users(name, password, created_at) VALUES(?,?,?)
+		ON CONFLICT(name) DO UPDATE SET password=excluded.password`, u.Name, u.Password, u.CreatedAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) GetUser(ctx context.Context, name string) (store.User, error) {
+	var u store.User
+	var created string
+	err := s.db.QueryRowContext(ctx, `SELECT name, password, created_at FROM web_users WHERE name = ?`, name).Scan(&u.Name, &u.Password, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return u, store.ErrNotFound
+	}
+	if err != nil {
+		return u, err
+	}
+	u.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	return u, nil
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]store.User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, password, created_at FROM web_users ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.User
+	for rows.Next() {
+		var u store.User
+		var created string
+		if err := rows.Scan(&u.Name, &u.Password, &created); err != nil {
+			return nil, err
+		}
+		u.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteUser(ctx context.Context, name string) error {
+	if err := s.DeleteUserSessions(ctx, name); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM web_users WHERE name = ?`, name)
+	return err
+}
+
+func (s *Store) PutSession(ctx context.Context, ss store.Session) error {
+	if ss.Token == "" || ss.User == "" {
+		return fmt.Errorf("sqlite: session token and user are required")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO web_sessions(token, user, created_at, expires_at) VALUES(?,?,?,?)`,
+		ss.Token, ss.User, ss.CreatedAt.UTC().Format(time.RFC3339Nano), ss.ExpiresAt.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) GetSession(ctx context.Context, token string) (store.Session, error) {
+	var ss store.Session
+	var created, expires string
+	err := s.db.QueryRowContext(ctx, `SELECT token, user, created_at, expires_at FROM web_sessions WHERE token = ?`, token).Scan(&ss.Token, &ss.User, &created, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ss, store.ErrNotFound
+	}
+	if err != nil {
+		return ss, err
+	}
+	ss.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	ss.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expires)
+	return ss, nil
+}
+
+func (s *Store) DeleteSession(ctx context.Context, token string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM web_sessions WHERE token = ?`, token)
+	return err
+}
+
+func (s *Store) DeleteUserSessions(ctx context.Context, user string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM web_sessions WHERE user = ?`, user)
 	return err
 }
 

@@ -1,8 +1,9 @@
 // Command dancer is the agent orchestration server.
 //
-//	dancer run    [-config path] [-terminal]   start the coordinator (default)
+//	dancer run    [-config path] [-terminal] [-web]   start the coordinator (default)
 //	dancer setup  [-config path]               interactive first-time setup
 //	dancer doctor [-config path]               check config, claude, docker, ssh, slack
+//	dancer user   add|passwd|rm|list [name]    accounts of the web UI
 package main
 
 import (
@@ -34,6 +35,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/transport"
 	trslack "github.com/cleanunicorn/dancer/internal/transport/slack"
 	"github.com/cleanunicorn/dancer/internal/transport/terminal"
+	trweb "github.com/cleanunicorn/dancer/internal/transport/web"
 )
 
 func main() {
@@ -45,20 +47,23 @@ func main() {
 	fs := flag.NewFlagSet("dancer "+sub, flag.ExitOnError)
 	cfgPath := fs.String("config", config.DefaultPath(), "config file (or $DANCER_CONFIG)")
 	termFlag := fs.Bool("terminal", false, "run: use the terminal transport with a chat surface instead of the configured ones")
+	webFlag := fs.Bool("web", false, "run: use the web transport (the browser UI) instead of the configured ones")
 	fs.Parse(args)
 
 	var err error
 	switch sub {
 	case "run":
-		err = runServer(*cfgPath, *termFlag)
+		err = runServer(*cfgPath, *termFlag, *webFlag)
 	case "setup":
 		err = runSetup(*cfgPath)
 	case "doctor":
 		err = runDoctor(*cfgPath)
+	case "user":
+		err = runUser(*cfgPath, fs.Args())
 	case "help", "-h", "--help":
-		fmt.Println("usage: dancer [run|setup|doctor] [-config path] [-terminal]")
+		fmt.Println("usage: dancer [run|setup|doctor|user] [-config path] [-terminal|-web]")
 	default:
-		err = fmt.Errorf("unknown command %q (run|setup|doctor)", sub)
+		err = fmt.Errorf("unknown command %q (run|setup|doctor|user)", sub)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dancer:", err)
@@ -66,7 +71,7 @@ func main() {
 	}
 }
 
-func runServer(cfgPath string, forceTerminal bool) error {
+func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
@@ -120,7 +125,15 @@ func runServer(cfgPath string, forceTerminal bool) error {
 		transportNames = []string{"terminal"}
 		surfaceCfgs = []config.Surface{{Name: "chat-terminal", Kind: "chat", Transport: "terminal", Verbose: cfg.Server.Verbose}}
 	}
+	if forceWeb {
+		if err := cfg.CheckWeb(); err != nil {
+			return err
+		}
+		transportNames = []string{"web"}
+		surfaceCfgs = []config.Surface{{Name: "chat-web", Kind: "chat", Transport: "web", Verbose: cfg.Server.Verbose}}
+	}
 	var transports []transport.Transport
+	var web *trweb.Transport
 	for _, name := range transportNames {
 		switch name {
 		case "terminal":
@@ -130,7 +143,15 @@ func runServer(cfgPath string, forceTerminal bool) error {
 			if err != nil {
 				return err
 			}
+			for _, ch := range cfg.Channels {
+				if ch.Transport == "" || ch.Transport == "slack" {
+					sc.KnownChannels = append(sc.KnownChannels, ch.ID)
+				}
+			}
 			transports = append(transports, sc)
+		case "web":
+			web = trweb.New(cfg.Web.Listen, cfg.Web.Channels, st, log)
+			transports = append(transports, web)
 		default:
 			return fmt.Errorf("unknown transport %q", name)
 		}
@@ -148,6 +169,9 @@ func runServer(cfgPath string, forceTerminal bool) error {
 	}
 
 	c := coordinator.New(st, ex, transports, surfaces, log)
+	if web != nil {
+		web.History = c // the lists and the past come from the log, not from the browser's memory
+	}
 	c.DefaultDefinition = cfg.Server.DefaultAgent
 	c.ChannelAgents = cfg.ChannelAgents()
 	c.SaveChannelAgent = func(_ context.Context, transportName, channel, agent string) error {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ type Config struct {
 	Claude      Claude       `toml:"claude"`
 	Decider     Decider      `toml:"decider"`
 	Slack       Slack        `toml:"slack"`
+	Web         Web          `toml:"web"`
 	Docker      Docker       `toml:"docker"`
 	Surfaces    []Surface    `toml:"surfaces"`
 	Channels    []Channel    `toml:"channels"`
@@ -38,8 +40,23 @@ type Config struct {
 // can append rather than rewrite the file.
 type Channel struct {
 	Transport string `toml:"transport,omitempty"` // defaults to "slack"
-	ID        string `toml:"id"`                  // Slack channel id (C0123…)
+	ID        string `toml:"id"`                  // Slack channel id (C0123…), or a web channel
 	Agent     string `toml:"agent"`
+}
+
+// CheckWeb validates the [web] section for a run that starts the web
+// transport. validate calls it when "web" is configured; `dancer run
+// -web` calls it itself, since it forces the transport in after Load.
+func (c *Config) CheckWeb() error {
+	if _, _, err := net.SplitHostPort(c.Web.Listen); err != nil {
+		return fmt.Errorf("config: web.listen %q: %v", c.Web.Listen, err)
+	}
+	for _, ch := range c.Web.Channels {
+		if ch == "" || strings.ContainsAny(ch, "/ \t") {
+			return fmt.Errorf("config: web channel %q: one word, no slash", ch)
+		}
+	}
+	return nil
 }
 
 // Key identifies the channel across transports: "<transport>/<id>".
@@ -50,7 +67,7 @@ func (ch Channel) Key() string { return ch.Transport + "/" + ch.ID }
 type Surface struct {
 	Name      string `toml:"name"`
 	Kind      string `toml:"kind"`      // "chat" | "feed"
-	Transport string `toml:"transport"` // "slack" | "terminal"
+	Transport string `toml:"transport"` // "slack" | "terminal" | "web"
 	// Thread is the fixed thread a feed posts to (slack: "<channel_id>/").
 	Thread string `toml:"thread"`
 	// Approvals: feed also posts permission prompts with buttons.
@@ -68,8 +85,8 @@ type Server struct {
 	Verbose      bool     `toml:"verbose"`
 	// DefaultAgent is used by `run <prompt>` without an agent name.
 	DefaultAgent string `toml:"default_agent"`
-	// Transports to start: "slack", "terminal". Defaults to slack when
-	// tokens are set, else terminal.
+	// Transports to start: "slack", "terminal", "web". Defaults to slack
+	// when tokens are set, else terminal.
 	Transports []string `toml:"transports"`
 	// AutoResume continues tasks that a restart cut short as soon as dancer
 	// is back, instead of waiting for a message on their thread. Defaults
@@ -142,6 +159,17 @@ type Slack struct {
 	BotToken string `toml:"bot_token"`
 	// AllowedUsers restricts who may issue commands (Slack user IDs). Empty = anyone in the workspace.
 	AllowedUsers []string `toml:"allowed_users"`
+}
+
+// Web is the browser transport (internal/transport/web). Accounts are
+// not config: `dancer user add <name>` keeps them in the store.
+type Web struct {
+	// Listen is the address to serve on (default "127.0.0.1:8788"). It is
+	// plain HTTP: keep it on the loopback interface or put TLS in front.
+	Listen string `toml:"listen"`
+	// Channels are the web UI's own channels, for threads that do not
+	// live in Slack (default ["general"]).
+	Channels []string `toml:"channels"`
 }
 
 type Definition struct {
@@ -280,6 +308,12 @@ func (c *Config) applyDefaults(path string) {
 			c.Server.Transports = []string{"terminal"}
 		}
 	}
+	if c.Web.Listen == "" {
+		c.Web.Listen = "127.0.0.1:8788"
+	}
+	if len(c.Web.Channels) == 0 {
+		c.Web.Channels = []string{"general"}
+	}
 	if len(c.Surfaces) == 0 {
 		// One chat surface per transport.
 		for _, t := range c.Server.Transports {
@@ -408,6 +442,10 @@ func (c *Config) validate() error {
 				return fmt.Errorf("config: slack transport needs slack.app_token and slack.bot_token")
 			}
 		case "terminal":
+		case "web":
+			if err := c.CheckWeb(); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("config: unknown transport %q", t)
 		}

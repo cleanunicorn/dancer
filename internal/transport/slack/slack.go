@@ -28,6 +28,19 @@
 // to maxFileBytes each. That needs the files:read scope; a file that
 // cannot be fetched (too big, no scope, already gone) is reported in the
 // thread and skipped, and the message goes through without it.
+//
+// Threads here are shared with the other transports (see package
+// transport): what a human writes elsewhere arrives as Outbound.From and
+// is posted as "💬 *name* via web: …"; a decision made elsewhere settles
+// the prompt's buttons the same way a click here does (the transport
+// keeps the ts of every prompt it posted, by prompt id); and a human on
+// another transport can start a thread in one of the bot's channels
+// (OpenThread posts their text at top level and returns the thread under
+// it). The channels the bot knows (Channels) are the ones it was told
+// about (KnownChannels, from config) and those of every thread it has
+// followed; their names come from conversations.info when the app has
+// channels:read and groups:read, else the id stands in. Who wrote an
+// inbound message (Inbound.UserName) comes from users.info, cached.
 package slack
 
 import (
@@ -37,6 +50,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,9 +72,16 @@ type Transport struct {
 	botUserID    string
 	allowedUsers map[string]bool
 
-	mu      sync.Mutex
-	threads map[transport.ThreadID]bool // threads the bot has posted in
-	keyed   map[string]string           // "<thread>\x00<key>" -> ts of the message posted under that key
+	// KnownChannels are channel ids to list even before a thread was seen
+	// in them (the config's [[channels]]). Set before Run.
+	KnownChannels []string
+
+	mu       sync.Mutex
+	threads  map[transport.ThreadID]bool // threads the bot has posted in
+	keyed    map[string]string           // "<thread>\x00<key>" -> ts of the message posted under that key
+	prompts  map[string]promptRef        // prompt id -> where its buttons are, for decisions made elsewhere
+	users    map[string]string           // user id -> display name (users.info), "" when unknown
+	channels map[string]string           // channel id -> name (conversations.info), "" when unknown
 	// noAssistant is set after assistant.threads.setStatus failed: the
 	// app lacks the feature or the scope, and every keyed update would
 	// fail the same way.
@@ -90,6 +111,9 @@ func newTransport(api *slack.Client, botUserID string, allowedUsers []string, lo
 		allowedUsers: map[string]bool{},
 		threads:      map[transport.ThreadID]bool{},
 		keyed:        map[string]string{},
+		prompts:      map[string]promptRef{},
+		users:        map[string]string{},
+		channels:     map[string]string{},
 	}
 	for _, u := range allowedUsers {
 		c.allowedUsers[u] = true
@@ -103,6 +127,11 @@ func (c *Transport) Name() string { return "slack" }
 func (c *Transport) BotUserID() string { return c.botUserID }
 
 func (c *Transport) Run(ctx context.Context, inbox chan<- transport.Inbound) error {
+	c.mu.Lock()
+	for _, id := range c.KnownChannels {
+		c.noteChannel(id)
+	}
+	c.mu.Unlock()
 	go func() {
 		if err := c.sm.RunContext(ctx); err != nil && ctx.Err() == nil {
 			c.log.Error("slack socket mode stopped", "err", err)
@@ -186,7 +215,10 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 			if err != nil {
 				c.log.Warn("slack update message", "err", err)
 			}
-			in := transport.Inbound{Transport: "slack", Thread: thread, UserID: cb.User.ID, Decision: &transport.Decision{PromptID: promptID, Choice: choice}}
+			c.mu.Lock()
+			delete(c.prompts, promptID)
+			c.mu.Unlock()
+			in := transport.Inbound{Transport: "slack", Thread: thread, UserID: cb.User.ID, UserName: c.userName(ctx, cb.User.ID), Decision: &transport.Decision{PromptID: promptID, Choice: choice}}
 			select {
 			case inbox <- in:
 			case <-ctx.Done():
@@ -214,7 +246,7 @@ func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound,
 	} else {
 		c.remember(th)
 	}
-	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, Text: stripMention(text, c.botUserID), Files: c.fetch(ctx, th, files)}
+	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, UserName: c.userName(ctx, user), Text: stripMention(text, c.botUserID), Files: c.fetch(ctx, th, files)}
 	select {
 	case inbox <- in:
 	case <-ctx.Done():
@@ -329,7 +361,13 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	if msg.Key != "" {
 		return c.sendKeyed(ctx, chID, opts, msg)
 	}
+	if msg.From != nil && msg.Decision != nil {
+		return c.settle(ctx, msg)
+	}
 	text := address(msg.Text, msg.Mention)
+	if msg.From != nil {
+		text = relayed(msg)
+	}
 	if msg.Prompt != nil && len(promptOptions(msg.Prompt)) > 0 {
 		// A section block holds 3000 characters and a message 4000; a
 		// longer prompt (a tool input nobody capped) is cut — with the
@@ -341,7 +379,12 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 				slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, truncate(text, 2900), false, false), nil, nil),
 				slack.NewActionBlock(msg.Prompt.ID, promptElements(msg.Prompt)...),
 			))
-		_, _, err := c.api.PostMessageContext(ctx, chID, opts...)
+		_, pts, err := c.api.PostMessageContext(ctx, chID, opts...)
+		if err == nil {
+			c.mu.Lock()
+			c.prompts[msg.Prompt.ID] = promptRef{channel: chID, ts: pts, text: truncate(text, 2900)}
+			c.mu.Unlock()
+		}
 		return err
 	}
 	for _, chunk := range chunks(text, 3900) {
@@ -446,16 +489,152 @@ func (c *Transport) setStatus(ctx context.Context, chID, ts, text string) {
 	c.log.Info("slack assistant status unavailable; the status line in the thread still works (enable Agents & AI Apps and the assistant:write scope to get it)", "err", err)
 }
 
+// promptRef is where a prompt's buttons were posted.
+type promptRef struct {
+	channel, ts string
+	text        string // the prompt's text, to keep when the buttons go
+}
+
+// settle replaces the buttons of a prompt answered on another transport
+// with the outcome, the way a click here does. A prompt this process did
+// not post (a restart in between) is left alone; the decision is shown
+// as a line instead.
+func (c *Transport) settle(ctx context.Context, msg transport.Outbound) error {
+	c.mu.Lock()
+	ref, ok := c.prompts[msg.Decision.PromptID]
+	delete(c.prompts, msg.Decision.PromptID)
+	c.mu.Unlock()
+	who := fmt.Sprintf("%s via %s", msg.From.Display(), msg.From.Via)
+	if !ok {
+		chID, ts, _ := strings.Cut(string(msg.Thread), "/")
+		_, _, err := c.api.PostMessageContext(ctx, chID, slack.MsgOptionTS(ts),
+			slack.MsgOptionText(fmt.Sprintf("→ *%s* by %s", msg.Decision.Choice, who), false))
+		return err
+	}
+	_, _, _, err := c.api.UpdateMessageContext(ctx, ref.channel, ref.ts,
+		slack.MsgOptionText(fmt.Sprintf("%s\n→ *%s* by %s", unaddress(ref.text), msg.Decision.Choice, who), false),
+		slack.MsgOptionBlocks())
+	return err
+}
+
+// relayed renders what a human wrote on another transport.
+func relayed(msg transport.Outbound) string {
+	return fmt.Sprintf("💬 *%s* via %s: %s", msg.From.Display(), msg.From.Via, msg.Text)
+}
+
+// OpenThread posts msg at top level in channel, as the root of a new
+// thread, and returns that thread. Implements transport.ThreadOpener.
+func (c *Transport) OpenThread(ctx context.Context, channel string, msg transport.Outbound) (transport.ThreadID, error) {
+	text := msg.Text
+	if msg.From != nil {
+		text = relayed(msg)
+	}
+	_, ts, err := c.api.PostMessageContext(ctx, channel, slack.MsgOptionText(truncate(text, 3900), false))
+	if err != nil {
+		return "", err
+	}
+	th := transport.ThreadID(channel + "/" + ts)
+	c.follow(th)
+	return th, nil
+}
+
+// Channels lists the channels the bot knows: KnownChannels and those of
+// every thread it follows. Implements transport.ChannelLister. Names are
+// filled in as conversations.info answers (see channelName); until then,
+// and without the scope, the id is the name.
+func (c *Transport) Channels() []transport.Channel {
+	c.mu.Lock()
+	ids := map[string]bool{}
+	for _, id := range c.KnownChannels {
+		ids[id] = true
+	}
+	for th := range c.threads {
+		if id, _, ok := strings.Cut(string(th), "/"); ok && id != "" {
+			ids[id] = true
+		}
+	}
+	out := make([]transport.Channel, 0, len(ids))
+	for id := range ids {
+		name := c.channels[id]
+		if name == "" {
+			name = id
+		}
+		out = append(out, transport.Channel{ID: id, Name: name})
+	}
+	c.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// noteChannel starts a name lookup for a channel seen for the first
+// time, in the background; a missing scope just leaves the id. Called
+// with mu held.
+func (c *Transport) noteChannel(id string) {
+	if _, seen := c.channels[id]; seen || id == "" {
+		return
+	}
+	c.channels[id] = ""
+	go c.channelName(context.Background(), id)
+}
+
+func (c *Transport) channelName(ctx context.Context, id string) {
+	name := ""
+	if info, err := c.api.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: id}); err == nil {
+		name = info.Name
+		if info.IsIM {
+			name = "DM"
+		}
+	} else {
+		c.log.Debug("slack conversations.info (needs channels:read?)", "channel", id, "err", err)
+	}
+	c.mu.Lock()
+	c.channels[id] = name
+	c.mu.Unlock()
+}
+
+// userName is a user's display name, looked up once per user.
+func (c *Transport) userName(ctx context.Context, id string) string {
+	c.mu.Lock()
+	name, ok := c.users[id]
+	c.mu.Unlock()
+	if ok {
+		return name
+	}
+	if u, err := c.api.GetUserInfoContext(ctx, id); err == nil {
+		name = u.Profile.DisplayName
+		if name == "" {
+			name = u.RealName
+		}
+		if name == "" {
+			name = u.Name
+		}
+	} else {
+		c.log.Debug("slack users.info (needs users:read?)", "user", id, "err", err)
+	}
+	c.mu.Lock()
+	c.users[id] = name
+	c.mu.Unlock()
+	return name
+}
+
 // address puts a mention of user in front of text, so Slack notifies
 // them even with the thread muted. The mention is ordinary mrkdwn, which
 // the markdown block for agent text does not render, so surfaces only set
-// it on dancer's own lines.
+// it on dancer's own lines. A user id from another transport (the task
+// was started from the web UI) is not a Slack user: it is shown as a
+// plain "@name", which notifies nobody but still says who it is for.
 func address(text, user string) string {
 	if user == "" || text == "" {
 		return text
 	}
+	if !slackUserID.MatchString(user) {
+		return "@" + user + " " + text
+	}
 	return mention(user) + " " + text
 }
+
+// slackUserID matches Slack's own user ids (U…, W… for enterprise grids).
+var slackUserID = regexp.MustCompile(`^[UW][A-Z0-9]{2,}$`)
 
 // mention is Slack's mrkdwn for addressing a user.
 func mention(userID string) string { return "<@" + userID + ">" }
@@ -605,15 +784,25 @@ func (c *Transport) remember(th transport.ThreadID) {
 	if _, seen := c.threads[th]; !seen {
 		c.threads[th] = true
 	}
+	c.noteChannel(channelOf(th))
 	c.mu.Unlock()
 }
 
-// follow starts following a thread even after Forget: a human talking to
-// the bot in a closed thread reopens it.
+// Follow starts following a thread even after Forget: a human talking to
+// the bot in a closed thread reopens it, and so does reopening it from
+// another transport. Implements transport.ThreadCloser.
+func (c *Transport) Follow(th transport.ThreadID) { c.follow(th) }
+
 func (c *Transport) follow(th transport.ThreadID) {
 	c.mu.Lock()
 	c.threads[th] = true
+	c.noteChannel(channelOf(th))
 	c.mu.Unlock()
+}
+
+func channelOf(th transport.ThreadID) string {
+	id, _, _ := strings.Cut(string(th), "/")
+	return id
 }
 
 func threadID(ch, threadTS, ts string) transport.ThreadID {

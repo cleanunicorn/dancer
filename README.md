@@ -29,7 +29,11 @@ a meter follows it a moment later instead, one bar per plan window — the
 5-hour and 7-day windows, and a model's own weekly window when it has one —
 showing how much is used after the turn and, past 80%, when the window resets.
 
-- **Transports**: Slack (Socket Mode, no public URL), terminal. Telegram later.
+- **Transports**: Slack (Socket Mode, no public URL), a web UI, terminal. Telegram later.
+  Conversations are shared: the web UI lists every thread, Slack's included, shows what
+  was said there and answers its prompts; what you write in the web UI about a Slack thread
+  is relayed into Slack, and a thread you start from the web UI in a Slack channel lives in
+  Slack. The web UI keeps no history of its own — it reads the event log.
 - **Surfaces**: `chat` (threads, commands, approvals), `feed` (ops channel mirror). Several per transport.
 - **Agents**: Claude Code via `claude -p` stream-json. Codex later.
 - **Environments**: local directory, Docker container, SSH host.
@@ -40,9 +44,36 @@ showing how much is used after the turn and, past 80%, when the window resets.
 ```sh
 make build
 bin/dancer setup      # wizard: paths, claude check, Slack tokens, first agent, doctor
-bin/dancer run        # or: bin/dancer run -terminal
+bin/dancer run        # or: bin/dancer run -terminal, or bin/dancer run -web
 make service          # systemd unit for the current user
 ```
+
+### Web UI
+
+```toml
+[server]
+transports = ["slack", "web"]   # or just ["web"]
+[web]
+listen = "127.0.0.1:8788"       # plain HTTP: keep it local, or put TLS in front
+channels = ["general"]          # the web UI's own channels, for threads outside Slack
+```
+
+Accounts live in dancer's database, not in the config:
+
+```sh
+bin/dancer user add daniel      # prints a generated password; change it in the UI
+bin/dancer user list            # passwd <name> · rm <name>
+```
+
+Open http://127.0.0.1:8788 and sign in. Everything you send is signed with your account
+name — the agent's closing line and prompts address you by it, and two people in one thread
+are two names. The UI is a React + [HeroUI](https://heroui.com) app under
+`internal/transport/web/ui`; its build is committed in `internal/transport/web/static`, so
+`go build` needs no Node — run `make ui` after changing it (`make ui-dev` for a live dev server).
+The sidebar lists channels per transport and their threads;
+⏳ means the agent is working, ✋ that it waits for an answer (the tab title says so too,
+and a browser notification fires if allowed). Commands are the same as in Slack (`?` in the
+header lists them). `make run-web` starts it on its own, like `make run-terminal`.
 
 Full instructions, Slack app manifest, docker/ssh notes: [SETUP.md](SETUP.md).
 Architecture and conventions: [CLAUDE.md](CLAUDE.md).
@@ -68,7 +99,7 @@ Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 
 ```
 cmd/dancer            run | setup | doctor
-internal/transport    slack, terminal            — the wire
+internal/transport    slack, web, terminal       — the wire
 internal/surface      chat, feed                 — interaction on a transport
 internal/coordinator                              — tasks, intents, event fan-out, decisions
 internal/executor     local                      — one worker per task, idle timeout
