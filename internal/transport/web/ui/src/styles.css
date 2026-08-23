@@ -1,34 +1,807 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
-/* Flat and minimal: small radii, no elevation, one accent. */
-:root {
-  --radius: 0.375rem;
+/*
+ * dancer's web UI is a flight-progress strip board.
+ *
+ * Every thread is a paper strip racked in a bay; the open thread is the strip
+ * pulled onto the desk. Paper is for what humans write and answer (strips,
+ * human lines, prompts); the desk is for what the machine says (agent text,
+ * dancer's own lines). State is a lamp plus a printed flag, never colour
+ * alone, and a strip that needs a human is cocked out of the rack and lit.
+ *
+ * HeroUI's theme variables are overridden below so its components (buttons,
+ * fields, modals) wear the same console; the strip materials are our own.
+ */
+
+@layer base {
+  :root,
+  .light {
+    /* the console, lit room: brushed aluminium rack, cool grey desk; the
+       warm paper lifts off it */
+    --background: oklch(0.905 0.01 250);
+    --foreground: oklch(0.23 0.014 250);
+    --surface: oklch(0.94 0.008 250);
+    --surface-foreground: var(--foreground);
+    --surface-secondary: oklch(0.88 0.01 250);
+    --surface-tertiary: oklch(0.855 0.01 250);
+    --overlay: oklch(0.965 0.006 250);
+    --overlay-foreground: var(--foreground);
+    --muted: oklch(0.46 0.016 250);
+    --default: oklch(0.87 0.01 250);
+    --default-foreground: var(--foreground);
+    --border: oklch(0.8 0.012 250);
+    --separator: oklch(0.84 0.01 250);
+    --field-background: oklch(0.975 0.005 250);
+    --field-foreground: var(--foreground);
+    --field-border: oklch(0.78 0.012 250);
+    --field-border-width: 1px;
+    --link: oklch(0.42 0.12 250);
+
+    /* lamps: amber asks, green runs, red failed */
+    --accent: oklch(0.72 0.155 72);
+    --accent-foreground: oklch(0.2 0.03 70);
+    --success: oklch(0.66 0.16 150);
+    --success-foreground: oklch(0.18 0.03 150);
+    --warning: oklch(0.76 0.15 72);
+    --warning-foreground: oklch(0.2 0.03 70);
+    --danger: oklch(0.58 0.2 27);
+    --danger-foreground: oklch(0.98 0.01 27);
+    --focus: oklch(0.55 0.16 72);
+
+    --radius: 0.2rem;
+    --field-radius: 0.2rem;
+
+    /* the rack the strips sit in */
+    --rack: oklch(0.835 0.012 250);
+    --rack-ink: oklch(0.3 0.016 250);
+    --rack-rule: oklch(0.75 0.012 250);
+
+    /* paper: buff for web-hosted threads, blue for slack, pink for failed,
+       amber when it asks, grey once closed */
+    --paper: oklch(0.93 0.045 92);
+    --paper-blue: oklch(0.915 0.035 235);
+    --paper-pink: oklch(0.92 0.045 18);
+    --paper-amber: oklch(0.91 0.085 80);
+    --paper-grey: oklch(0.885 0.006 85);
+    --ink: oklch(0.2 0.02 60);
+    --ink-2: oklch(0.42 0.035 70);
+    --ink-rule: oklch(0.2 0.02 60 / 0.16);
+    --paper-shadow: 0 1px 1px oklch(0 0 0 / 0.12), 0 2px 6px -2px oklch(0 0 0 / 0.18);
+    --paper-shadow-up: 0 2px 2px oklch(0 0 0 / 0.14), 0 8px 16px -6px oklch(0 0 0 / 0.3);
+
+    --lamp-wait: oklch(0.8 0.17 75);
+    --lamp-run: oklch(0.74 0.18 150);
+    --lamp-fail: oklch(0.62 0.22 27);
+    --lamp-off: oklch(0.2 0.02 60 / 0.18);
+  }
+
+  .dark {
+    /* the console at night: graphite-blue, lit by its own lamps and the paper */
+    color-scheme: dark;
+    --background: oklch(0.235 0.014 250);
+    --foreground: oklch(0.92 0.012 85);
+    --surface: oklch(0.275 0.014 250);
+    --surface-foreground: var(--foreground);
+    --surface-secondary: oklch(0.3 0.014 250);
+    --surface-tertiary: oklch(0.33 0.014 250);
+    --overlay: oklch(0.29 0.014 250);
+    --overlay-foreground: var(--foreground);
+    --muted: oklch(0.7 0.014 250);
+    --default: oklch(0.33 0.014 250);
+    --default-foreground: var(--foreground);
+    --border: oklch(0.34 0.014 250);
+    --separator: oklch(0.31 0.014 250);
+    --field-background: oklch(0.2 0.014 250);
+    --field-foreground: var(--foreground);
+    --field-border: oklch(0.36 0.014 250);
+    --field-border-width: 1px;
+    --link: oklch(0.8 0.09 230);
+    --backdrop: oklch(0.1 0.01 250 / 0.7);
+
+    --accent: oklch(0.8 0.16 75);
+    --accent-foreground: oklch(0.2 0.03 70);
+    --success: oklch(0.76 0.17 150);
+    --success-foreground: oklch(0.18 0.03 150);
+    --warning: oklch(0.8 0.15 72);
+    --warning-foreground: oklch(0.2 0.03 70);
+    --danger: oklch(0.66 0.2 27);
+    --danger-foreground: oklch(0.98 0.01 27);
+    --focus: var(--accent);
+
+    --rack: oklch(0.19 0.014 250);
+    --rack-ink: oklch(0.66 0.014 250);
+    --rack-rule: oklch(0.27 0.014 250);
+
+    --paper: oklch(0.9 0.045 92);
+    --paper-blue: oklch(0.885 0.035 235);
+    --paper-pink: oklch(0.89 0.045 18);
+    --paper-amber: oklch(0.89 0.09 80);
+    --paper-grey: oklch(0.8 0.006 85);
+    --paper-shadow: 0 1px 1px oklch(0 0 0 / 0.35), 0 2px 8px -2px oklch(0 0 0 / 0.5);
+    --paper-shadow-up: 0 2px 2px oklch(0 0 0 / 0.4), 0 10px 20px -6px oklch(0 0 0 / 0.6);
+
+    --lamp-wait: oklch(0.83 0.17 78);
+    --lamp-run: oklch(0.78 0.18 150);
+    --lamp-fail: oklch(0.66 0.22 27);
+    --lamp-off: oklch(0.2 0.02 60 / 0.18);
+  }
 }
-html, body, #root { height: 100%; }
-body { background: var(--color-background); color: var(--color-foreground); }
 
-/* Agent Markdown */
-.md > :first-child { margin-top: 0; }
-.md > :last-child { margin-bottom: 0; }
-.md p { margin: 0.4em 0; }
-.md h1, .md h2, .md h3, .md h4 { margin: 0.9em 0 0.3em; font-weight: 600; line-height: 1.25; }
-.md h1 { font-size: 1.25em; } .md h2 { font-size: 1.15em; } .md h3 { font-size: 1.05em; }
-.md ul, .md ol { margin: 0.3em 0; padding-left: 1.4em; }
-.md ul { list-style: disc; } .md ol { list-style: decimal; }
-.md li { margin: 0.15em 0; }
-.md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.4em; }
-.md pre { background: var(--color-background-secondary); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; font-size: 0.875em; }
-.md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--color-background-secondary); border-radius: 3px; padding: 0.1em 0.35em; }
-.md pre code { background: none; padding: 0; font-size: 1em; }
-.md blockquote { margin: 0.4em 0; padding: 0.1em 0.8em; border-left: 2px solid var(--color-border); color: var(--color-muted); }
-.md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.92em; }
-.md th, .md td { border: 1px solid var(--color-border); padding: 0.25em 0.6em; text-align: left; }
-.md th { background: var(--color-background-secondary); }
-.md a { color: var(--color-link); text-decoration: underline; }
-.md hr { border: 0; border-top: 1px solid var(--color-border); margin: 0.8em 0; }
-.md img { max-width: 100%; }
+@theme inline {
+  --color-rack: var(--rack);
+  --color-rack-ink: var(--rack-ink);
+  --color-rack-rule: var(--rack-rule);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --font-strip: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+}
 
-/* dancer's own lines (mrkdwn) */
-.mrkdwn code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--color-background-secondary); border-radius: 3px; padding: 0.1em 0.35em; }
-.mrkdwn pre { background: var(--color-background-secondary); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 0.5em 0.7em; overflow-x: auto; margin: 0.4em 0; font-size: 0.85em; white-space: pre-wrap; }
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- the rack ---------- */
+
+.rack {
+  background: var(--rack);
+  color: var(--rack-ink);
+  background-image: repeating-linear-gradient(
+    180deg,
+    transparent 0 7px,
+    oklch(0 0 0 / 0.035) 7px 8px
+  );
+}
+.dark .rack {
+  background-image: repeating-linear-gradient(180deg, transparent 0 7px, oklch(1 0 0 / 0.025) 7px 8px);
+}
+
+/* a bay's label, stamped into the rack */
+.bay-label {
+  font-family: var(--font-strip);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--rack-ink);
+  padding: 0.6rem 1rem 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.bay-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rack-rule);
+}
+
+/* ---------- strips ---------- */
+
+.strip {
+  --strip-paper: var(--paper);
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.5rem;
+  align-items: center;
+  background: var(--strip-paper);
+  color: var(--ink);
+  padding: 0.4rem 0.6rem 0.4rem 0.5rem;
+  margin: 0 0.5rem 3px 0.5rem;
+  border-radius: 2px;
+  box-shadow: var(--paper-shadow);
+  position: relative;
+  text-decoration: none;
+  transition:
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  outline: none;
+}
+/* the perforated edge a strip is torn off along */
+.strip::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  border-right: 1px dashed var(--ink-rule);
+}
+.strip:hover {
+  transform: translateX(3px);
+}
+.strip:focus-visible {
+  box-shadow:
+    var(--paper-shadow),
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--focus);
+}
+.strip[data-current="true"] {
+  transform: translateX(8px);
+  box-shadow: var(--paper-shadow-up);
+}
+/* a strip that needs a human is cocked out of the rack */
+.strip[data-state="wait"] {
+  --strip-paper: var(--paper-amber);
+  transform: translateX(8px) rotate(-0.4deg);
+  box-shadow: var(--paper-shadow-up);
+}
+.strip[data-state="wait"][data-current="true"] {
+  transform: translateX(10px);
+}
+.strip[data-host="slack"] {
+  --strip-paper: var(--paper-blue);
+}
+.strip[data-state="fail"] {
+  --strip-paper: var(--paper-pink);
+}
+.strip[data-state="closed"] {
+  --strip-paper: var(--paper-grey);
+  color: var(--ink-2);
+  box-shadow: none;
+  opacity: 0.85;
+}
+.strip[data-state="wait"][data-host="slack"] {
+  --strip-paper: var(--paper-amber);
+}
+
+.strip .title {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strip .title.fresh {
+  font-weight: 700;
+}
+.strip .line {
+  grid-column: 2;
+  grid-row: 2;
+  font-family: var(--font-strip);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.strip .flag-slot {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.strip .when {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: end;
+  font-family: var(--font-strip);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  margin-top: 2px;
+}
+
+/* the flag printed on the strip: four letters in a box */
+.flag {
+  font-family: var(--font-strip);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  padding: 3px 4px 2px 5px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.flag[data-state="wait"] {
+  color: var(--ink);
+  border-color: var(--ink);
+  font-weight: 700;
+}
+.flag[data-state="run"] {
+  color: oklch(0.4 0.12 150);
+  border-color: oklch(0.4 0.12 150);
+}
+.flag[data-state="fail"] {
+  color: oklch(0.48 0.19 27);
+  border-color: oklch(0.48 0.19 27);
+  font-weight: 700;
+}
+.flag[data-state="closed"] {
+  border-style: dashed;
+}
+/* a flag printed away from the paper — in a dialog, on the console — is
+   inked in the console's own foreground, or it disappears at night */
+.flag[data-surface="console"] {
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--foreground) 60%, transparent);
+}
+/* unread count is printed as a stamp over the flag */
+.stamp {
+  font-family: var(--font-strip);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 5px 2px;
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--strip-paper, var(--paper));
+  white-space: nowrap;
+}
+
+/* ---------- lamps ---------- */
+
+.lamp {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lamp-off);
+  box-shadow: inset 0 1px 1px oklch(0 0 0 / 0.25);
+  justify-self: center;
+  flex: none;
+}
+.lamp[data-state="wait"] {
+  background: var(--lamp-wait);
+  box-shadow:
+    0 0 0 1px oklch(0.5 0.12 75 / 0.5),
+    0 0 8px 2px oklch(0.8 0.17 75 / 0.55);
+  animation: lamp-ask 1.3s ease-in-out infinite;
+}
+.lamp[data-state="run"] {
+  background: var(--lamp-run);
+  box-shadow:
+    0 0 0 1px oklch(0.45 0.12 150 / 0.5),
+    0 0 6px 1px oklch(0.76 0.18 150 / 0.45);
+}
+.lamp[data-state="fail"] {
+  background: var(--lamp-fail);
+  box-shadow:
+    0 0 0 1px oklch(0.4 0.15 27 / 0.5),
+    0 0 6px 1px oklch(0.66 0.22 27 / 0.45);
+}
+@keyframes lamp-ask {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(0.7);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lamp[data-state="wait"],
+  .desk-strip {
+    animation: none;
+  }
+  .strip,
+  .desk-strip {
+    transition: none;
+  }
+}
+
+/* ---------- the desk ---------- */
+
+/* the pulled strip at the head of the desk */
+.desk-strip {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--paper-shadow-up);
+  border-radius: 2px;
+  position: relative;
+  animation: pull 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.desk-strip::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  border-right: 1px dashed var(--ink-rule);
+}
+.desk-strip[data-host="slack"] {
+  background: var(--paper-blue);
+}
+.desk-strip[data-state="wait"] {
+  background: var(--paper-amber);
+}
+.desk-strip[data-state="fail"] {
+  background: var(--paper-pink);
+}
+.desk-strip[data-state="closed"] {
+  background: var(--paper-grey);
+  box-shadow: var(--paper-shadow);
+}
+.desk-strip .ask {
+  border-top: 1px dashed var(--ink-rule);
+  margin-left: 5px;
+}
+.desk-strip .ask .text {
+  font-family: var(--font-strip);
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+@keyframes pull {
+  from {
+    transform: translateY(-6px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.desk-strip .field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.desk-strip .field > .k {
+  font-family: var(--font-strip);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  line-height: 1;
+}
+.desk-strip .field > .v:has(> .flag) {
+  overflow: visible;
+  line-height: 1;
+}
+.desk-strip .field > .v {
+  font-family: var(--font-strip);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* the log: a time gutter, a speaker, a measured column */
+.log {
+  display: grid;
+  grid-template-columns: 4.25rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  row-gap: 0.25rem;
+}
+.log .t {
+  font-family: var(--font-strip);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  text-align: right;
+  padding-top: 5px;
+  line-height: 1.2;
+  user-select: none;
+  white-space: nowrap;
+}
+.log .who .clock {
+  margin-left: auto;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 767px) {
+  .log {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .log .t {
+    display: none;
+  }
+}
+@media (min-width: 768px) {
+  .log .who .clock {
+    display: none;
+  }
+}
+.log .who {
+  font-family: var(--font-strip);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 3px;
+}
+.log .who b {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.log .who .via {
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* a human's line: a slip of paper on the desk */
+.slip {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--paper-shadow);
+  border-radius: 2px;
+  padding: 0.45rem 0.7rem;
+  max-width: 72ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.slip[data-host="slack"] {
+  background: var(--paper-blue);
+}
+.slip .who,
+.prompt .who {
+  color: var(--ink-2);
+}
+.slip .who b,
+.prompt .who b {
+  color: var(--ink);
+}
+
+/* a prompt: a lit strip laid across the log */
+.prompt {
+  background: var(--paper-amber);
+  color: var(--ink);
+  box-shadow: var(--paper-shadow-up);
+  border-radius: 2px;
+  padding: 0.6rem 0.8rem 0.7rem;
+  max-width: 72ch;
+  position: relative;
+}
+.prompt[data-open="false"] {
+  background: var(--paper-grey);
+  box-shadow: var(--paper-shadow);
+  color: var(--ink-2);
+}
+.prompt[data-open="false"] .who b {
+  color: var(--ink-2);
+}
+.prompt .lamp {
+  position: static;
+  align-self: center;
+}
+.prompt .text {
+  overflow-wrap: anywhere;
+}
+.prompt .answered {
+  font-family: var(--font-strip);
+  font-size: 11.5px;
+  margin-top: 0.4rem;
+  color: var(--ink-2);
+}
+.prompt .answered b {
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  padding: 1px 5px 0;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  display: inline-block;
+  transform: rotate(-1.5deg);
+  margin-right: 2px;
+}
+
+/* dancer's own lines sit on the desk in the rack's voice */
+.sys {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 80ch;
+  overflow-wrap: anywhere;
+}
+.sys[data-tone="ok"] {
+  color: var(--success);
+}
+.sys[data-tone="bad"] {
+  color: var(--danger);
+}
+.sys[data-tone="warn"] {
+  color: var(--warning);
+}
+.sys[data-mention="me"] {
+  color: var(--foreground);
+}
+.sys .mention {
+  font-family: var(--font-strip);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-right: 0.35rem;
+}
+
+/* the live line while the agent works */
+.live {
+  font-family: var(--font-strip);
+  font-size: 12px;
+  color: var(--foreground);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+}
+.live .lamp {
+  position: static;
+}
+
+/* agent Markdown */
+.md {
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0.45em 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 1.1em 0 0.3em;
+  font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.md h1 {
+  font-size: 1.2em;
+}
+.md h2 {
+  font-size: 1.1em;
+}
+.md h3 {
+  font-size: 1.02em;
+}
+.md ul,
+.md ol {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li {
+  margin: 0.15em 0;
+}
+.md li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.4em;
+}
+.md pre,
+.mrkdwn pre {
+  background: var(--field-background);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.mrkdwn pre {
+  white-space: pre-wrap;
+}
+.md code,
+.mrkdwn code {
+  font-family: var(--font-strip);
+  font-size: 0.92em;
+  background: color-mix(in oklab, currentColor 9%, transparent);
+  border-radius: 3px;
+  padding: 0.08em 0.35em;
+}
+.md pre code,
+.mrkdwn pre code {
+  background: none;
+  padding: 0;
+  font-size: 1em;
+}
+.md blockquote {
+  margin: 0.5em 0;
+  padding: 0.1em 0.8em;
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+}
+.md table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.93em;
+  font-variant-numeric: tabular-nums;
+}
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.25em 0.6em;
+  text-align: left;
+}
+.md th {
+  background: var(--surface-secondary);
+}
+.md a,
+.mrkdwn a {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.9em 0;
+}
+.md img {
+  max-width: 100%;
+}
+.slip a {
+  color: var(--ink);
+}
+
+/* code printed on paper is inked, not lit */
+.slip pre,
+.prompt pre,
+.slip code,
+.prompt code {
+  background: oklch(0 0 0 / 0.07);
+  border-color: var(--ink-rule);
+  color: var(--ink);
+}
+.prompt[data-open="false"] pre,
+.prompt[data-open="false"] code {
+  color: var(--ink-2);
+}
+
+/* ---------- the printer (composer) ---------- */
+
+.printer {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.printer textarea {
+  font-size: 14px;
+}
+
+/* ---------- fine print ---------- */
+
+.kbd {
+  font-family: var(--font-strip);
+  font-size: 10.5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 0 4px;
+  color: var(--foreground);
+  background: var(--surface);
+}

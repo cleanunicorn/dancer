@@ -1,20 +1,16 @@
-import { Button, Chip, Tooltip } from "@heroui/react";
+// The rack: every thread is a strip, racked in its channel's bay. The
+// strips that need a human are moved to a bay of their own at the top, lit
+// and cocked out of the rack, so the controller never hunts for them.
+import { Button, Tooltip } from "@heroui/react";
 import type { Channel, Thread } from "./api";
 import { ME } from "./api";
 import { ago, label, store, useStore } from "./store";
+import { Flag, Lamp, state } from "./strip";
 
-function icon(t: Thread): { text: string; title: string } {
-  if (t.waiting) return { text: "✋", title: "waiting for an answer" };
-  if (t.live) return { text: "⏳", title: t.live };
-  if (t.status === "running" || t.status === "queued") return { text: "⏳", title: t.status };
-  if (t.status === "failed") return { text: "❌", title: "failed" };
-  if (t.closed) return { text: "✓", title: "closed" };
-  return { text: "", title: t.status || "" };
-}
-
-function ThreadRow({ t, active }: { t: Thread; active: boolean }) {
+function Strip({ t, active, channel }: { t: Thread; active: boolean; channel?: string }) {
   const fresh = store.isFresh(t);
-  const ic = icon(t);
+  const s = state(t);
+  const line = t.live || (channel ? "#" + channel : "") || (t.requester ? "by " + t.requester : "");
   return (
     <a
       href={"#" + t.id}
@@ -22,21 +18,30 @@ function ThreadRow({ t, active }: { t: Thread; active: boolean }) {
         e.preventDefault();
         store.openThread(t.id);
       }}
-      className={`mx-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${active ? "bg-surface text-foreground" : "hover:bg-surface-hover"} ${t.closed ? "text-muted" : ""}`}
+      className="strip"
+      data-state={s}
+      data-host={t.transport && t.transport !== ME ? t.transport : undefined}
+      data-current={active || undefined}
+      aria-current={active ? "page" : undefined}
     >
-      <span className="w-5 shrink-0 text-center text-xs" title={ic.title}>
-        {ic.text}
+      <Lamp state={s} />
+      <span className={"title" + (fresh ? " fresh" : "")}>{t.title || t.id}</span>
+      <span className="line" title={line}>
+        {line || " "}
       </span>
-      <span className={`min-w-0 flex-1 truncate ${fresh ? "font-semibold" : ""}`}>{t.title || t.id}</span>
-      {t.unread ? (
-        <Chip size="sm" color="accent" variant="primary">
-          {t.unread}
-        </Chip>
-      ) : (
-        <span className="text-xs text-muted">{ago(t.updated)}</span>
-      )}
+      <span className="flag-slot">
+        {t.unread ? <span className="stamp">{t.unread} NEW</span> : null}
+        <Flag state={s} />
+      </span>
+      <span className="when">{ago(t.updated)}</span>
     </a>
   );
+}
+
+const ORDER: Record<string, number> = { wait: 0, run: 1, queue: 1, fail: 2 };
+function byUrgency(a: Thread, b: Thread): number {
+  const d = (ORDER[state(a)] ?? 3) - (ORDER[state(b)] ?? 3);
+  return d || +new Date(b.updated) - +new Date(a.updated);
 }
 
 export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
@@ -58,29 +63,49 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
     groups.get(tr)!.push({ id: ch, name: ch, transport: tr, implicit: true });
   }
   const order = [...groups.keys()].sort((a, b) => (a === ME ? -1 : b === ME ? 1 : a.localeCompare(b)));
+  const waiting = [...st.threads.values()].filter((t) => state(t) === "wait").sort(byUrgency);
+  const name = (t: Thread) => st.channels.get(t.channel)?.name || t.channel;
+
   return (
-    <nav className="flex-1 overflow-y-auto py-2">
-      {!groups.size ? <div className="px-4 py-2 text-sm text-muted">No channels — check server.transports</div> : null}
+    <nav className="flex-1 overflow-y-auto pb-3" aria-label="Threads">
+      {!groups.size ? <div className="px-4 py-3 text-sm">No channels — check server.transports</div> : null}
+      {waiting.length ? (
+        <section aria-label="Needs you">
+          <div className="bay-label">
+            <span className="lamp" data-state="wait" aria-hidden="true" />
+            needs you · {waiting.length}
+          </div>
+          {waiting.map((t) => (
+            <div key={t.id} onClick={onNavigate}>
+              <Strip t={t} active={t.id === st.current} channel={name(t)} />
+            </div>
+          ))}
+        </section>
+      ) : null}
       {order.map((tr) => (
-        <div key={tr} className="mb-3">
-          <div className="px-4 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted">{label(tr)}</div>
+        <section key={tr} aria-label={label(tr)}>
           {groups
             .get(tr)!
             .sort((a, b) => a.name.localeCompare(b.name))
             .map((c) => {
-              const threads = (byChannel.get(c.id) || []).sort((a, b) => +new Date(b.updated) - +new Date(a.updated));
+              // a waiting strip is racked in the needs-you bay, not cloned here
+              const all = byChannel.get(c.id) || [];
+              const threads = all.filter((t) => state(t) !== "wait").sort(byUrgency);
+              const cocked = all.length - threads.length;
               return (
-                <div key={c.id} className="mb-1">
-                  <div className="flex items-center gap-1 pl-4 pr-2 text-sm font-medium">
-                    <span className="text-muted">#</span>
-                    <span className="truncate">{c.name}</span>
+                <div key={c.id}>
+                  <div className="bay-label">
+                    <span>
+                      {label(tr).toLowerCase()} · #{c.name}
+                    </span>
                     {!c.implicit ? (
                       <Tooltip delay={400}>
-                        <Tooltip.Trigger className="ml-auto">
+                        <Tooltip.Trigger className="order-last">
                           <Button
                             isIconOnly
                             size="sm"
                             variant="ghost"
+                            className="-my-1 h-6 w-6 min-w-0 text-rack-ink"
                             aria-label={"New thread in #" + c.name}
                             onPress={() => {
                               store.newThread(c.id);
@@ -94,17 +119,21 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
                       </Tooltip>
                     ) : null}
                   </div>
-                  {!threads.length ? <div className="pl-8 pr-3 text-xs text-muted">no threads yet</div> : null}
+                  {!threads.length ? (
+                    <div className="px-4 pb-2 pt-1 font-strip text-[11px]">
+                      {cocked ? (cocked === 1 ? "its one strip needs you, above" : cocked + " strips need you, above") : "empty bay"}
+                    </div>
+                  ) : null}
                   {threads.slice(0, 50).map((t) => (
                     <div key={t.id} onClick={onNavigate}>
-                      <ThreadRow t={t} active={t.id === st.current} />
+                      <Strip t={t} active={t.id === st.current} />
                     </div>
                   ))}
-                  {threads.length > 50 ? <div className="pl-8 text-xs text-muted">{threads.length - 50} older threads not shown</div> : null}
+                  {threads.length > 50 ? <div className="px-4 pb-2 font-strip text-[11px]">{threads.length - 50} older strips not shown</div> : null}
                 </div>
               );
             })}
-        </div>
+        </section>
       ))}
     </nav>
   );

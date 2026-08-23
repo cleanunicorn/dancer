@@ -53,7 +53,8 @@ make service          # systemd unit for the current user
 One dancer can run several at once; conversations are shared between them.
 
 - [Slack](docs/slack.md) — the app manifest, tokens, scopes, what a thread looks like.
-- [Web UI](docs/web.md) — `transports = ["slack", "web"]`, accounts (`bin/dancer user add`), the React app.
+- [Web UI](docs/web.md) — `transports = ["slack", "web"]`, accounts (`bin/dancer user add`), the
+  flight-strip board every thread is racked on, the React app.
 - [Terminal](docs/terminal.md) — `bin/dancer run -terminal`: one thread on stdin/stdout, no Slack needed; what `make e2e` drives.
 
 Full instructions, Slack app manifest, docker/ssh notes: [SETUP.md](SETUP.md).

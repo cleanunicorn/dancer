@@ -5,10 +5,13 @@ import type { ReactNode } from "react";
 
 const URL_RE = /(https?:\/\/[^\s<)]+)/g;
 
+// tokens: `code`, *bold*, _italic_, urls. A mark only counts when it pairs,
+// so a path or a snake_case name keeps its underscores.
+const TOKEN = /(`[^`\n]+`)|((?:^|(?<=[\s(]))\*[^*\n]+\*(?=[\s).,:;!?]|$))|((?:^|(?<=[\s(]))_[^_\n]+_(?=[\s).,:;!?]|$))|(https?:\/\/[^\s<)]+)/g;
+
 function inline(text: string, key: number): ReactNode[] {
   const out: ReactNode[] = [];
-  // tokens: `code`, *bold*, _italic_, urls, text
-  const re = /(`[^`\n]+`)|((?:^|(?<=[\s(]))\*[^*\n]+\*(?=[\s).,:;!?]|$))|((?:^|(?<=[\s(]))_[^_\n]+_(?=[\s).,:;!?]|$))|(https?:\/\/[^\s<)]+)/g;
+  const re = new RegExp(TOKEN.source, "g");
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
@@ -62,4 +65,16 @@ export function linkify(text: string): ReactNode[] {
       part
     ),
   );
+}
+
+// plain renders one line of mrkdwn as text: paired marks lose their
+// delimiters, everything else — an underscore inside a name, a lone
+// asterisk — is left alone. For places that print a summary on a strip.
+export function plain(text: string): string {
+  const re = new RegExp(TOKEN.source, "g");
+  return text
+    .replace(/```+/g, "")
+    .replace(re, (m) => (/^https?:/.test(m) ? m : m.slice(1, -1)))
+    .replace(/\s+/g, " ")
+    .trim();
 }

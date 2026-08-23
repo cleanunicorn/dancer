@@ -121,7 +121,7 @@ files first — they carry the contract, the concrete packages under them are im
   is shown every thread of every transport, and anyone may write into any thread. The
   coordinator relays what humans write to the host and the observers as `Outbound.From`
   (`Decision` for answers), so each transport shows the whole exchange its own way — Slack
-  posts "💬 *name* via web: …" and settles a prompt's buttons, the web shows a bubble — and the
+  posts "💬 *name* via web: …" and settles a prompt's buttons, the web shows a paper slip — and the
   log keeps one record (the inbound), never the relays. An inbound to `"<channel>/"` asks the
   channel's owner (`ChannelLister`) to open a thread (`ThreadOpener`), so a web user can start
   work in a Slack channel. The web transport has no memory: lists and history come from the

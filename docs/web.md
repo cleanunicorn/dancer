@@ -54,15 +54,27 @@ people in one thread are two names.
 
 Open http://127.0.0.1:8788 and sign in.
 
-- The sidebar lists channels per transport (Slack channels by name when the app has
-  `channels:read`/`groups:read`, else by id) and their threads. ⏳ means the agent is
-  working, ✋ that it waits for an answer; the tab title shows the same, plus an unread
-  count, and a browser notification fires when a prompt needs you, if you allowed them.
-- Pick a thread to read it, write in it, or answer its prompts. Pick a channel to start a
-  new thread there — in a Slack channel, the bot posts your text at top level and the
+The UI is a flight-strip board. Every thread is a paper strip racked under its channel,
+printed with a four-letter flag and lit by a lamp: `WAIT` amber while the agent waits for a
+human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE`, `INTR`,
+`QUED`, `CNCL`, `CLSD`. Threads hosted in Slack are on blue paper, the web's own on buff.
+
+- **The rack**, down the left edge, lists channels per transport (Slack channels by name
+  when the app has `channels:read`/`groups:read`, else by id). Strips that need you are
+  moved to a *needs you* bay at the top, cocked out of the rack and lit; the tab title
+  shows the same, plus an unread count, and a browser notification fires when a prompt
+  needs you, if you allowed them.
+- **The desk** shows the strip you pulled, at full width, with its channel, who started it,
+  how long the turn has run and its flag. While it waits, the prompt's Allow/Deny sit on
+  that strip, so the answer is never below the fold — the log below repeats it in place.
+- **The log** reads down a time gutter: humans write on paper slips (buff for the web, blue
+  for Slack), the agent speaks on the desk in Markdown, dancer's own lines are the rack's
+  voice, and a settled prompt keeps its stamped decision.
+- Pull a strip to read it, write in it, or answer its prompts. `+` next to a channel starts
+  a new thread there — in a Slack channel, the bot posts your text at top level and the
   thread lives in Slack from then on.
-- Commands are the same as on every other transport (`?` in the header lists them; the
-  table is in the [README](../README.md#commands)).
+- Commands are the same as on every other transport (`?` in the rack lists them and what
+  each flag means; the table is in the [README](../README.md#commands)).
 - Attachments: a thread's past attachments are shown by name only (dancer never logs file
   bytes). Sending files from the browser is not supported yet; use Slack for that.
 
@@ -94,6 +106,10 @@ make ui-dev     # live dev server against a running dancer
 make ui         # rebuild static/ after changing ui/ — commit the result
 make run-web    # dancer with the web transport only
 ```
+
+[DESIGN.md](../DESIGN.md) records the board's design system — the console and paper
+materials, the lamps and flags, and the rules a new screen has to keep. No dependency
+carries the look: HeroUI's theme variables are overridden in `ui/src/styles.css`.
 
 ## Troubleshooting
 

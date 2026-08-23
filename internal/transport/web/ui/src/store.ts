@@ -19,6 +19,7 @@ export interface State {
   draft: Draft | null;
   connected: boolean;
   toast: string | null;
+  answering: Set<string>; // prompt ids with a decision in flight
 }
 
 type Listener = () => void;
@@ -34,6 +35,7 @@ class Store {
     draft: null,
     connected: false,
     toast: null,
+    answering: new Set(),
   };
   private listeners = new Set<Listener>();
   private seen = storage.get<Record<string, string>>("seen", {});
@@ -194,6 +196,12 @@ class Store {
     if (!t.title && m.from && m.text) t.title = firstLine(m.text);
     if (m.prompt) t.waiting = true;
     else if (m.decision || !m.from) t.waiting = false;
+    // the decision landed: the buttons are gone, stop holding the id
+    if (m.decision && this.state.answering.has(m.decision.promptId)) {
+      const left = new Set(this.state.answering);
+      left.delete(m.decision.promptId);
+      this.set({ answering: left });
+    }
     const mine = !!m.from && m.from.via === ME && m.from.name === this.state.me;
     const d = this.state.draft;
     if (mine && d?.text && t.channel === d.channel) {
@@ -317,9 +325,22 @@ class Store {
     }
   }
 
+  // A prompt can be shown twice — in the log and on the pulled strip — so
+  // the answer in flight is held here, not in a copy of the buttons: both
+  // go quiet at once and a second click cannot send a second, different
+  // decision.
   async decide(thread: string, promptId: string, choice: string) {
-    await api("POST", "/api/decide", { thread, promptId, choice });
-    // the relayed decision arrives on the stream and settles the prompt
+    if (this.state.answering.has(promptId)) return;
+    this.set({ answering: new Set(this.state.answering).add(promptId) });
+    try {
+      await api("POST", "/api/decide", { thread, promptId, choice });
+      // the relayed decision arrives on the stream and settles the prompt
+    } catch (e) {
+      const left = new Set(this.state.answering);
+      left.delete(promptId);
+      this.set({ answering: left });
+      throw e;
+    }
   }
 
   toast(text: string) {
