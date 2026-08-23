@@ -167,7 +167,9 @@ files first — they carry the contract, the concrete packages under them are im
   while dancer's own lines stay mrkdwn (`*bold*`, backticks).
 - **The Claude handshake is protocol-sensitive** (`internal/agent/claude`): spawn with
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
-  `can_use_tool` with a `control_response`. Verified against claude 2.1.239; `parse_test.go` fixtures
+  `can_use_tool` with a `control_response`. After each turn on a subscription login it also sends a
+  `get_usage` control request and emits the answer as `agent.EventUsage` (claude 2.1.240+; older CLIs
+  answer with an error and are not asked again). Verified against claude 2.1.240; `parse_test.go` fixtures
   pin the stream-json → `agent.Event` mapping and `testdata/session.jsonl` is a real captured session.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,

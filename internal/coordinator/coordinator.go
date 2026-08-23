@@ -1102,6 +1102,8 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		if s.answered {
 			s.state.Resumes = 0 // got through a turn; not a restart loop
 		}
+	case agent.EventUsage:
+		// Follows a result; the turn is over and stays over.
 	default:
 		s.state.Status = store.StatusRunning
 		s.answered = false

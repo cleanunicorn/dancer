@@ -16,7 +16,7 @@ import (
 
 func TestFormatCost(t *testing.T) {
 	cases := map[agent.Billing]string{
-		agent.BillingSubscription: "≈$2.27 API-equiv",
+		agent.BillingSubscription: "", // nobody's bill; the usage meter says what it cost
 		agent.BillingAPIKey:       "$2.269",
 		agent.BillingUnknown:      "$2.269",
 	}
@@ -27,48 +27,39 @@ func TestFormatCost(t *testing.T) {
 	}
 }
 
-// On a subscription the result says how much of the plan is used, not
-// what the turn would have cost on an API key: a short phrase for the
-// feed, a line of meters for the chat. A nearly spent window says when
-// it resets.
-func TestFormatCostUsage(t *testing.T) {
+// A usage event renders as a meter line for the chat and a short phrase
+// for the feed. A nearly spent window says when it resets.
+func TestUsageMeter(t *testing.T) {
 	at := time.Date(2026, 8, 23, 6, 0, 0, 0, time.UTC)
 	usage := &agent.Usage{Plan: "max", Windows: []agent.UsageWindow{
 		{Name: "5h", Used: 3, ResetsAt: at.Add(80 * time.Minute)},
 		{Name: "7d", Used: 26, ResetsAt: at.Add(5 * 24 * time.Hour)},
 		{Name: "Fable", Used: 37.4},
 	}}
+	spent := &agent.Usage{Windows: []agent.UsageWindow{
+		{Name: "5h", Used: 92, ResetsAt: at.Add(80 * time.Minute)},
+		{Name: "7d", Used: 85, ResetsAt: at.Add(5*24*time.Hour + 3*time.Hour)},
+		{Name: "Fable", Used: 100, ResetsAt: at.Add(-time.Minute)}, // already reset: nothing to promise
+	}}
 	cases := []struct {
-		name string
-		ev   agent.Event
-		want string
+		name        string
+		ev          agent.Event
+		meter, text string
 	}{
-		{"windows", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: usage}, "5h 3% · 7d 26% · Fable 37%"},
-		{"nearly spent", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: &agent.Usage{Windows: []agent.UsageWindow{
-			{Name: "5h", Used: 92, ResetsAt: at.Add(80 * time.Minute)}, {Name: "7d", Used: 85}}}}, "5h 92% (resets in 1h20m) · 7d 85%"},
-		// No windows: the estimate is still better than nothing.
-		{"empty", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 2.269, Usage: &agent.Usage{Plan: "max"}}, "≈$2.27 API-equiv"},
-		// An API key is metered; usage is not what it pays for.
-		{"api key", agent.Event{At: at, Billing: agent.BillingAPIKey, Cost: 2.269, Usage: usage}, "$2.269"},
+		{"windows", agent.Event{At: at, Usage: usage},
+			"📊 5h ▱▱▱▱▱▱▱▱▱▱ 3% · 7d ▰▰▰▱▱▱▱▱▱▱ 26% · Fable ▰▰▰▰▱▱▱▱▱▱ 37%", "5h 3% · 7d 26% · Fable 37%"},
+		{"nearly spent", agent.Event{At: at, Usage: spent},
+			"📊 5h ▰▰▰▰▰▰▰▰▰▱ 92% (resets in 1h20m) · 7d ▰▰▰▰▰▰▰▰▰▱ 85% (resets in 5d 3h) · Fable ▰▰▰▰▰▰▰▰▰▰ 100%",
+			"5h 92% (resets in 1h20m) · 7d 85% (resets in 5d 3h) · Fable 100%"},
+		{"empty", agent.Event{At: at, Usage: &agent.Usage{Plan: "max"}}, "", ""},
+		{"none", agent.Event{At: at}, "", ""},
 	}
 	for _, c := range cases {
-		if got := FormatCost(&c.ev); got != c.want {
-			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		if got := UsageMeter(&c.ev); got != c.meter {
+			t.Errorf("meter %s: got %q want %q", c.name, got, c.meter)
 		}
-	}
-	meters := []struct {
-		name string
-		ev   agent.Event
-		want string
-	}{
-		{"windows", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: usage}, "📊 5h ▱▱▱▱▱▱▱▱▱▱ 3% · 7d ▰▰▰▱▱▱▱▱▱▱ 26% · Fable ▰▰▰▰▱▱▱▱▱▱ 37%"},
-		{"edges", agent.Event{At: at, Billing: agent.BillingSubscription, Usage: &agent.Usage{Windows: []agent.UsageWindow{
-			{Name: "5h", Used: 0}, {Name: "7d", Used: 100, ResetsAt: at.Add(26 * time.Hour)}}}}, "📊 5h ▱▱▱▱▱▱▱▱▱▱ 0% · 7d ▰▰▰▰▰▰▰▰▰▰ 100% (resets in 26h00m)"},
-		{"none", agent.Event{At: at, Billing: agent.BillingSubscription, Cost: 1}, ""},
-	}
-	for _, c := range meters {
-		if got := UsageMeter(&c.ev); got != c.want {
-			t.Errorf("meter %s: got %q want %q", c.name, got, c.want)
+		if got := FormatUsage(&c.ev); got != c.text {
+			t.Errorf("text %s: got %q want %q", c.name, got, c.text)
 		}
 	}
 }
@@ -325,15 +316,23 @@ func TestStatusLine(t *testing.T) {
 	check("finished", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusIdle}}))
 
 	// On a subscription the closing line carries no cost; the usage
-	// meter under it is the cost, and it addresses nobody.
+	// event that follows is the cost, and it addresses nobody.
 	check("subscription turn", s.Render(agentEv(agent.Event{Type: agent.EventText, Text: "ok"})), "ok", "[status] ⏳ thinking · 0s")
-	sub := s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.31, Billing: agent.BillingSubscription,
-		Usage: &agent.Usage{Windows: []agent.UsageWindow{{Name: "5h", Used: 15}, {Name: "7d", Used: 28}}}}))
-	check("subscription result", sub, "[remove status]", "✅ done · 0s", "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%")
-	if sub[1].Mention != task.Requester || sub[2].Mention != "" {
-		t.Fatalf("mentions: done=%q meter=%q", sub[1].Mention, sub[2].Mention)
+	check("subscription result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.31, Billing: agent.BillingSubscription})),
+		"[remove status]", "✅ done · 0s")
+	usage := agentEv(agent.Event{Type: agent.EventUsage, Usage: &agent.Usage{Windows: []agent.UsageWindow{{Name: "5h", Used: 15}, {Name: "7d", Used: 28}}}})
+	meter := s.Render(usage)
+	check("usage after the turn", meter, "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%")
+	if meter[0].Mention != "" || s.turns[th] != nil {
+		t.Fatalf("usage line: mention=%q, turn started=%v", meter[0].Mention, s.turns[th] != nil)
 	}
-	check("finished again", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusIdle}}))
+	// A quick follow-up: the meter lands inside the next turn, above its status line.
+	check("quick follow-up", s.Render(agentEv(agent.Event{Type: agent.EventToolUse, Tool: "Read", ToolID: "9", ToolInput: map[string]any{"file_path": "/b.go"}})),
+		"[status] 🔧 Read `/b.go` · 0s · 1 tool call")
+	check("usage inside the next turn", s.Render(usage),
+		"[remove status]", "📊 5h ▰▰▱▱▱▱▱▱▱▱ 15% · 7d ▰▰▰▱▱▱▱▱▱▱ 28%", "[status] 🔧 Read `/b.go` · 0s · 1 tool call")
+	check("follow-up result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Billing: agent.BillingSubscription})),
+		"[remove status]", "✅ done · 0s · 1 tool call")
 
 	// A follow-up to the live process has no started event: the first
 	// agent event opens the next turn.

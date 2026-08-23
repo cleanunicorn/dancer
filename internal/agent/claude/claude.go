@@ -3,12 +3,13 @@
 //
 // Besides the handshake (initialize, then answer every can_use_tool) the
 // driver sends one more control request: on a subscription login it asks
-// get_usage after each result and stamps the answer — how much of the
-// plan's 5-hour, 7-day and per-model windows is used — on the result as
-// agent.Event.Usage. The CLI does the lookup itself, with its own login,
-// so it works the same in a container or over SSH; the result waits at
-// most usageTimeout for it and goes out without usage when the CLI
-// cannot say (older version, offline).
+// get_usage after each result and emits the answer — how much of the
+// plan's 5-hour, 7-day and per-model windows is used — as its own
+// agent.EventUsage, after the result. The result never waits for it: a
+// turn ends when the CLI says so, and the usage line lands a moment later
+// or, when the CLI cannot say (older version, offline), not at all. The
+// CLI does the lookup itself, with its own login, so it works the same in
+// a container or over SSH. Needs claude 2.1.240.
 package claude
 
 import (
@@ -158,11 +159,13 @@ type run struct {
 
 	writeMu sync.Mutex
 
-	mu      sync.Mutex
-	pending map[string]pendingPerm // tool_use_id -> control request
-	stderr  strings.Builder
-	done    chan struct{}
-	billing agent.Billing // learned from init, stamped on results; subscription also asks for usage
+	mu       sync.Mutex
+	pending  map[string]pendingPerm // tool_use_id -> control request
+	stderr   strings.Builder
+	done     chan struct{}
+	billing  agent.Billing // learned from init, stamped on results; subscription also asks for usage
+	usageN   int           // get_usage requests sent, for their ids
+	usageOff bool          // the CLI answered get_usage with an error: stop asking
 }
 
 func (r *run) Events() <-chan agent.Event { return r.events }
@@ -243,119 +246,52 @@ func (r *run) drainStderr() {
 	}
 }
 
-// usageTimeout bounds how long a turn's result waits for the plan usage
-// that follows it. The CLI's own lookup gives up after five seconds; a
-// result held longer than that is a result nobody sees.
-var usageTimeout = 5 * time.Second
-
 func (r *run) loop() {
 	defer close(r.events)
 	defer close(r.done)
-	lines := make(chan []byte)
-	go func() {
-		defer close(lines)
-		sc := bufio.NewScanner(r.proc.Stdout())
-		sc.Buffer(make([]byte, 0, 256*1024), 16<<20)
-		for sc.Scan() {
-			if raw := append([]byte(nil), sc.Bytes()...); len(raw) > 0 {
-				lines <- raw
-			}
-		}
-	}()
-
-	// On a subscription every result is held back, briefly, for the
-	// plan usage that answers the get_usage request sent after it: the
-	// closing line should say how much of the plan is left *after* the
-	// turn, not before. Anything else that arrives meanwhile queues
-	// behind the held result so the event order survives.
 	sawResult := false
-	var held *agent.Event
-	var queued []agent.Event
-	var deadline <-chan time.Time
-	usageReq, usageN := "", 0
-	flush := func() {
-		if held != nil {
-			r.events <- *held
-			held, deadline, usageReq = nil, nil, ""
-		}
-		for _, ev := range queued {
-			r.events <- ev
-		}
-		queued = nil
-	}
-	emit := func(ev agent.Event) {
-		if held != nil {
-			queued = append(queued, ev)
-			return
-		}
-		r.events <- ev
-	}
-	hold := func(ev agent.Event) {
-		usageN++
-		usageReq = fmt.Sprintf("usage-%d", usageN)
-		if err := r.write(controlRequestOut{Type: "control_request", RequestID: usageReq, Request: map[string]any{"subtype": "get_usage"}}); err != nil {
-			usageReq = ""
-			r.events <- ev
-			return
-		}
-		held = &ev
-		deadline = time.After(usageTimeout)
-	}
-
-loop:
-	for {
-		var raw []byte
-		var ok bool
-		select {
-		case <-deadline:
-			flush()
+	sc := bufio.NewScanner(r.proc.Stdout())
+	sc.Buffer(make([]byte, 0, 256*1024), 16<<20)
+	for sc.Scan() {
+		raw := append([]byte(nil), sc.Bytes()...)
+		if len(raw) == 0 {
 			continue
-		case raw, ok = <-lines:
-			if !ok {
-				break loop
-			}
 		}
 		p, err := translate(raw, time.Now())
 		if err != nil {
-			emit(agent.Event{Type: agent.EventError, At: time.Now(), Text: "claude: bad line: " + err.Error(), Raw: raw})
+			r.events <- agent.Event{Type: agent.EventError, At: time.Now(), Text: "claude: bad line: " + err.Error(), Raw: raw}
 			continue
 		}
 		for _, ev := range p.Events {
 			switch ev.Type {
 			case agent.EventInit:
 				r.billing = ev.Billing
-			case agent.EventResult:
-				sawResult = true
-				ev.Billing = r.billing
-				if r.billing == agent.BillingSubscription && held == nil {
-					hold(ev)
-					continue
-				}
-			case agent.EventError:
+			case agent.EventResult, agent.EventError:
 				sawResult = true
 				ev.Billing = r.billing
 			}
-			emit(ev)
+			r.events <- ev
+			if (ev.Type == agent.EventResult || ev.Type == agent.EventError) && r.billing == agent.BillingSubscription {
+				r.askUsage()
+			}
 		}
 		if p.Permission != nil {
 			r.mu.Lock()
 			r.pending[p.Permission.Event.ToolID] = pendingPerm{reqID: p.Permission.RequestID, input: p.Permission.Event.ToolInput}
 			r.mu.Unlock()
-			emit(p.Permission.Event)
+			r.events <- p.Permission.Event
 		}
 		if p.Control != nil {
 			// Unknown control requests (hooks, dialogs) are acknowledged
 			// with an empty success so the CLI does not block.
 			_ = r.write(controlResponseOut{Type: "control_response", Response: controlResponseBody{Subtype: "success", RequestID: p.Control.RequestID, Response: map[string]any{}}})
 		}
-		if p.Response != nil && held != nil && p.Response.RequestID == usageReq {
-			if p.Response.Subtype == "success" {
-				held.Usage = parseUsage(p.Response.Response)
+		if p.Response != nil && strings.HasPrefix(p.Response.RequestID, usageReqPrefix) {
+			if ev, ok := r.usageEvent(p.Response, time.Now()); ok {
+				r.events <- ev
 			}
-			flush()
 		}
 	}
-	flush()
 	code, _ := r.proc.Wait()
 	if code != 0 && !sawResult {
 		r.mu.Lock()
@@ -363,4 +299,32 @@ loop:
 		r.mu.Unlock()
 		r.events <- agent.Event{Type: agent.EventError, At: time.Now(), Text: fmt.Sprintf("claude exited with code %d: %s", code, strings.TrimSpace(tail))}
 	}
+}
+
+// usageReqPrefix starts the id of every get_usage request, so its answer
+// is told apart from the initialize reply.
+const usageReqPrefix = "usage-"
+
+// askUsage sends a get_usage request after a turn, unless this CLI has
+// already said it cannot answer one.
+func (r *run) askUsage() {
+	if r.usageOff {
+		return
+	}
+	r.usageN++
+	_ = r.write(controlRequestOut{Type: "control_request", RequestID: fmt.Sprintf("%s%d", usageReqPrefix, r.usageN), Request: map[string]any{"subtype": "get_usage"}})
+}
+
+// usageEvent turns a get_usage answer into an EventUsage. An error answer
+// (a CLI without get_usage) switches the question off for this process.
+func (r *run) usageEvent(resp *controlResponse, now time.Time) (agent.Event, bool) {
+	if resp.Subtype != "success" {
+		r.usageOff = true
+		return agent.Event{}, false
+	}
+	u := parseUsage(resp.Response)
+	if u == nil {
+		return agent.Event{}, false
+	}
+	return agent.Event{Type: agent.EventUsage, At: now, Usage: u, Billing: r.billing}, true
 }

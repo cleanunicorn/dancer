@@ -23,9 +23,9 @@ your answer. Both go away when the turn ends. The lines that need you — a
 permission or question prompt, the closing line, an error — mention whoever
 started the task, so you can mute the thread and still be told when to look.
 The closing line ends with the charge on an API key; on a Claude subscription
-a meter follows it instead, one bar per plan window — the 5-hour and 7-day
-windows, and a model's own weekly window when it has one — showing how much
-is used after the turn and, past 80%, when the window resets.
+a meter follows it a moment later instead, one bar per plan window — the
+5-hour and 7-day windows, and a model's own weekly window when it has one —
+showing how much is used after the turn and, past 80%, when the window resets.
 
 - **Transports**: Slack (Socket Mode, no public URL), terminal. Telegram later.
 - **Surfaces**: `chat` (threads, commands, approvals), `feed` (ops channel mirror). Several per transport.

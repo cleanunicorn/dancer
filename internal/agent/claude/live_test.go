@@ -147,8 +147,8 @@ func TestLiveQuestion(t *testing.T) {
 	}
 }
 
-// TestLiveUsage checks a subscription login's result carries the plan's
-// usage. Run with DANCER_LIVE=1; skips on an API key.
+// TestLiveUsage checks a subscription login's result is followed by the
+// plan's usage. Run with DANCER_LIVE=1; skips on an API key.
 func TestLiveUsage(t *testing.T) {
 	if os.Getenv("DANCER_LIVE") == "" {
 		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
@@ -162,6 +162,7 @@ func TestLiveUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer run.Stop()
+	done := false
 	for ev := range run.Events() {
 		switch ev.Type {
 		case agent.EventError:
@@ -170,7 +171,12 @@ func TestLiveUsage(t *testing.T) {
 			if ev.Billing != agent.BillingSubscription {
 				t.Skipf("billing %q: usage is a subscription thing", ev.Billing)
 			}
+			done = true
+		case agent.EventUsage:
 			t.Logf("usage = %+v", ev.Usage)
+			if !done {
+				t.Fatal("usage came before the result")
+			}
 			if ev.Usage == nil || len(ev.Usage.Windows) < 2 || ev.Usage.Windows[0].Name != "5h" || ev.Usage.Windows[1].Name != "7d" {
 				t.Fatalf("usage = %+v", ev.Usage)
 			}
@@ -180,7 +186,7 @@ func TestLiveUsage(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("no result")
+	t.Fatal("no usage event")
 }
 
 func containsStr(s, sub string) bool { return indexOf(s, sub) >= 0 }

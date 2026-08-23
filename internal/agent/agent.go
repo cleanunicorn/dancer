@@ -57,6 +57,7 @@ const (
 	EventQuestion        EventType = "question"         // agent asks the human (AskUserQuestion); Questions set
 	EventResult          EventType = "result"           // turn finished
 	EventError           EventType = "error"
+	EventUsage           EventType = "usage" // the plan's usage after a turn; Usage set. Follows a result on subscription sessions; not a state change
 )
 
 // Event is one normalized message from an agent.
@@ -73,7 +74,7 @@ type Event struct {
 	Questions []Question     // EventQuestion
 	Files     []File         // files the agent referred to, fetched from its environment
 	Cost      float64        // EventResult: USD at API list prices (see Billing)
-	Usage     *Usage         // EventResult: the plan's usage after the turn; subscription sessions only
+	Usage     *Usage         // EventUsage
 	Model     string         // EventInit: model the session resolved to
 	Mode      PermissionMode // EventInit: permission mode the agent runs with
 	Version   string         // EventInit: agent CLI version
@@ -94,9 +95,10 @@ const (
 )
 
 // Usage is how much of a subscription plan its rate-limit windows have
-// used, read after a turn. It is nil on metered (API-key) sessions and
-// when the agent could not say — an older CLI, a failed lookup — in which
-// case Cost is all there is.
+// used, read after a turn. It arrives as its own EventUsage, after the
+// result, so the turn never waits for the lookup; a metered (API-key)
+// session never sends one, and neither does an agent that could not say
+// (an older CLI, a failed lookup) — then Cost is all there is.
 type Usage struct {
 	Plan    string        // "pro", "max", "team", "enterprise"; "" when unknown
 	Windows []UsageWindow // display order: the short window, the weekly one, then per-model weekly windows
