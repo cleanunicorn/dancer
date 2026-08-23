@@ -56,18 +56,24 @@ func TestAttachmentsStagedIntoTheEnvironment(t *testing.T) {
 		t.Errorf("staged file: %q, %v", b, err)
 	}
 
-	// A follow-up with two files of the same name, and no text: the
-	// second is renamed, the message is just the list.
-	files := []agent.File{{Name: "image.png", Data: []byte("a")}, {Name: "image.png", Data: []byte("b")}}
+	// A follow-up with no text and three files that collide: two named
+	// image.png and one really named image-2.png. Each gets a name of its
+	// own — the rename skips past the name already taken — and the message
+	// is just the list.
+	files := []agent.File{
+		{Name: "image.png", Data: []byte("a")},
+		{Name: "image-2.png", Data: []byte("b")},
+		{Name: "image.png", Data: []byte("c")},
+	}
 	if err := ex.Send(context.Background(), "task7", "", files); err != nil {
 		t.Fatal(err)
 	}
 	follow := waitText(t, sink, "follow:")
-	want = "follow:Files attached to this message, copied from the chat into this environment:\n- " + inbox + "/image.png\n- " + inbox + "/image-2.png"
+	want = "follow:Files attached to this message, copied from the chat into this environment:\n- " + inbox + "/image.png\n- " + inbox + "/image-2.png\n- " + inbox + "/image-3.png"
 	if follow != want {
 		t.Errorf("follow-up:\n%s\nwant:\n%s", follow, want)
 	}
-	for name, data := range map[string]string{"image.png": "a", "image-2.png": "b"} {
+	for name, data := range map[string]string{"image.png": "a", "image-2.png": "b", "image-3.png": "c"} {
 		if b, err := os.ReadFile(filepath.Join(inbox, name)); err != nil || string(b) != data {
 			t.Errorf("%s: %q, %v", name, b, err)
 		}

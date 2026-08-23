@@ -64,10 +64,10 @@ type live struct {
 	// turnDone is signalled by the event loop after each result; Send
 	// resets the idle timer through it.
 	activity chan struct{}
-	// staged counts the attachment names copied in so far, to keep a
-	// second image.png from overwriting the first.
+	// staged is the set of names already handed out, to keep a second
+	// image.png from overwriting the first.
 	stageMu sync.Mutex
-	staged  map[string]int
+	staged  map[string]bool
 	inbox   string // this task's attachment directory
 }
 
@@ -104,7 +104,7 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	l := &live{env: env, cancel: cancel, activity: make(chan struct{}, 1), staged: map[string]int{}, inbox: e.inbox(t.ID)}
+	l := &live{env: env, cancel: cancel, activity: make(chan struct{}, 1), staged: map[string]bool{}, inbox: e.inbox(t.ID)}
 	prompt, err := l.stage(ctx, t.Prompt, t.Files)
 	if err != nil {
 		return err
@@ -344,18 +344,22 @@ func (l *live) stage(ctx context.Context, text string, files []agent.File) (stri
 }
 
 // uniqueName is a path-safe name for an attachment that no earlier
-// attachment of this run has: the second image.png becomes image-2.png.
+// attachment of this run has taken: the second image.png becomes
+// image-2.png. It counts on the names handed out rather than on the ones
+// asked for, so a rename cannot land on a name already in use — sending
+// image.png, image-2.png and image.png again gives the last image-3.png.
 func (l *live) uniqueName(name string) string {
 	name = safeName(name)
 	l.stageMu.Lock()
 	defer l.stageMu.Unlock()
-	l.staged[name]++
-	n := l.staged[name]
-	if n == 1 {
-		return name
-	}
 	ext := path.Ext(name)
-	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(name, ext), n, ext)
+	stem := strings.TrimSuffix(name, ext)
+	out := name
+	for n := 2; l.staged[out]; n++ {
+		out = fmt.Sprintf("%s-%d%s", stem, n, ext)
+	}
+	l.staged[out] = true
+	return out
 }
 
 // safeName reduces an attachment's name to one base name of letters,
