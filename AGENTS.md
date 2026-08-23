@@ -108,8 +108,12 @@ transports <-Outbound-- surfaces <--Event--- Coordinator <-----agent.Event------
 Each layer is an interface defined in the package doc of `internal/<pkg>/<pkg>.go`; read those
 files first — they carry the contract, the concrete packages under them are implementations.
 
-- **`transport`** (slack, terminal) — dumb on purpose: text, prompt-with-choices, `ThreadID`
+- **`transport`** (slack, terminal) — dumb on purpose: text, prompt-with-choices, files, `ThreadID`
   (Slack: `"<channel>/<thread_ts>"`, `"<channel>/"` posts top level). It never interprets a message.
+  Files go both ways: `Outbound.Files` are uploaded after the text; `Inbound.Files` are the
+  attachments a human sent, downloaded by the transport (Slack: `files:read`), and the executor
+  copies them into the environment under `/tmp/dancer/inbox/<task>/` and appends the paths to the
+  message. `File.Data` is never written to the event log, only the name.
   Keyed messages (`Outbound.Key`) are its one stateful feature: Slack edits/deletes the message it
   posted under the key and mirrors the text into the thread's assistant status; the terminal redraws
   the line. `Outbound.Mention` addresses one user (Slack: `<@U…>` in front of the text; terminal

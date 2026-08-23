@@ -21,11 +21,19 @@
 // drops that leading mention again when its buttons are replaced: the
 // notification has done its job, and a prompt that still opens with it
 // reads as if it were waiting.
+//
+// Attachments on an inbound message — a mention, a DM or a thread reply
+// that carries files (Slack sends those as a message of subtype
+// file_share) — are downloaded with the bot token into Inbound.Files, up
+// to maxFileBytes each. That needs the files:read scope; a file that
+// cannot be fetched (too big, no scope, already gone) is reported in the
+// thread and skipped, and the message goes through without it.
 package slack
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -126,16 +134,22 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 		}
 		switch inner := ev.InnerEvent.Data.(type) {
 		case *slackevents.AppMentionEvent:
-			c.deliver(ctx, inbox, inner.Channel, inner.TimeStamp, inner.ThreadTimeStamp, inner.User, inner.Text, true)
+			c.deliver(ctx, inbox, inner.Channel, inner.TimeStamp, inner.ThreadTimeStamp, inner.User, inner.Text, true, inner.Files)
 		case *slackevents.MessageEvent:
-			if inner.BotID != "" || inner.User == c.botUserID || inner.SubType != "" {
+			// A message with attachments is a file_share; every other
+			// subtype (edits, joins, bot posts) is not a human talking.
+			if inner.BotID != "" || inner.User == c.botUserID || (inner.SubType != "" && inner.SubType != "file_share") {
 				return
 			}
 			mentioned := strings.Contains(inner.Text, mention(c.botUserID))
 			if mentioned {
-				return // delivered via AppMentionEvent
+				return // delivered via AppMentionEvent, files included
 			}
-			c.deliver(ctx, inbox, inner.Channel, inner.TimeStamp, inner.ThreadTimeStamp, inner.User, inner.Text, inner.ChannelType == "im")
+			var files []slack.File
+			if inner.Message != nil {
+				files = inner.Message.Files // slackevents keeps a plain message's files here
+			}
+			c.deliver(ctx, inbox, inner.Channel, inner.TimeStamp, inner.ThreadTimeStamp, inner.User, inner.Text, inner.ChannelType == "im", files)
 		}
 	case socketmode.EventTypeInteractive:
 		cb, ok := evt.Data.(slack.InteractionCallback)
@@ -180,7 +194,7 @@ func (c *Transport) handle(ctx context.Context, evt socketmode.Event, inbox chan
 	}
 }
 
-func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound, ch, ts, threadTS, user, text string, direct bool) {
+func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound, ch, ts, threadTS, user, text string, direct bool, files []slack.File) {
 	if !c.allowed(user) {
 		c.log.Warn("slack message from unauthorized user ignored", "user", user)
 		return
@@ -199,11 +213,100 @@ func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound,
 	} else {
 		c.remember(th)
 	}
-	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, Text: stripMention(text, c.botUserID)}
+	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, Text: stripMention(text, c.botUserID), Files: c.fetch(ctx, th, files)}
 	select {
 	case inbox <- in:
 	case <-ctx.Done():
 	}
+}
+
+// maxFileBytes caps one inbound attachment; the outbound side (package
+// executor) has the same limit.
+const maxFileBytes = 20 << 20
+
+// errTooBig is what a download past maxFileBytes fails with.
+var errTooBig = errors.New("too big")
+
+// fetch downloads a message's attachments. One that cannot be fetched —
+// too big, no files:read scope, gone — is reported in the thread and
+// skipped, so the message still gets through with the rest.
+func (c *Transport) fetch(ctx context.Context, th transport.ThreadID, files []slack.File) []transport.File {
+	var out []transport.File
+	for _, f := range files {
+		name := fileName(f)
+		data, err := c.download(ctx, f)
+		if err != nil {
+			why := err.Error()
+			switch {
+			case errors.Is(err, errTooBig):
+				why = fmt.Sprintf("%s is over the %s limit", mib(int64(f.Size)), mib(maxFileBytes))
+			case strings.Contains(why, "403") || strings.Contains(why, "missing_scope"):
+				why += " (the app needs the files:read scope — add it and reinstall)"
+			}
+			c.log.Warn("slack attachment skipped", "file", name, "thread", th, "why", why)
+			if err := c.Send(ctx, transport.Outbound{Thread: th, Text: fmt.Sprintf("⚠️ attachment `%s` skipped: %s", name, why)}); err != nil {
+				c.log.Warn("slack attachment notice failed", "err", err)
+			}
+			continue
+		}
+		out = append(out, transport.File{Name: name, Data: data})
+	}
+	return out
+}
+
+// download fetches one file's bytes with the bot token, refusing past
+// maxFileBytes before (Slack says the size) and during the transfer.
+func (c *Transport) download(ctx context.Context, f slack.File) ([]byte, error) {
+	url := f.URLPrivateDownload
+	if url == "" {
+		url = f.URLPrivate
+	}
+	if url == "" {
+		return nil, errors.New("no download link (hidden or deleted)")
+	}
+	if int64(f.Size) > maxFileBytes {
+		return nil, errTooBig
+	}
+	w := &capWriter{max: maxFileBytes}
+	if err := c.api.GetFileContext(ctx, url, w); err != nil {
+		return nil, err
+	}
+	if w.buf.Len() == 0 {
+		return nil, errors.New("empty download")
+	}
+	return w.buf.Bytes(), nil
+}
+
+// capWriter collects up to max bytes and fails on the byte after.
+type capWriter struct {
+	buf bytes.Buffer
+	max int64
+}
+
+func (w *capWriter) Write(p []byte) (int, error) {
+	if int64(w.buf.Len())+int64(len(p)) > w.max {
+		return 0, errTooBig
+	}
+	return w.buf.Write(p)
+}
+
+// fileName is what to call an attachment: its name, else its title, else
+// its id with the type Slack detected.
+func fileName(f slack.File) string {
+	switch {
+	case f.Name != "":
+		return f.Name
+	case f.Title != "":
+		return f.Title
+	case f.Filetype != "":
+		return f.ID + "." + f.Filetype
+	}
+	return f.ID
+}
+
+// mib renders a byte count the way Slack's own limits read: "20 MiB".
+func mib(n int64) string {
+	return fmt.Sprintf("%.4g MiB", float64(n)/(1<<20))
 }
 
 func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {

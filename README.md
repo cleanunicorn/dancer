@@ -54,6 +54,7 @@ Architecture and conventions: [CLAUDE.md](CLAUDE.md).
 | `run`                        | pick the agent from a menu, then type the prompt in the thread |
 | `default <agent>`            | make `<agent>` the default for this channel (saved to config.toml); `default` shows it |
 | reply in the thread          | follow-up to that task (resumes if idle)    |
+| attach a file or image       | copied into the agent's environment, path added to the message (see [SETUP.md](SETUP.md#files-to-the-agent)) |
 | button / reply to a question | answers the agent's `AskUserQuestion`       |
 | `agent add`                  | define a new agent question by question; saved to config.toml, usable at once |
 | `agent edit <name>`          | change an agent's model, environment, permissions, tools or system prompt; `agent edit` picks from a list |

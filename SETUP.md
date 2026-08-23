@@ -278,6 +278,22 @@ system prompt, so "send me a screenshot" works. Up to 10 files per message,
 20 MiB each. Requires the `files:write` bot scope (in the manifest; if you
 created the app before it was added, add the scope and reinstall the app).
 
+## Files to the agent
+
+Attach files or images to any message that reaches the agent — the mention
+that starts a task, a DM, a reply in the task's thread — and dancer copies
+them into the agent's environment (local folder, container or ssh host alike)
+under `/tmp/dancer/inbox/<task id>/` and appends their paths to the message.
+The agent reads them from disk: a pasted screenshot, a log, a PDF, a CSV. A
+message with only an attachment works too. Names are made path-safe
+(`Screenshot 2026.png` → `Screenshot_2026.png`); a second file of the same
+name in one session becomes `image-2.png`. 20 MiB per file; one that cannot be
+fetched is reported in the thread and skipped, the rest of the message still
+goes through. Requires the `files:read` bot scope (in the manifest; if you
+created the app before it was added, add the scope and reinstall the app —
+without it every attachment is reported as skipped). Files sent with a bare
+`run` are dropped, since the prompt is typed later; send them with the prompt.
+
 ## Restarting dancer
 
 `make service-restart` (or Ctrl-C / `systemctl restart dancer`) is safe while

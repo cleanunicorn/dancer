@@ -41,7 +41,8 @@ type RunTask struct {
 	Thread transport.ThreadID
 	Agent  string // definition name; "" = the channel's or coordinator's default
 	Prompt string
-	User   string // transport user id of who asked (transport.Inbound.UserID); the task's requester
+	User   string           // transport user id of who asked (transport.Inbound.UserID); the task's requester
+	Files  []transport.File // attachments sent with the prompt; copied into the agent's environment
 }
 
 // SetDefault sets the default agent of the channel Thread belongs to, or
@@ -51,11 +52,13 @@ type SetDefault struct {
 	Agent  string
 }
 
-// FollowUp sends Text to the task on Thread, resuming it if needed.
+// FollowUp sends Text (and Files) to the task on Thread, resuming it if
+// needed. Text may be empty when Files are attached.
 type FollowUp struct {
 	Thread transport.ThreadID
 	Text   string
-	User   string // transport user id of who wrote it; the requester if this starts a task
+	User   string           // transport user id of who wrote it; the requester if this starts a task
+	Files  []transport.File // attachments sent with the message; copied into the agent's environment
 }
 
 // Cancel stops the task on Thread.
