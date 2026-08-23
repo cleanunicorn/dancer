@@ -34,9 +34,20 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 	var p parsed
 	emit := func(ev agent.Event) { p.Events = append(p.Events, ev) }
 
+	// Only assistant/user lines carry a Messages API message; other line
+	// types put other things in the field (system/permission_denied: a
+	// string), so it is decoded here and nowhere else.
+	var msg apiMessage
+	if (l.Type == "assistant" || l.Type == "user") && len(l.Message) > 0 {
+		if err := json.Unmarshal(l.Message, &msg); err != nil {
+			return parsed{}, err
+		}
+	}
+
 	switch l.Type {
 	case "system":
-		if l.Subtype == "init" {
+		switch l.Subtype {
+		case "init":
 			ev := base
 			ev.Type = agent.EventInit
 			ev.Model = l.Model
@@ -52,12 +63,23 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 				ev.Billing = agent.BillingAPIKey
 			}
 			emit(ev)
+		case "permission_denied":
+			// The refusal also reaches the agent as an is_error tool_result
+			// on the next line; this event is what tells the humans and the
+			// log that it was policy, not the tool, that said no.
+			ev := base
+			ev.Type = agent.EventToolDenied
+			ev.Tool = l.ToolName
+			ev.ToolID = l.ToolUseID
+			ev.Text = l.DecisionReason
+			var reason string
+			if json.Unmarshal(l.Message, &reason) == nil && reason != "" {
+				ev.Text = reason
+			}
+			emit(ev)
 		}
 	case "assistant":
-		if l.Message == nil {
-			break
-		}
-		for _, c := range l.Message.Content {
+		for _, c := range msg.Content {
 			switch c.Type {
 			case "text":
 				ev := base
@@ -74,10 +96,7 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			}
 		}
 	case "user":
-		if l.Message == nil {
-			break
-		}
-		for _, c := range l.Message.Content {
+		for _, c := range msg.Content {
 			if c.Type != "tool_result" {
 				continue
 			}

@@ -53,6 +53,7 @@ const (
 	EventText            EventType = "text"             // assistant text (full or delta)
 	EventToolUse         EventType = "tool_use"         // agent invoked a tool
 	EventToolResult      EventType = "tool_result"      // tool finished
+	EventToolDenied      EventType = "tool_denied"      // the agent's own policy refused a tool call; Tool, ToolID, Text (reason) set
 	EventNeedsPermission EventType = "needs_permission" // agent blocked on approval
 	EventQuestion        EventType = "question"         // agent asks the human (AskUserQuestion); Questions set
 	EventResult          EventType = "result"           // turn finished
@@ -66,7 +67,7 @@ type Event struct {
 	At        time.Time
 	Session   string // agent-native session id, used for Resume
 	Text      string // EventText, EventError, EventResult summary
-	Tool      string // EventToolUse / EventToolResult / EventNeedsPermission
+	Tool      string // EventToolUse / EventToolResult / EventToolDenied / EventNeedsPermission
 	ToolInput map[string]any
 	ToolID    string         // correlates ToolUse, ToolResult, NeedsPermission
 	ParentID  string         // non-empty when emitted by a sub-agent

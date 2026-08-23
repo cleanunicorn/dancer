@@ -230,6 +230,11 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 			return s.refresh(ev.Thread, now)
 		}
 		text = "⚠️ tool error: " + truncate(a.Text, 300)
+	case agent.EventToolDenied:
+		// Policy said no, not the tool: shown whatever Verbose is, because the
+		// agent will change plan (or stop) and the human should know why.
+		t.activity = ""
+		text = fmt.Sprintf("🚫 *%s* refused by the agent's own policy: %s", a.Tool, truncate(a.Text, 300))
 	case agent.EventResult:
 		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Mention: requester(ev), Files: files(a)}})
 	case agent.EventUsage:
