@@ -49,7 +49,7 @@ type Definition struct {
 type EventType string
 
 const (
-	EventInit            EventType = "init"             // session started; Session, Model, Mode, Version, Workdir set
+	EventInit            EventType = "init"             // the CLI started a turn: the session, or a turn of its own mid-session (claude: after a sub-agent finishes); Session, Model, Mode, Version, Workdir set
 	EventText            EventType = "text"             // assistant text (full or delta)
 	EventToolUse         EventType = "tool_use"         // agent invoked a tool
 	EventToolResult      EventType = "tool_result"      // tool finished
