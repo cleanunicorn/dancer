@@ -1157,6 +1157,9 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	if ev.Session != "" {
 		s.state.Session = ev.Session
 	}
+	if ev.Type == agent.EventInit && ev.Model != "" {
+		s.state.Model = ev.Model
+	}
 	switch ev.Type {
 	case agent.EventNeedsPermission, agent.EventQuestion:
 		s.state.Status = store.StatusWaitingPermission

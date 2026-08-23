@@ -11,12 +11,17 @@
 // has, whichever transport hosts it — and runs next to Slack on the same
 // coordinator, so one dancer serves both.
 //
-// It keeps nothing a reload could lose: the channel and thread lists and
-// each thread's messages are read from the coordinator's log
-// (transport.History) whenever a page asks, and what arrives live is
-// pushed to open pages as it comes. The only memory is of the moment —
-// the status line of a running turn (a keyed message), whether a prompt
-// is open, and threads opened here that have no task yet.
+// It keeps nothing a reload could lose: the channel, agent and thread
+// lists and each thread's messages — the agent's tool calls among them —
+// are read from the coordinator's log (transport.History) whenever a page
+// asks, and what arrives live is pushed to open pages as it comes. The
+// only memory is of the moment — the status line of a running turn (a
+// keyed message), the prompt that is open on a thread (so the sidebar
+// can offer its choices without opening it), and threads opened here
+// that have no task yet. The page re-reads the thread list after every
+// line from dancer or the agent, and a thread's history when its status
+// line comes down, so the facts it shows (status, closed, model, session,
+// tool calls) follow the task.
 //
 // Channels of its own: Channels (config: web.channels) are places to
 // start a thread when there is no Slack, or for work nobody needs in
@@ -83,7 +88,7 @@ type Transport struct {
 	mu      sync.Mutex
 	seq     int64                                      // ids of live messages; history ids count from 1 per fetch
 	live    map[transport.ThreadID]map[string]*Message // keyed messages up right now, per thread and key
-	open    map[transport.ThreadID]bool                // a prompt is waiting on the thread
+	open    map[transport.ThreadID]*Message            // the prompt waiting on the thread, if one is
 	opened  map[transport.ThreadID]*Thread             // threads opened here that History may not list yet
 	titles  map[transport.ThreadID]string              // first human line of threads opened here
 	counter int
@@ -98,7 +103,7 @@ func New(listen string, channels []string, users Users, log *slog.Logger) *Trans
 		Listen: listen, OwnChannels: channels, Users: users, log: log,
 		hub: newHub(), ready: make(chan struct{}), now: time.Now,
 		live:   map[transport.ThreadID]map[string]*Message{},
-		open:   map[transport.ThreadID]bool{},
+		open:   map[transport.ThreadID]*Message{},
 		opened: map[transport.ThreadID]*Thread{},
 		titles: map[transport.ThreadID]string{},
 	}
@@ -227,16 +232,16 @@ func (t *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		t.mu.Unlock()
 		return nil
 	}
+	m := t.message(msg, now)
 	switch {
 	case msg.Prompt != nil:
-		t.open[msg.Thread] = true
+		t.open[msg.Thread] = m
 	case msg.Decision != nil, msg.From == nil:
 		delete(t.open, msg.Thread)
 	}
 	if th := t.opened[msg.Thread]; th != nil {
 		th.Updated = now
 	}
-	m := t.message(msg, now)
 	t.mu.Unlock()
 	t.hub.publish(event{Type: "message", Message: m})
 	return nil
@@ -251,6 +256,14 @@ func (t *Transport) message(msg transport.Outbound, at time.Time) *Message {
 // liveBase keeps live ids clear of history ids, which count from 1 per
 // fetch; a page dedupes by id within a thread.
 const liveBase = int64(1) << 40
+
+// convertTool is a tool call from the log for the browser.
+func convertTool(th transport.ThreadID, tc *transport.ToolCall, id int64, at time.Time) *Message {
+	return &Message{ID: id, Thread: th, At: at, Tool: &ToolCall{
+		ID: tc.ID, Name: tc.Name, Input: tc.Input, Sub: tc.Sub, Done: tc.Done, Error: tc.Error, Denied: tc.Denied,
+		Millis: tc.Duration.Milliseconds(),
+	}}
+}
 
 func convert(msg transport.Outbound, id int64, at time.Time) *Message {
 	m := &Message{ID: id, Thread: msg.Thread, At: at, Text: msg.Text, Markdown: msg.Markdown, Mention: msg.Mention, Key: msg.Key}
@@ -294,6 +307,19 @@ type Message struct {
 	From     *Author            `json:"from,omitempty"`
 	Decision *Decision          `json:"decision,omitempty"`
 	Files    []File             `json:"files,omitempty"`
+	Tool     *ToolCall          `json:"tool,omitempty"` // a tool the agent ran; nothing else is set
+}
+
+// ToolCall is transport.ToolCall for the browser.
+type ToolCall struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Input  string `json:"input,omitempty"`
+	Sub    bool   `json:"sub,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+	Error  bool   `json:"error,omitempty"`
+	Denied bool   `json:"denied,omitempty"`
+	Millis int64  `json:"millis,omitempty"` // how long it ran
 }
 
 // Prompt is transport.Prompt for the browser.
@@ -342,8 +368,22 @@ type Thread struct {
 	Closed    bool               `json:"closed,omitempty"`
 	Requester string             `json:"requester,omitempty"`
 	Updated   time.Time          `json:"updated"`
+	Agent     string             `json:"agent,omitempty"`
+	Model     string             `json:"model,omitempty"`
+	Env       string             `json:"env,omitempty"`
+	Session   string             `json:"session,omitempty"`
 	Live      string             `json:"live,omitempty"`    // the status line up right now
 	Waiting   bool               `json:"waiting,omitempty"` // a prompt is open
+	Ask       string             `json:"ask,omitempty"`     // what the open prompt says, when this transport saw it
+	Prompt    *Prompt            `json:"prompt,omitempty"`  // the open prompt, when this transport saw it
+	Mention   string             `json:"mention,omitempty"` // who the open prompt is for
+}
+
+// Agent is one definition a human can run.
+type Agent struct {
+	Name  string `json:"name"`
+	Model string `json:"model,omitempty"`
+	Env   string `json:"env,omitempty"`
 }
 
 // Channel is one place to start threads, with the transport it belongs to.
@@ -408,7 +448,16 @@ func sameSite(h http.HandlerFunc) http.HandlerFunc {
 func (t *Transport) state(w http.ResponseWriter, r *http.Request, _ string) {
 	var channels []Channel
 	var threads []Thread
+	agents := []Agent{}
 	if t.History != nil {
+		defs, err := t.History.Agents(r.Context())
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for _, d := range defs {
+			agents = append(agents, Agent{Name: d.Name, Model: d.Model, Env: d.Environment})
+		}
 		for name, chs := range t.History.Channels() {
 			for _, c := range chs {
 				channels = append(channels, Channel{ID: c.ID, Name: c.Name, Transport: name})
@@ -421,7 +470,8 @@ func (t *Transport) state(w http.ResponseWriter, r *http.Request, _ string) {
 		}
 		for _, in := range infos {
 			threads = append(threads, Thread{ID: in.ID, Transport: in.Transport, Channel: in.Channel, Title: in.Title,
-				Status: in.Status, Closed: in.Closed, Requester: in.Requester, Updated: in.Updated})
+				Status: in.Status, Closed: in.Closed, Requester: in.Requester, Updated: in.Updated,
+				Agent: in.Agent, Model: in.Model, Env: in.Environment, Session: in.Session})
 		}
 	} else {
 		for _, c := range t.Channels() {
@@ -455,7 +505,7 @@ func (t *Transport) state(w http.ResponseWriter, r *http.Request, _ string) {
 	if threads == nil {
 		threads = []Thread{}
 	}
-	writeJSON(w, map[string]any{"transport": Name, "channels": channels, "threads": threads})
+	writeJSON(w, map[string]any{"transport": Name, "channels": channels, "threads": threads, "agents": agents})
 }
 
 // decorate adds what only the live transport knows. Called with mu held.
@@ -466,7 +516,10 @@ func (t *Transport) decorate(th *Thread) {
 	for _, m := range t.live[th.ID] {
 		th.Live = m.Text
 	}
-	th.Waiting = t.open[th.ID] || th.Status == "waiting_permission"
+	if p := t.open[th.ID]; p != nil {
+		th.Ask, th.Prompt, th.Mention = gist(p.Text), p.Prompt, p.Mention
+	}
+	th.Waiting = t.open[th.ID] != nil || th.Status == "waiting_permission"
 }
 
 // thread is one thread's messages: the log, then the live line.
@@ -480,6 +533,10 @@ func (t *Transport) thread(w http.ResponseWriter, r *http.Request, _ string) {
 			return
 		}
 		for i, e := range hist {
+			if e.Tool != nil {
+				msgs = append(msgs, convertTool(th, e.Tool, int64(i+1), e.At))
+				continue
+			}
 			msgs = append(msgs, convert(e.Message, int64(i+1), e.At))
 		}
 	}
@@ -665,6 +722,18 @@ func (h *hub) closeAll() {
 		delete(h.subs, ch)
 		close(ch)
 	}
+}
+
+// gist is a prompt's text as one short plain line: the markup a chat
+// renders is dropped and the lines joined, so "Bash wants to run:
+// `make test`" reads in a list.
+func gist(s string) string {
+	s = strings.NewReplacer("```", " ", "`", "", "*", "", "_", "").Replace(s)
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > 160 {
+		s = string(r[:159]) + "…"
+	}
+	return s
 }
 
 func firstLine(s string) string {

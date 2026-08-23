@@ -2,8 +2,10 @@
 // strips that need a human are moved to a bay of their own at the top, lit
 // and cocked out of the rack, so the controller never hunts for them.
 import { Button, Tooltip } from "@heroui/react";
-import type { Channel, Thread } from "./api";
+import type { Channel, Message, Thread } from "./api";
 import { ME } from "./api";
+import { Choices } from "./Message";
+import { plain } from "./mrkdwn";
 import { ago, label, store, useStore } from "./store";
 import { Flag, Lamp, state } from "./strip";
 
@@ -35,6 +37,24 @@ function Strip({ t, active, channel }: { t: Thread; active: boolean; channel?: s
       </span>
       <span className="when">{ago(t.updated)}</span>
     </a>
+  );
+}
+
+// Ask is what a cocked strip waits for, under it in the bay, with a
+// permission's Allow/Deny right there: the rack keeps the open prompt of
+// every thread, so the controller answers without pulling the strip. A
+// question (options, free text) is answered on the desk.
+function Ask({ t, me }: { t: Thread; me: string }) {
+  if (!t.prompt || !t.ask) return null;
+  const m: Message = { id: 0, thread: t.id, at: t.updated, text: t.ask, prompt: t.prompt, mention: t.mention };
+  const quick = !!t.prompt.choices?.length && !t.prompt.options?.length;
+  return (
+    <div className="strip-ask" data-mention={t.mention && t.mention === me ? "me" : undefined}>
+      <span className="text" title={plain(t.ask)}>
+        {plain(t.ask)}
+      </span>
+      {quick ? <Choices m={m} open inline /> : <span className="hint">pull the strip to answer</span>}
+    </div>
   );
 }
 
@@ -76,8 +96,11 @@ export function Sidebar({ onNavigate }: { onNavigate: () => void }) {
             needs you · {waiting.length}
           </div>
           {waiting.map((t) => (
-            <div key={t.id} onClick={onNavigate}>
-              <Strip t={t} active={t.id === st.current} channel={name(t)} />
+            <div key={t.id}>
+              <div onClick={onNavigate}>
+                <Strip t={t} active={t.id === st.current} channel={name(t)} />
+              </div>
+              <Ask t={t} me={st.me} />
             </div>
           ))}
         </section>

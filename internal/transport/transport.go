@@ -220,25 +220,61 @@ type ThreadInfo struct {
 	Closed    bool      // the conversation was closed
 	Requester string    // who started it
 	Updated   time.Time // the task's last change
+	// What is working on it: the agent definition's name, the model the
+	// session resolved to (what was asked for until the agent reports),
+	// the environment kind (local, docker, ssh) and the agent's session
+	// id. Empty without a task.
+	Agent       string
+	Model       string
+	Environment string
+	Session     string
+}
+
+// AgentInfo is one agent definition as History lists it: enough to
+// offer it as a choice, not its configuration.
+type AgentInfo struct {
+	Name        string
+	Model       string // as configured; "" is the agent CLI's default
+	Environment string // environment kind
 }
 
 // History is the read side an Observer needs: the channels of every
-// transport, the conversations dancer knows and what was said in one,
-// rebuilt from the coordinator's log. Messages come back as the
-// Outbounds the thread saw, with what humans wrote as Outbound.From
-// entries, oldest first; live status lines (keyed messages) are not part
-// of it.
+// transport, the agents that can be run, the conversations dancer knows
+// and what was said in one, rebuilt from the coordinator's log. Messages
+// come back as the Outbounds the thread saw, with what humans wrote as
+// Outbound.From entries, oldest first, and the tools the agent ran
+// between them as Entry.Tool; live status lines (keyed messages) are
+// not part of it.
 type History interface {
 	// Channels lists every transport's channels, keyed by transport name.
 	Channels() map[string][]Channel
+	// Agents lists the definitions a human can name in `run <agent>`.
+	Agents(ctx context.Context) ([]AgentInfo, error)
 	Threads(ctx context.Context) ([]ThreadInfo, error)
 	Messages(ctx context.Context, thread ThreadID, limit int) ([]Entry, error)
 }
 
 // Entry is one message of a thread's history, with when it was logged.
+// Exactly one of Message and Tool is set.
 type Entry struct {
 	At      time.Time
 	Message Outbound
+	Tool    *ToolCall
+}
+
+// ToolCall is one tool the agent ran, as the log remembers it: the call
+// and, once it came back, its result. An observer can show a turn's
+// tool calls after the fact; while the turn runs, the status line is
+// the live view.
+type ToolCall struct {
+	ID       string
+	Name     string
+	Input    string        // the gist of the input: a command, a path, a pattern, else its JSON
+	Sub      bool          // run by a sub-agent
+	Done     bool          // the result arrived
+	Error    bool          // the tool failed, or the call was refused
+	Denied   bool          // refused by policy (the agent's own, or a human) rather than failed
+	Duration time.Duration // from the call to its result; 0 until Done
 }
 
 // Transport is the interface every communication channel implements.

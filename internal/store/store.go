@@ -40,8 +40,12 @@ type TaskState struct {
 	// tasks recorded before the column existed, which address nobody.
 	Requester string
 	Session   string
-	Status    string // "queued", "running", "waiting_permission", "done", "failed"
-	LastSeq   int64
+	// Model is the model the session resolved to, as the agent reported
+	// it on its first turn (agent.EventInit). Definition.Model is what
+	// was asked for and may be empty; this is what answered.
+	Model   string
+	Status  string // "queued", "running", "waiting_permission", "done", "failed"
+	LastSeq int64
 	// Prompt is the last prompt handed to the agent. A restart re-runs a
 	// task that never reached a session with it.
 	Prompt string

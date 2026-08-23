@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
@@ -171,10 +172,15 @@ func (c *Coordinator) Threads(ctx context.Context) ([]transport.ThreadInfo, erro
 	}
 	out := make([]transport.ThreadInfo, 0, len(latest))
 	for th, t := range latest {
+		model := t.Model
+		if model == "" {
+			model = t.Definition.Model
+		}
 		out = append(out, transport.ThreadInfo{
 			ID: th, Transport: t.Transport, Channel: channelOf(th),
 			Title: c.title(ctx, th), Status: t.Status, Closed: c.threadClosed(th),
 			Requester: t.Requester, Updated: t.UpdatedAt,
+			Agent: t.Definition.Name, Model: model, Environment: string(t.Definition.Environment.Kind), Session: t.Session,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
@@ -216,18 +222,62 @@ func firstLine(s string) string {
 	return s
 }
 
+// Agents implements transport.History: every definition, by name.
+func (c *Coordinator) Agents(ctx context.Context) ([]transport.AgentInfo, error) {
+	defs, err := c.Store.ListDefinitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]transport.AgentInfo, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, transport.AgentInfo{Name: d.Name, Model: d.Model, Environment: string(d.Environment.Kind)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 // Messages implements transport.History: the last limit records of th
 // as the Outbounds a transport following it saw, oldest first. Inbound
 // records come back as From entries (the relay form); status lines
-// (keyed outbounds) are left out, they described a moment.
+// (keyed outbounds) are left out, they described a moment. The agent's
+// tool calls come back as Tool entries, each paired with its result
+// when that is in the window too.
 func (c *Coordinator) Messages(ctx context.Context, th transport.ThreadID, limit int) ([]transport.Entry, error) {
 	recs, err := c.Store.ThreadRecords(ctx, th, limit)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]transport.Entry, 0, len(recs))
+	calls := map[string]int{} // tool id → index in out
 	for _, r := range recs {
 		switch r.Kind {
+		case "agent":
+			var ev agent.Event
+			if json.Unmarshal(r.Payload, &ev) != nil {
+				continue
+			}
+			switch ev.Type {
+			case agent.EventToolUse:
+				if ev.ToolID != "" {
+					calls[ev.ToolID] = len(out)
+				}
+				out = append(out, transport.Entry{At: r.At, Tool: &transport.ToolCall{
+					ID: ev.ToolID, Name: ev.Tool, Input: toolGist(ev.ToolInput), Sub: ev.ParentID != "",
+				}})
+			case agent.EventToolResult, agent.EventToolDenied:
+				i, ok := calls[ev.ToolID]
+				if !ok {
+					continue // the call is older than the window
+				}
+				tc := out[i].Tool
+				tc.Done = true
+				tc.Duration = r.At.Sub(out[i].At)
+				if ev.Type == agent.EventToolDenied {
+					tc.Denied, tc.Error = true, true
+				} else if ev.Tool == "error" {
+					tc.Error = true
+				}
+			}
 		case "inbound":
 			var in transport.Inbound
 			if json.Unmarshal(r.Payload, &in) != nil || (in.Text == "" && in.Decision == nil) {
@@ -248,6 +298,21 @@ func (c *Coordinator) Messages(ctx context.Context, th transport.ThreadID, limit
 		}
 	}
 	return out, nil
+}
+
+// toolGist is the one thing worth showing of a tool's input: the
+// command, the path, the pattern — else the input as JSON, cut short.
+func toolGist(in map[string]any) string {
+	for _, k := range []string{"command", "file_path", "pattern", "path", "url", "query", "description", "prompt"} {
+		if v, ok := in[k].(string); ok && v != "" {
+			return truncate(v, 300)
+		}
+	}
+	if len(in) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(in)
+	return truncate(string(b), 300)
 }
 
 // Channels implements the channel list an observer shows: every channel

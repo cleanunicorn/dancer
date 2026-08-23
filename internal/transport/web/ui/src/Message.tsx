@@ -5,7 +5,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Button, Input, TextField } from "@heroui/react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ME, type Message } from "./api";
+import { ME, type Message, type ToolCall } from "./api";
 import { Mrkdwn, linkify } from "./mrkdwn";
 import { clock, label, store, useStore } from "./store";
 import { Lamp } from "./strip";
@@ -19,6 +19,71 @@ function tone(text: string): "ok" | "bad" | "warn" | undefined {
   if (text.startsWith("✅")) return "ok";
   if (/^(⏸️|⚠️|🚫|⏹️|♻️)/.test(text)) return "warn";
   return undefined;
+}
+
+function dur(ms: number): string {
+  if (ms < 1000) return ms + "ms";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  return Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
+}
+
+function mark(tc: ToolCall): { text: string; tone: string; title: string } {
+  if (tc.denied) return { text: "⛔", tone: "warn", title: "refused" };
+  if (tc.error) return { text: "✗", tone: "bad", title: "failed" };
+  if (tc.done) return { text: "✓", tone: "ok", title: "ok" };
+  return { text: "…", tone: "", title: "no result in the log" };
+}
+
+// ToolStrip is a run of tool calls between two lines of the log: one
+// line with the count per tool and the time they took, the calls on
+// request — each with its input, how it ended and how long it ran.
+export function ToolStrip({ calls }: { calls: Message[] }) {
+  const [open, setOpen] = useState(false);
+  const tools = calls.map((m) => m.tool!);
+  const counts = new Map<string, number>();
+  for (const t of tools) counts.set(t.name, (counts.get(t.name) || 0) + 1);
+  const total = tools.reduce((n, t) => n + (t.millis || 0), 0);
+  const failed = tools.filter((t) => t.error).length;
+  const summary = [...counts].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(" · ");
+  return (
+    <>
+      <span className="t" title={calls[0].at}>
+        {clock(calls[0].at)}
+      </span>
+      <div className="tools" data-open={open || undefined}>
+        <button type="button" onClick={() => setOpen(!open)} title={open ? "hide the calls" : "show the calls"} aria-expanded={open}>
+          <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+          <span>{summary}</span>
+          {total > 0 ? <span className="dim">· {dur(total)}</span> : null}
+          {failed ? <span className="bad">· {failed} failed</span> : null}
+        </button>
+        {open ? (
+          <ol>
+            {calls.map((m) => {
+              const t = m.tool!;
+              const k = mark(t);
+              return (
+                <li key={m.id} title={clock(m.at)}>
+                  <span className="mark" data-tone={k.tone || undefined} title={k.title}>
+                    {k.text}
+                  </span>
+                  {t.sub ? (
+                    <span className="dim" title="run by a sub-agent">
+                      ↳
+                    </span>
+                  ) : null}
+                  <span className="name">{t.name}</span>
+                  <span className="gist">{t.input}</span>
+                  {t.millis ? <span className="dim ml-auto shrink-0">{dur(t.millis)}</span> : null}
+                </li>
+              );
+            })}
+          </ol>
+        ) : null}
+      </div>
+    </>
+  );
 }
 
 export function LiveLine({ text }: { text: string }) {

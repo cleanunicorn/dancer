@@ -22,6 +22,7 @@ type fakeHistory struct {
 	channels map[string][]transport.Channel
 	threads  []transport.ThreadInfo
 	messages map[transport.ThreadID][]transport.Outbound
+	tools    map[transport.ThreadID][]transport.ToolCall // listed after the messages
 }
 
 func init() { hashIters = 1000 } // the work factor is not what these tests are about
@@ -94,10 +95,16 @@ func (f fakeHistory) Messages(_ context.Context, th transport.ThreadID, _ int) (
 	for _, m := range f.messages[th] {
 		out = append(out, transport.Entry{At: time.Unix(1700000000, 0), Message: m})
 	}
+	for i := range f.tools[th] {
+		out = append(out, transport.Entry{At: time.Unix(1700000001, 0), Tool: &f.tools[th][i]})
+	}
 	return out, nil
 }
 
 func (f fakeHistory) Channels() map[string][]transport.Channel { return f.channels }
+func (f fakeHistory) Agents(context.Context) ([]transport.AgentInfo, error) {
+	return []transport.AgentInfo{{Name: "coder", Model: "sonnet", Environment: "docker"}}, nil
+}
 func (f fakeHistory) Threads(context.Context) ([]transport.ThreadInfo, error) {
 	return f.threads, nil
 }
@@ -110,7 +117,12 @@ func newTest(t *testing.T) (*Transport, *httptest.Server, chan transport.Inbound
 	tr := New("", []string{"general"}, newFakeUsers(t, "dan", "correct horse"), nil)
 	tr.History = fakeHistory{
 		channels: map[string][]transport.Channel{"web": tr.Channels(), "slack": {{ID: "C1", Name: "dev"}}},
-		threads:  []transport.ThreadInfo{{ID: "C1/1.1", Transport: "slack", Channel: "C1", Title: "fix the build", Status: "running"}},
+		threads: []transport.ThreadInfo{{ID: "C1/1.1", Transport: "slack", Channel: "C1", Title: "fix the build", Status: "running",
+			Agent: "coder", Model: "claude-haiku-4-5", Environment: "docker", Session: "sess-1"}},
+		tools: map[transport.ThreadID][]transport.ToolCall{"C1/1.1": {
+			{ID: "u1", Name: "Bash", Input: "make test", Done: true, Duration: 2500 * time.Millisecond},
+			{ID: "u2", Name: "Edit", Input: "/repo/a.go", Sub: true, Done: true, Error: true, Denied: true},
+		}},
 		messages: map[transport.ThreadID][]transport.Outbound{"C1/1.1": {
 			{Thread: "C1/1.1", Text: "fix the build", From: &transport.Author{ID: "U1", Name: "ana", Via: "slack"}},
 			{Thread: "C1/1.1", Text: "▶️ task started"},
@@ -244,15 +256,27 @@ func TestStateAndHistory(t *testing.T) {
 	if len(chans) != 2 {
 		t.Fatalf("channels: %v", chans)
 	}
+	if agents := st["agents"].([]any); len(agents) != 1 || agents[0].(map[string]any)["name"] != "coder" || agents[0].(map[string]any)["env"] != "docker" {
+		t.Errorf("agents: %v", agents)
+	}
 	threads := st["threads"].([]any)
 	th := threads[0].(map[string]any)
 	if th["id"] != "C1/1.1" || th["transport"] != "slack" || th["title"] != "fix the build" || th["live"] != "⏳ thinking · 4s" {
 		t.Errorf("thread: %v", th)
 	}
+	if th["agent"] != "coder" || th["model"] != "claude-haiku-4-5" || th["env"] != "docker" || th["session"] != "sess-1" {
+		t.Errorf("thread facts: %v", th)
+	}
 	_, msgs := get(t, srv, "/api/threads/C1/1.1", ck)
 	list := msgs["messages"].([]any)
-	if len(list) != 5 { // 4 from history + the live line
+	if len(list) != 7 { // 4 messages + 2 tool calls from history + the live line
 		t.Fatalf("messages: %d", len(list))
+	}
+	if tool := list[4].(map[string]any)["tool"].(map[string]any); tool["name"] != "Bash" || tool["input"] != "make test" || tool["done"] != true || tool["millis"] != float64(2500) || tool["error"] != nil {
+		t.Errorf("tool call: %v", tool)
+	}
+	if tool := list[5].(map[string]any)["tool"].(map[string]any); tool["name"] != "Edit" || tool["sub"] != true || tool["error"] != true || tool["denied"] != true || tool["millis"] != nil {
+		t.Errorf("denied tool call: %v", tool)
 	}
 	first := list[0].(map[string]any)
 	if from := first["from"].(map[string]any); from["name"] != "ana" || from["via"] != "slack" {
@@ -264,8 +288,37 @@ func TestStateAndHistory(t *testing.T) {
 	if d := list[3].(map[string]any)["decision"].(map[string]any); d["promptId"] != "chat-slack:p1" || d["choice"] != "allow" {
 		t.Errorf("decision: %v", d)
 	}
-	if last := list[4].(map[string]any); last["key"] != "status" {
+	if last := list[6].(map[string]any); last["key"] != "status" {
 		t.Errorf("live line: %v", last)
+	}
+}
+
+// TestOpenPrompt: a prompt the transport saw is on the thread in the
+// sidebar — what it asks, as one plain line, its choices and who it is
+// for — until a decision or a line from dancer settles it.
+func TestOpenPrompt(t *testing.T) {
+	tr, srv, _ := newTest(t)
+	ck := login(t, srv)
+	ctx := context.Background()
+	prompt := &transport.Prompt{ID: "chat-slack:p2", Choices: []string{"allow", "deny"}}
+	if err := tr.Send(ctx, transport.Outbound{Thread: "C1/1.1", Text: "🔐 *Bash* wants to run:\n```\nmake test\n```", Mention: "dan", Prompt: prompt}); err != nil {
+		t.Fatal(err)
+	}
+	_, st := get(t, srv, "/api/state", ck)
+	th := st["threads"].([]any)[0].(map[string]any)
+	if th["waiting"] != true || th["ask"] != "🔐 Bash wants to run: make test" || th["mention"] != "dan" {
+		t.Errorf("waiting thread: %v", th)
+	}
+	if p := th["prompt"].(map[string]any); p["id"] != "chat-slack:p2" || len(p["choices"].([]any)) != 2 {
+		t.Errorf("prompt: %v", p)
+	}
+	if err := tr.Send(ctx, transport.Outbound{Thread: "C1/1.1", Decision: &transport.Decision{PromptID: "chat-slack:p2", Choice: "allow"}, From: &transport.Author{ID: "dan", Name: "dan", Via: "web"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, st = get(t, srv, "/api/state", ck)
+	th = st["threads"].([]any)[0].(map[string]any)
+	if th["ask"] != nil || th["prompt"] != nil {
+		t.Errorf("settled thread still asks: %v", th)
 	}
 }
 

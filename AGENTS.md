@@ -125,8 +125,10 @@ files first — they carry the contract, the concrete packages under them are im
   log keeps one record (the inbound), never the relays. An inbound to `"<channel>/"` asks the
   channel's owner (`ChannelLister`) to open a thread (`ThreadOpener`), so a web user can start
   work in a Slack channel. The web transport has no memory: lists and history come from the
-  coordinator through `transport.History` (`coordinator/threads.go`); only the live status line
-  and open prompts are kept in memory. Its users are accounts in the store (`dancer user add`,
+  coordinator through `transport.History` (`coordinator/threads.go`) — threads with what runs
+  them (agent, model, environment, session), the agent list, and messages with the agent's
+  tool calls as `Entry.Tool`, paired from the log's `agent` records; only the live status line
+  and the open prompt per thread are kept in memory. Its users are accounts in the store (`dancer user add`,
   `web/auth.go`: PBKDF2 hashes, sessions by token hash); the session's name is the
   `Inbound.UserID`. `Inbound.UserName` is the display name when a transport has one (Slack:
   users.info, cached).
