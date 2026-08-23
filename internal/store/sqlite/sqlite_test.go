@@ -55,12 +55,13 @@ func TestStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	ts.Session = "sess"
+	ts.Model = "claude-haiku-4-5"
 	ts.Status = store.StatusIdle
 	if err := s.PutTask(ctx, ts); err != nil {
 		t.Fatal(err)
 	}
 	back, err := s.GetTask(ctx, "t1")
-	if err != nil || back.Session != "sess" || back.Status != store.StatusIdle || back.Definition.Name != "coder" || back.Transport != "slack" || back.Requester != "U42" {
+	if err != nil || back.Session != "sess" || back.Model != "claude-haiku-4-5" || back.Status != store.StatusIdle || back.Definition.Name != "coder" || back.Transport != "slack" || back.Requester != "U42" {
 		t.Fatalf("get task = %+v err=%v", back, err)
 	}
 	latest, err := s.LatestTaskForThread(ctx, "th1")

@@ -83,7 +83,9 @@ human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE
 Nothing a reload could lose. Channel and thread lists and every message come from the
 coordinator's event log whenever a page asks; what arrives live is pushed to open pages
 over server-sent events. The only in-memory state is the moment: the status line of a
-running turn, whether a prompt is open, and threads opened here that have no task yet.
+running turn, the prompt that is open, and threads opened here that have no task yet.
+The page re-reads the thread list whenever dancer or the agent posts a line, so the
+header's status, the closed mark and the session facts follow the task without a reload.
 
 ## One conversation, every transport
 

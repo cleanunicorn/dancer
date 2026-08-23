@@ -5,7 +5,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { Button, Input, TextField } from "@heroui/react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ME, type Message } from "./api";
+import { ME, type Message, type ToolCall } from "./api";
 import { Mrkdwn, linkify } from "./mrkdwn";
 import { clock, label, store, useStore } from "./store";
 import { Lamp } from "./strip";
@@ -19,6 +19,66 @@ function tone(text: string): "ok" | "bad" | "warn" | undefined {
   if (text.startsWith("✅")) return "ok";
   if (/^(⏸️|⚠️|🚫|⏹️|♻️)/.test(text)) return "warn";
   return undefined;
+}
+
+function dur(ms: number): string {
+  if (ms < 1000) return ms + "ms";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  return Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
+}
+
+function mark(tc: ToolCall): { text: string; cls: string; title: string } {
+  if (tc.denied) return { text: "⛔", cls: "text-warning", title: "refused" };
+  if (tc.error) return { text: "✗", cls: "text-danger", title: "failed" };
+  if (tc.done) return { text: "✓", cls: "text-success", title: "ok" };
+  return { text: "…", cls: "text-muted", title: "no result in the log" };
+}
+
+// ToolStrip is a run of tool calls between two messages: one line with
+// the count per tool and the time they took, the calls on request.
+export function ToolStrip({ calls }: { calls: Message[] }) {
+  const [open, setOpen] = useState(false);
+  const tools = calls.map((m) => m.tool!);
+  const counts = new Map<string, number>();
+  for (const t of tools) counts.set(t.name, (counts.get(t.name) || 0) + 1);
+  const total = tools.reduce((n, t) => n + (t.millis || 0), 0);
+  const failed = tools.filter((t) => t.error).length;
+  const summary = [...counts].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(" · ");
+  return (
+    <div className="pl-11 text-xs">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 rounded-md px-1 py-0.5 text-muted hover:bg-surface-hover hover:text-foreground"
+        title={open ? "hide the calls" : "show the calls"}
+      >
+        <span>{open ? "▾" : "▸"}</span>
+        <span>🔧 {summary}</span>
+        {total > 0 ? <span>· {dur(total)}</span> : null}
+        {failed ? <span className="text-danger">· {failed} failed</span> : null}
+      </button>
+      {open ? (
+        <ol className="mt-1 flex flex-col gap-0.5 border-l border-border pl-3">
+          {calls.map((m) => {
+            const t = m.tool!;
+            const k = mark(t);
+            return (
+              <li key={m.id} className="flex items-baseline gap-2 font-mono" title={clock(m.at)}>
+                <span className={`w-3 shrink-0 ${k.cls}`} title={k.title}>
+                  {k.text}
+                </span>
+                {t.sub ? <span className="text-muted" title="run by a sub-agent">↳</span> : null}
+                <span className="shrink-0 text-foreground">{t.name}</span>
+                <span className="min-w-0 truncate text-muted">{t.input}</span>
+                {t.millis ? <span className="ml-auto shrink-0 text-muted">{dur(t.millis)}</span> : null}
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
 }
 
 export function LiveLine({ text }: { text: string }) {
