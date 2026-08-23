@@ -160,9 +160,11 @@ type ThreadTracker interface {
 // ThreadCloser is implemented by transports that can stop following a
 // thread again (Slack). Forget is the inverse of ThreadTracker.Remember:
 // plain replies in the thread are ignored afterwards, until a human
-// addresses the bot there directly.
+// addresses the bot there directly — or Follow lifts it, when the human
+// reopened the thread from another transport.
 type ThreadCloser interface {
 	Forget(thread ThreadID)
+	Follow(thread ThreadID)
 }
 
 // Reactor is implemented by transports that can mark a conversation with

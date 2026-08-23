@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,9 +12,11 @@ import (
 	"github.com/cleanunicorn/dancer/internal/environment"
 	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
 	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
+	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/store/sqlite"
 	"github.com/cleanunicorn/dancer/internal/surface"
 	"github.com/cleanunicorn/dancer/internal/surface/chat"
+	"github.com/cleanunicorn/dancer/internal/surface/feed"
 	"github.com/cleanunicorn/dancer/internal/transport"
 )
 
@@ -58,6 +61,9 @@ func (h *hostTransport) Channels() []transport.Channel {
 	return out
 }
 func (h *hostTransport) OpenThread(ctx context.Context, channel string, msg transport.Outbound) (transport.ThreadID, error) {
+	if channel == "C-locked" {
+		return "", errors.New("not_in_channel")
+	}
 	th := transport.ThreadID(channel + "/9.9")
 	msg.Thread = th
 	h.mu.Lock()
@@ -115,9 +121,10 @@ func TestSharedThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
-	slack := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	slack := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev", "C-locked"}}
 	web := &observerTransport{fakeTransport: fakeTransport{name: "web", ready: make(chan struct{})}, channels: []string{"general"}}
-	c := New(st, ex, []transport.Transport{slack, web}, []surface.Surface{chat.New("chat-slack", "slack", false), chat.New("chat-web", "web", false)}, nil)
+	feedThread := transport.ThreadID("C-ops/")
+	c := New(st, ex, []transport.Transport{slack, web}, []surface.Surface{chat.New("chat-slack", "slack", false), chat.New("chat-web", "web", false), feed.New("ops", "slack", feedThread, false)}, nil)
 	c.WorkdirRoot = t.TempDir()
 	c.DefaultDefinition = "coder"
 	go c.Run(ctx)
@@ -162,6 +169,26 @@ func TestSharedThreads(t *testing.T) {
 	slack.waitFor(t, th, "echo:again")
 	web.waitFor(t, th, "echo:again")
 
+	// `status` asked from the web about the Slack-hosted task is answered
+	// on the web: the reply carries the task, but is addressed to the
+	// surface that asked.
+	web.inbox <- transport.Inbound{Transport: "web", Thread: th, UserID: "dan", UserName: "dan", Text: "status"}
+	web.waitFor(t, th, "status *")
+	if n := slack.count(th, "status *"); n != 0 {
+		t.Errorf("slack got the web user's status reply %d times", n)
+	}
+
+	// The feed posts into its own channel; the observer follows
+	// conversations, not the feed.
+	slack.waitFor(t, feedThread, "started")
+	web.mu.Lock()
+	for _, o := range web.out {
+		if o.Thread == feedThread {
+			t.Errorf("web was sent a feed line: %+v", o)
+		}
+	}
+	web.mu.Unlock()
+
 	// The log has one inbound and one outbound per message: the relays
 	// are derived, and History hands them back as From entries.
 	msgs, err := c.Messages(ctx, th, 100)
@@ -181,14 +208,14 @@ func TestSharedThreads(t *testing.T) {
 			decisions++
 		}
 	}
-	if froms != 3 || prompts != 1 || decisions != 1 {
+	if froms != 4 || prompts != 1 || decisions != 1 {
 		t.Errorf("history: %d from, %d prompts, %d decisions; %+v", froms, prompts, decisions, msgs)
 	}
 	infos, err := c.Threads(ctx)
 	if err != nil || len(infos) != 1 || infos[0].ID != th || infos[0].Transport != "slack" || infos[0].Title != "run coder do the thing" || infos[0].Requester != "U1" {
 		t.Errorf("threads: %+v err=%v", infos, err)
 	}
-	if chans := c.Channels(); len(chans["slack"]) != 1 || len(chans["web"]) != 1 {
+	if chans := c.Channels(); len(chans["slack"]) != 2 || len(chans["web"]) != 1 {
 		t.Errorf("channels: %+v", chans)
 	}
 
@@ -216,6 +243,18 @@ func TestSharedThreads(t *testing.T) {
 	web.inbox <- transport.Inbound{Transport: "web", Thread: opened, UserID: "dan", UserName: "dan", Decision: &transport.Decision{PromptID: p.Prompt.ID, Choice: "allow"}}
 	slack.waitFor(t, opened, "✅ done")
 
+	// Slack cannot open a thread in a channel the bot is not in: the web
+	// user is told and no task runs on the bare channel.
+	web.inbox <- transport.Inbound{Transport: "web", Thread: "C-locked/", UserID: "dan", UserName: "dan", Text: "run coder nope"}
+	web.waitFor(t, "C-locked/", "could not start a thread")
+	time.Sleep(100 * time.Millisecond)
+	if _, err := st.LatestTaskForThread(ctx, "C-locked/"); err == nil {
+		t.Error("a task ran on the bare channel after OpenThread failed")
+	}
+	if n := slack.count("C-locked/", "started"); n != 0 {
+		t.Errorf("slack got %d lines on the bare channel", n)
+	}
+
 	// A thread in the web's own channel: opened by the web, never shown
 	// to Slack.
 	web.inbox <- transport.Inbound{Transport: "web", Thread: "general/", UserID: "dan", UserName: "dan", Text: "run coder private"}
@@ -239,5 +278,47 @@ func TestSharedThreads(t *testing.T) {
 	}
 	if ts, err := st.LatestTaskForThread(ctx, own); err != nil || ts.Transport != "web" {
 		t.Errorf("web task: %+v err=%v", ts, err)
+	}
+
+	// Closed in Slack, reopened from the web: Slack follows the thread again.
+	slack.inbox <- transport.Inbound{Transport: "slack", Thread: th, UserID: "U1", Text: "close"}
+	slack.waitFor(t, th, "thread closed")
+	waitForget(t, &slack.fakeTransport, th, 1)
+	web.inbox <- transport.Inbound{Transport: "web", Thread: th, UserID: "dan", UserName: "dan", Text: "run coder once more"}
+	web.waitFor(t, th, "thread reopened")
+	slack.mu.Lock()
+	followed := len(slack.followed)
+	slack.mu.Unlock()
+	if followed == 0 {
+		t.Error("slack was not told to follow the reopened thread")
+	}
+}
+
+// TestRecoverSkipsAbsentTransport: a task whose transport is not
+// configured on this run is left idle, not resumed into the void.
+func TestRecoverSkipsAbsentTransport(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.PutTask(ctx, store.TaskState{ID: "t1", Transport: "slack", Thread: "C1/1.0", Definition: agent.Definition{Name: "coder", Kind: "fake"}, Status: store.StatusInterrupted, Session: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
+	web := &observerTransport{fakeTransport: fakeTransport{name: "web", ready: make(chan struct{})}, channels: []string{"general"}}
+	c := New(st, ex, []transport.Transport{web}, []surface.Surface{chat.New("chat-web", "web", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-web.ready
+	time.Sleep(200 * time.Millisecond)
+	ts, err := st.GetTask(ctx, "t1")
+	if err != nil || ts.Status != store.StatusIdle {
+		t.Errorf("task = %+v err=%v, want idle", ts, err)
+	}
+	if _, live := c.lookup("C1/1.0"); live {
+		t.Error("task was resumed without its transport")
 	}
 }

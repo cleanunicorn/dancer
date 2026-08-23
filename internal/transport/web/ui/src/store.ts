@@ -173,7 +173,7 @@ class Store {
   private addMessage(m: Message) {
     const list = this.state.messages.get(m.thread);
     if (list) {
-      if (list.some((x) => x.id === m.id)) return;
+      if (list.some((x) => sameMessage(x, m))) return;
       list.push(m);
       this.state.messages.set(m.thread, [...list]);
     }
@@ -243,12 +243,17 @@ class Store {
     try {
       const data = await api<{ messages: Message[] }>("GET", "/api/threads/" + id);
       const msgs = data.messages || [];
+      // what the stream delivered while the fetch was in flight, and the
+      // log did not have yet, stays; what both have is kept once
+      for (const m of this.state.messages.get(id) || []) {
+        if (!m.key && !msgs.some((x) => sameMessage(x, m))) msgs.push(m);
+      }
       this.state.messages.set(id, msgs);
       const t = this.thread(id);
       const live = msgs.find((m) => m.key);
       t.live = live ? live.text : "";
-      const last = [...msgs].reverse().find((m) => !m.key);
-      if (last) t.waiting = !!(last.prompt && !msgs.some((m) => m.decision?.promptId === last.prompt!.id));
+      const lastPrompt = msgs.map((m, i) => (m.prompt ? i : -1)).filter((i) => i >= 0).pop();
+      t.waiting = lastPrompt != null && promptOpen(msgs, lastPrompt);
       this.touch();
     } catch (e) {
       this.toast(String(e));
@@ -316,6 +321,39 @@ export const store = new Store();
 
 export function useStore(): State {
   return useSyncExternalStore(store.subscribe, store.snapshot);
+}
+
+// sameMessage tells a message the stream delivered from its copy in the
+// log: ids differ between the two (the log numbers a fetch from 1, the
+// stream counts on), so it is the content and a moment in time.
+export function sameMessage(a: Message, b: Message): boolean {
+  if (a.id === b.id) return true;
+  if (a.key || b.key) return false;
+  return (
+    a.text === b.text &&
+    a.from?.name === b.from?.name &&
+    a.from?.via === b.from?.via &&
+    a.prompt?.id === b.prompt?.id &&
+    a.decision?.promptId === b.decision?.promptId &&
+    a.decision?.choice === b.decision?.choice &&
+    Math.abs(new Date(a.at).getTime() - new Date(b.at).getTime()) < 15000
+  );
+}
+
+// promptOpen says whether the prompt at list[i] still waits: nothing has
+// answered it, and neither dancer nor the agent said anything after it
+// (the agent only goes on once the prompt is settled, by a human here
+// or elsewhere, or by the decider).
+export function promptOpen(list: Message[], i: number): boolean {
+  const p = list[i].prompt;
+  if (!p) return false;
+  for (let j = i + 1; j < list.length; j++) {
+    const x = list[j];
+    if (x.key) continue;
+    if (x.decision?.promptId === p.id) return false;
+    if (!x.from) return false;
+  }
+  return true;
 }
 
 export function firstLine(s: string): string {

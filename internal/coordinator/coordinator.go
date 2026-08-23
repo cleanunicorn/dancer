@@ -298,6 +298,16 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				c.Log.Info("recovered task on a closed thread", "task", t.ID, "thread", t.Thread)
 				continue
 			}
+			if _, running := c.transports[t.Transport]; t.Transport != "" && !running {
+				// Nobody could see or answer it: leave it for a dancer that
+				// runs its transport, marked idle so it is not reported live.
+				t.Status = store.StatusIdle
+				if err := c.Store.PutTask(ctx, t); err != nil {
+					return err
+				}
+				c.Log.Warn("not resuming task: its transport is not configured", "task", t.ID, "thread", t.Thread, "transport", t.Transport)
+				continue
+			}
 			c.unmark(ctx, t.Transport, t.Thread) // a mark the previous process left
 			v := decider.Verdict{Action: actionWait}
 			if c.autoResumable(t) {
@@ -450,7 +460,10 @@ func (c *Coordinator) surfaceOn(transportName string) string {
 // it. A decision is offered to every surface: the prompt it answers was
 // rendered by one surface and may have been shown on any transport.
 func (c *Coordinator) handle(ctx context.Context, in transport.Inbound) {
-	openedOn := c.place(ctx, &in)
+	openedOn, ok := c.place(ctx, &in)
+	if !ok {
+		return
+	}
 	c.append(ctx, "", in.Thread, "inbound", in)
 	c.relay(ctx, in, openedOn)
 	for _, s := range c.Surfaces {
@@ -663,6 +676,11 @@ func (c *Coordinator) reopenThread(ctx context.Context, s surface.Surface, th tr
 		return
 	}
 	c.setClosed(th, false)
+	// Reopened from another transport (the web UI), the host transport
+	// never saw the human address the bot there; lift its tombstone too.
+	if tc, ok := c.transports[c.taskTransport(ctx, s, th)].(transport.ThreadCloser); ok {
+		tc.Follow(th)
+	}
 	c.Log.Info("thread reopened", "thread", th)
 	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "♻️ thread reopened"}, s)
 }
@@ -1296,6 +1314,9 @@ func (c *Coordinator) emit(ctx context.Context, ev surface.Event, s surface.Surf
 		}
 		if err := t.Send(ctx, out); err != nil {
 			c.Log.Error("send failed", "transport", t.Name(), "surface", s.Name(), "err", err)
+		}
+		if out.Thread != ev.Thread {
+			continue // a surface's own place (the feed channel), not the conversation
 		}
 		for _, o := range observers {
 			if err := o.Send(ctx, out); err != nil {

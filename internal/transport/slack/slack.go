@@ -788,8 +788,11 @@ func (c *Transport) remember(th transport.ThreadID) {
 	c.mu.Unlock()
 }
 
-// follow starts following a thread even after Forget: a human talking to
-// the bot in a closed thread reopens it.
+// Follow starts following a thread even after Forget: a human talking to
+// the bot in a closed thread reopens it, and so does reopening it from
+// another transport. Implements transport.ThreadCloser.
+func (c *Transport) Follow(th transport.ThreadID) { c.follow(th) }
+
 func (c *Transport) follow(th transport.ThreadID) {
 	c.mu.Lock()
 	c.threads[th] = true

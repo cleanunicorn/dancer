@@ -72,19 +72,22 @@ func (c *Coordinator) channelOwner(ch string) string {
 // asks for a new conversation in that channel: the transport owning the
 // channel opens one with the message as its root, and the inbound carries
 // on under the new id. It returns the transport that opened the thread
-// (it has the message already, so the relay skips it), "" otherwise.
-func (c *Coordinator) place(ctx context.Context, in *transport.Inbound) (openedOn string) {
-	ch, rest, ok := strings.Cut(string(in.Thread), "/")
-	if !ok || rest != "" || ch == "" || in.Text == "" {
-		return ""
+// (it has the message already, so the relay skips it), "" when nothing
+// had to be opened — and ok=false when opening failed: the human is
+// told and the message goes no further, rather than running a task on
+// the bare channel, whose output would land nowhere a thread can be.
+func (c *Coordinator) place(ctx context.Context, in *transport.Inbound) (openedOn string, ok bool) {
+	ch, rest, hasSlash := strings.Cut(string(in.Thread), "/")
+	if !hasSlash || rest != "" || ch == "" || in.Text == "" {
+		return "", true
 	}
 	owner := c.channelOwner(ch)
 	if owner == "" {
-		return ""
+		return "", true
 	}
-	opener, ok := c.transports[owner].(transport.ThreadOpener)
-	if !ok {
-		return ""
+	opener, isOpener := c.transports[owner].(transport.ThreadOpener)
+	if !isOpener {
+		return "", true
 	}
 	th, err := opener.OpenThread(ctx, ch, transport.Outbound{Text: in.Text, From: authorOf(*in)})
 	if err != nil {
@@ -92,7 +95,7 @@ func (c *Coordinator) place(ctx context.Context, in *transport.Inbound) (openedO
 		if t := c.transports[in.Transport]; t != nil {
 			_ = t.Send(ctx, transport.Outbound{Thread: in.Thread, Text: fmt.Sprintf("❌ could not start a thread in %s channel %s: %v", owner, ch, err)})
 		}
-		return ""
+		return "", false
 	}
 	c.Log.Info("opened thread", "transport", owner, "channel", ch, "thread", th, "for", in.Transport)
 	in.Thread = th
@@ -100,7 +103,7 @@ func (c *Coordinator) place(ctx context.Context, in *transport.Inbound) (openedO
 	if tt, ok := c.transports[owner].(transport.ThreadTracker); ok {
 		tt.Remember(th)
 	}
-	return owner
+	return owner, true
 }
 
 // relay shows what a human wrote to the transports following the thread

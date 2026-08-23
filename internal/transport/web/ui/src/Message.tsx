@@ -124,7 +124,7 @@ function PromptCard({ m, answer, open }: { m: Message; answer: Message | null; o
   );
 }
 
-export function MessageRow({ m, list, isLast, me }: { m: Message; list: Message[]; isLast: boolean; me: string }) {
+export function MessageRow({ m, list, open, me }: { m: Message; list: Message[]; open: boolean; me: string }) {
   const kind = m.from ? "human" : m.markdown ? "agent" : "system";
   const mine = !!m.from && m.from.via === ME && m.from.name === me;
   const forMe = !!m.mention && m.mention === me;
@@ -185,7 +185,7 @@ export function MessageRow({ m, list, isLast, me }: { m: Message; list: Message[
             <Mrkdwn text={m.text} mention={m.mention} />
           )}
           {m.files?.length ? <Files files={m.files} /> : null}
-          {m.prompt ? <PromptCard m={m} answer={answer} open={isLast} /> : null}
+          {m.prompt ? <PromptCard m={m} answer={answer} open={open} /> : null}
         </div>
       </div>
     </div>

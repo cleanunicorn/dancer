@@ -3,7 +3,7 @@ import { Button, Chip, TextArea, TextField } from "@heroui/react";
 import type { Message } from "./api";
 import { ME } from "./api";
 import { LiveLine, MessageRow } from "./Message";
-import { label, store, useStore } from "./store";
+import { label, promptOpen, store, useStore } from "./store";
 
 function Header({ menu }: { menu: () => void }) {
   const st = useStore();
@@ -54,7 +54,6 @@ function Messages({ list, me }: { list: Message[]; me: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [stick, setStick] = useState(true);
   const [behind, setBehind] = useState(false);
-  const last = [...list].reverse().find((m) => !m.key) || null;
   const live = list.find((m) => m.key);
   useLayoutEffect(() => {
     const el = box.current;
@@ -74,9 +73,9 @@ function Messages({ list, me }: { list: Message[]; me: string }) {
       }}
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-3">
-        {list.map((m) =>
+        {list.map((m, i) =>
           m.key ? null : m.decision && list.some((p) => p.prompt?.id === m.decision!.promptId) ? null : (
-            <MessageRow key={m.id} m={m} list={list} isLast={m === last} me={me} />
+            <MessageRow key={m.id} m={m} list={list} open={!!m.prompt && promptOpen(list, i)} me={me} />
           ),
         )}
         {live ? <LiveLine text={live.text} /> : null}

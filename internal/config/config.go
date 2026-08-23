@@ -44,6 +44,21 @@ type Channel struct {
 	Agent     string `toml:"agent"`
 }
 
+// CheckWeb validates the [web] section for a run that starts the web
+// transport. validate calls it when "web" is configured; `dancer run
+// -web` calls it itself, since it forces the transport in after Load.
+func (c *Config) CheckWeb() error {
+	if c.Web.Token == "" && !loopback(c.Web.Listen) {
+		return fmt.Errorf("config: web transport on %s needs web.token (only a loopback address may go without)", c.Web.Listen)
+	}
+	for _, ch := range c.Web.Channels {
+		if ch == "" || strings.ContainsAny(ch, "/ \t") {
+			return fmt.Errorf("config: web channel %q: one word, no slash", ch)
+		}
+	}
+	return nil
+}
+
 // loopback reports whether a listen address is on the loopback
 // interface (or on no interface at all: a bare port binds everything).
 func loopback(addr string) bool {
@@ -443,13 +458,8 @@ func (c *Config) validate() error {
 			}
 		case "terminal":
 		case "web":
-			if c.Web.Token == "" && !loopback(c.Web.Listen) {
-				return fmt.Errorf("config: web transport on %s needs web.token (only a loopback address may go without)", c.Web.Listen)
-			}
-			for _, ch := range c.Web.Channels {
-				if ch == "" || strings.ContainsAny(ch, "/ \t") {
-					return fmt.Errorf("config: web channel %q: one word, no slash", ch)
-				}
+			if err := c.CheckWeb(); err != nil {
+				return err
 			}
 		default:
 			return fmt.Errorf("config: unknown transport %q", t)

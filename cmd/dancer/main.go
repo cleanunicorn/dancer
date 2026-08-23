@@ -123,6 +123,9 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 		surfaceCfgs = []config.Surface{{Name: "chat-terminal", Kind: "chat", Transport: "terminal", Verbose: cfg.Server.Verbose}}
 	}
 	if forceWeb {
+		if err := cfg.CheckWeb(); err != nil {
+			return err
+		}
 		transportNames = []string{"web"}
 		surfaceCfgs = []config.Surface{{Name: "chat-web", Kind: "chat", Transport: "web", Verbose: cfg.Server.Verbose}}
 	}

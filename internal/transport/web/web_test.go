@@ -276,6 +276,40 @@ func TestStream(t *testing.T) {
 	}
 }
 
+// TestSameSite: a POST the browser was made to send by another site —
+// a form, or any request with a foreign Origin — is refused, with or
+// without a token.
+func TestSameSite(t *testing.T) {
+	_, srv, inbox := newTest(t, "")
+	form, _ := http.Post(srv.URL+"/api/messages", "application/x-www-form-urlencoded", strings.NewReader("thread=C1/1.1&text=hi&user=x"))
+	if form.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("form post: %d", form.StatusCode)
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/api/messages", strings.NewReader(`{"thread":"C1/1.1","text":"hi","user":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	if res, _ := http.DefaultClient.Do(req); res.StatusCode != http.StatusForbidden {
+		t.Errorf("foreign origin: %d", res.StatusCode)
+	}
+	req, _ = http.NewRequest("POST", srv.URL+"/api/messages", strings.NewReader(`{"thread":"C1/1.1","text":"hi","user":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	if res, _ := http.DefaultClient.Do(req); res.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site fetch: %d", res.StatusCode)
+	}
+	if len(inbox) != 0 {
+		t.Errorf("%d messages got through", len(inbox))
+	}
+	req, _ = http.NewRequest("POST", srv.URL+"/api/messages", strings.NewReader(`{"thread":"C1/1.1","text":"hi","user":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://"+req.URL.Host)
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	if res, _ := http.DefaultClient.Do(req); res.StatusCode != 200 {
+		t.Errorf("own origin: %d", res.StatusCode)
+	}
+	<-inbox
+}
+
 // TestToken: with a token set the API needs it, the static page does
 // not, and login sets the cookie the page then sends.
 func TestToken(t *testing.T) {

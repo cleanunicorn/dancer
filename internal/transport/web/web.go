@@ -41,6 +41,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -205,8 +206,9 @@ func (t *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 			return nil
 		case cur != nil:
 			cur.Text, cur.At = msg.Text, now
+			cp := *cur // published outside the lock; the next edit must not race it
 			t.mu.Unlock()
-			t.hub.publish(event{Type: "edit", Message: cur})
+			t.hub.publish(event{Type: "edit", Message: &cp})
 			return nil
 		}
 		if byKey == nil {
@@ -215,8 +217,9 @@ func (t *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 		}
 		cur = t.message(msg, now)
 		byKey[msg.Key] = cur
+		cp := *cur
 		t.mu.Unlock()
-		t.hub.publish(event{Type: "edit", Message: cur})
+		t.hub.publish(event{Type: "edit", Message: &cp})
 		return nil
 	}
 	if msg.Text == "" && msg.Prompt == nil && len(msg.Files) == 0 && msg.Decision == nil {
@@ -352,13 +355,38 @@ func (t *Transport) Handler() http.Handler {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
-	mux.HandleFunc("POST /api/login", t.login)
+	mux.HandleFunc("POST /api/login", sameSite(t.login))
 	mux.HandleFunc("GET /api/state", t.auth(t.state))
 	mux.HandleFunc("GET /api/events", t.auth(t.events))
 	mux.HandleFunc("GET /api/threads/{channel}/{thread}", t.auth(t.thread))
-	mux.HandleFunc("POST /api/messages", t.auth(t.post))
-	mux.HandleFunc("POST /api/decide", t.auth(t.decide))
+	mux.HandleFunc("POST /api/messages", t.auth(sameSite(t.post)))
+	mux.HandleFunc("POST /api/decide", t.auth(sameSite(t.decide)))
 	return mux
+}
+
+// sameSite refuses a POST another site made the browser send. Without a
+// token (the loopback default) the cookie is no guard, and even with one
+// the browser attaches it: a page the operator has open elsewhere could
+// otherwise start a task here. The page's own requests are JSON and
+// same-origin; a cross-site form can be neither.
+func sameSite(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			jsonError(w, http.StatusUnsupportedMediaType, "JSON only")
+			return
+		}
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+			jsonError(w, http.StatusForbidden, "cross-site request refused")
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			if u, err := url.Parse(origin); err != nil || !strings.EqualFold(u.Host, r.Host) {
+				jsonError(w, http.StatusForbidden, "cross-site request refused")
+				return
+			}
+		}
+		h(w, r)
+	}
 }
 
 const cookieName = "dancer_web"
@@ -486,7 +514,8 @@ func (t *Transport) thread(w http.ResponseWriter, r *http.Request) {
 	}
 	t.mu.Lock()
 	for _, m := range t.live[th] {
-		msgs = append(msgs, m)
+		cp := *m
+		msgs = append(msgs, &cp)
 	}
 	t.mu.Unlock()
 	writeJSON(w, map[string]any{"thread": th, "messages": msgs})
