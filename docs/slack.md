@@ -112,8 +112,18 @@ that needed it is skipped.
 
 The app-level token (`xapp-…`) needs one scope of its own, `connections:write`, for
 Socket Mode; it is not in the manifest, you add it when generating the token (step 3
-above). `bin/dancer doctor` checks that both tokens are accepted, not which scopes they
-carry.
+above).
+
+`bin/dancer doctor` reads the scopes each token carries (Slack returns them in the
+`X-OAuth-Scopes` header of every API call) and lists what is missing: ✘ for a scope
+from the first rows of the table, ℹ for an optional one, and a separate line for the
+app-level token's `connections:write`.
+
+```
+  ✔ slack                  bot @dancer in acme
+  ✘ slack scopes           missing: files:read, im:read — add under OAuth & Permissions and reinstall the app (docs/slack.md#scopes)
+  ✔ slack app_token        connections:write
+```
 
 ## A feed surface
 
