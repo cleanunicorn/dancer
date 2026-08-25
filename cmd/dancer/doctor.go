@@ -9,23 +9,28 @@ import (
 	"strings"
 	"time"
 
-	"github.com/slack-go/slack"
-
 	"github.com/cleanunicorn/dancer/internal/config"
 	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
+	slackt "github.com/cleanunicorn/dancer/internal/transport/slack"
 )
 
 type check struct {
 	name string
 	ok   bool
 	info string
+	// note marks a passing check whose info still deserves a look
+	// (an optional Slack scope is missing): printed ℹ instead of ✔.
+	note bool
 }
 
 func (c check) String() string {
 	mark := "✔"
-	if !c.ok {
+	switch {
+	case !c.ok:
 		mark = "✘"
+	case c.note:
+		mark = "ℹ"
 	}
 	return fmt.Sprintf("  %s %-22s %s", mark, c.name, c.info)
 }
@@ -37,10 +42,10 @@ func (c check) String() string {
 // every question falls back to the rules with nothing but a warn log.
 func checkDecider(cfg *config.Config) check {
 	if !cfg.Decider.Enabled() {
-		return check{"decider", true, "off — dancer's rules decide"}
+		return check{name: "decider", ok: true, info: "off — dancer's rules decide"}
 	}
 	if len(cfg.Decider.Uses) == 0 {
-		return check{"decider", false, fmt.Sprintf("kind %q but uses = [] — it is never asked anything", cfg.Decider.Kind)}
+		return check{name: "decider", ok: false, info: fmt.Sprintf("kind %q but uses = [] — it is never asked anything", cfg.Decider.Kind)}
 	}
 	info := fmt.Sprintf("%s/%s for %v (timeout %s)", cfg.Decider.Kind, cfg.Decider.Model, cfg.Decider.Uses, cfg.Decider.Timeout.Duration)
 	if cfg.Decider.Kind == "openai" {
@@ -57,7 +62,7 @@ func checkDecider(cfg *config.Config) check {
 			if msg := err.Error(); strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403") {
 				hint = " — check [decider.openai] api_key"
 			}
-			return check{"decider", false, info + "; endpoint check failed: " + truncate(strings.TrimPrefix(err.Error(), "decider: openai: "), 160) + hint}
+			return check{name: "decider", ok: false, info: info + "; endpoint check failed: " + truncate(strings.TrimPrefix(err.Error(), "decider: openai: "), 160) + hint}
 		}
 		info += ", endpoint answers"
 	}
@@ -66,11 +71,11 @@ func checkDecider(cfg *config.Config) check {
 			continue
 		}
 		if len(cfg.Decider.AutoAllow) == 0 {
-			return check{"decider", false, info + "; permission is listed but auto_allow is empty, so every prompt still asks"}
+			return check{name: "decider", ok: false, info: info + "; permission is listed but auto_allow is empty, so every prompt still asks"}
 		}
 		info += fmt.Sprintf(", may allow %v", cfg.Decider.AutoAllow)
 	}
-	return check{"decider", true, info}
+	return check{name: "decider", ok: true, info: info}
 }
 
 func runDoctor(cfgPath string) error {
@@ -87,12 +92,12 @@ func runDoctor(cfgPath string) error {
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		add(check{"config", false, err.Error()})
+		add(check{name: "config", ok: false, info: err.Error()})
 		fmt.Println("\nrun `dancer setup` to create a config")
 		return fmt.Errorf("doctor: config")
 	}
-	add(check{"config", true, cfgPath})
-	add(check{"workdir_root", dirWritable(cfg.Server.WorkdirRoot), cfg.Server.WorkdirRoot})
+	add(check{name: "config", ok: true, info: cfgPath})
+	add(check{name: "workdir_root", ok: dirWritable(cfg.Server.WorkdirRoot), info: cfg.Server.WorkdirRoot})
 
 	add(checkClaude(cfg.Claude.Binary))
 	add(checkDecider(cfg))
@@ -114,11 +119,13 @@ func runDoctor(cfgPath string) error {
 
 	for _, ch := range cfg.Server.Transports {
 		if ch == "slack" {
-			add(checkSlack(cfg.Slack.AppToken, cfg.Slack.BotToken))
+			for _, c := range checkSlack(cfg.Slack.AppToken, cfg.Slack.BotToken) {
+				add(c)
+			}
 		}
 	}
-	add(check{"definitions", len(cfg.Definitions) > 0, fmt.Sprintf("%d configured (default: %s)", len(cfg.Definitions), cfg.Server.DefaultAgent)})
-	add(check{"surfaces", len(cfg.Surfaces) > 0, describeSurfaces(cfg)})
+	add(check{name: "definitions", ok: len(cfg.Definitions) > 0, info: fmt.Sprintf("%d configured (default: %s)", len(cfg.Definitions), cfg.Server.DefaultAgent)})
+	add(check{name: "surfaces", ok: len(cfg.Surfaces) > 0, info: describeSurfaces(cfg)})
 
 	if failed {
 		return fmt.Errorf("doctor: %d check(s) failed", countFailed(checks))
@@ -153,7 +160,7 @@ func dirWritable(dir string) bool {
 func checkClaude(bin string) check {
 	path, err := exec.LookPath(bin)
 	if err != nil {
-		return check{"claude", false, bin + " not found in PATH"}
+		return check{name: "claude", ok: false, info: bin + " not found in PATH"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -167,9 +174,9 @@ func checkClaude(bin string) check {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return check{"claude", false, fmt.Sprintf("%s — not authenticated? run `claude` once and /login (%s)", strings.TrimSpace(string(ver)), truncate(msg, 120))}
+		return check{name: "claude", ok: false, info: fmt.Sprintf("%s — not authenticated? run `claude` once and /login (%s)", strings.TrimSpace(string(ver)), truncate(msg, 120))}
 	}
-	return check{"claude", true, strings.TrimSpace(string(ver)) + " at " + path + ", authenticated"}
+	return check{name: "claude", ok: true, info: strings.TrimSpace(string(ver)) + " at " + path + ", authenticated"}
 }
 
 func checkDocker() check {
@@ -177,9 +184,9 @@ func checkDocker() check {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
 	if err != nil {
-		return check{"docker", false, "docker daemon not reachable: " + err.Error()}
+		return check{name: "docker", ok: false, info: "docker daemon not reachable: " + err.Error()}
 	}
-	return check{"docker", true, "server " + strings.TrimSpace(string(out))}
+	return check{name: "docker", ok: true, info: "server " + strings.TrimSpace(string(out))}
 }
 
 func checkSSH(host, key, claudeBin string) check {
@@ -192,25 +199,69 @@ func checkSSH(host, key, claudeBin string) check {
 	args = append(args, host, "--", "command -v "+claudeBin+" && "+claudeBin+" --version")
 	out, err := exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
 	if err != nil {
-		return check{"ssh " + host, false, truncate(strings.TrimSpace(string(out)), 160)}
+		return check{name: "ssh " + host, ok: false, info: truncate(strings.TrimSpace(string(out)), 160)}
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	return check{"ssh " + host, true, "claude " + lines[len(lines)-1]}
+	return check{name: "ssh " + host, ok: true, info: "claude " + lines[len(lines)-1]}
 }
 
-func checkSlack(appToken, botToken string) check {
+// checkSlack proves both tokens with auth.test and then compares the scopes
+// each one carries (the X-OAuth-Scopes header, see slack.AuthScopes) with
+// the ones dancer uses. An app created before a scope was added to the
+// manifest is accepted by auth.test and fails one feature at a time later,
+// with a log line per call; listing the missing scopes here turns that into
+// one line with the fix in it.
+func checkSlack(appToken, botToken string) []check {
 	if appToken == "" || botToken == "" {
-		return check{"slack", false, "app_token and bot_token required"}
+		return []check{{name: "slack", info: "app_token and bot_token required"}}
 	}
 	if !strings.HasPrefix(appToken, "xapp-") || !strings.HasPrefix(botToken, "xoxb-") {
-		return check{"slack", false, "app_token must start with xapp-, bot_token with xoxb-"}
+		return []check{{name: "slack", info: "app_token must start with xapp-, bot_token with xoxb-"}}
 	}
-	api := slack.New(botToken, slack.OptionAppLevelToken(appToken))
-	auth, err := api.AuthTest()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	bot, err := slackt.AuthScopes(ctx, botToken)
 	if err != nil {
-		return check{"slack", false, "auth.test: " + err.Error()}
+		return []check{{name: "slack", info: "bot_token: " + err.Error()}}
 	}
-	return check{"slack", true, fmt.Sprintf("bot @%s in %s", auth.User, auth.Team)}
+	out := []check{
+		{name: "slack", ok: true, info: fmt.Sprintf("bot @%s in %s", bot.User, bot.Team)},
+		checkSlackScopes(bot.Scopes),
+	}
+	app, err := slackt.AuthScopes(ctx, appToken)
+	switch {
+	case err != nil:
+		out = append(out, check{name: "slack app_token", info: err.Error()})
+	case app.Scopes == nil:
+		out = append(out, check{name: "slack app_token", ok: true, note: true, info: "accepted; auth.test sent no X-OAuth-Scopes header, so " + slackt.AppScope + " could not be verified"})
+	case len(slackt.MissingScopes(app.Scopes, []string{slackt.AppScope})) > 0:
+		out = append(out, check{name: "slack app_token", info: fmt.Sprintf("has %v, not %s — generate the token again under Basic Information → App-Level Tokens with that scope", app.Scopes, slackt.AppScope)})
+	default:
+		out = append(out, check{name: "slack app_token", ok: true, info: slackt.AppScope})
+	}
+	return out
+}
+
+// checkSlackScopes is the bot's scope line: ✘ with the required scopes the
+// token lacks, ℹ when only optional ones are missing, ✔ otherwise.
+func checkSlackScopes(have []string) check {
+	const fix = " — add under OAuth & Permissions and reinstall the app (docs/slack.md#scopes)"
+	if have == nil {
+		return check{name: "slack scopes", ok: true, note: true, info: "auth.test sent no X-OAuth-Scopes header, so the scopes could not be verified"}
+	}
+	required := slackt.MissingScopes(have, slackt.RequiredScopes)
+	optional := slackt.MissingScopes(have, slackt.OptionalScopes)
+	if len(required) > 0 {
+		info := "missing: " + strings.Join(required, ", ")
+		if len(optional) > 0 {
+			info += "; optional: " + strings.Join(optional, ", ")
+		}
+		return check{name: "slack scopes", info: info + fix}
+	}
+	if len(optional) > 0 {
+		return check{name: "slack scopes", ok: true, note: true, info: "all required; optional missing: " + strings.Join(optional, ", ") + fix}
+	}
+	return check{name: "slack scopes", ok: true, info: fmt.Sprintf("all %d required and %d optional", len(slackt.RequiredScopes), len(slackt.OptionalScopes))}
 }
 
 func describeSurfaces(cfg *config.Config) string {
