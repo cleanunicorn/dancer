@@ -24,7 +24,10 @@
 //
 // The copy keeps the source's mtime, and a hosts.yml in the environment
 // that is newer than that is left alone: something in there logged in
-// after dancer last lent, and that login is the current one.
+// after dancer last lent, and that login is the current one. Only the
+// first source has an mtime to keep; a token from the other two is stamped
+// with the current time, so it always counts as the newer login and is
+// re-lent at every task.
 //
 // Nothing is lent when
 //   - the environment is not docker: local is the same home already, and
@@ -64,10 +67,16 @@ const DefaultHost = "github.com"
 // UTC. Either way it points git at gh as a credential helper, so a push
 // from the agent uses the same login. It prints "kept" or "copied". POSIX
 // sh only: it runs in whatever /bin/sh the image has.
+//
+// The scratch files carry $$ because a container is not always one task's:
+// with reuse = "definition" every thread running that definition shares it,
+// so two lends can be in here at once and a shared "hosts.yml.tmp" would be
+// two writers on one file.
 const lendScript = `set -e
 d="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
 f="$d/hosts.yml"
-ref="$d/.dancer-lend-ref"
+ref="$d/.dancer-lend-ref.$$"
+tmp="$f.tmp.$$"
 result=copied
 umask 077
 mkdir -p "$d"
@@ -76,8 +85,8 @@ if [ -s "$f" ] && [ "$f" -nt "$ref" ]; then
 	cat > /dev/null
 	result=kept
 else
-	cat > "$f.tmp"
-	mv -f "$f.tmp" "$f"
+	cat > "$tmp"
+	mv -f "$tmp" "$f"
 	TZ=UTC touch -t "$1" "$f"
 fi
 rm -f "$ref"

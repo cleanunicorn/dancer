@@ -51,6 +51,26 @@ func TestLendIdentityKeepsTheOneAlreadyThere(t *testing.T) {
 	}
 }
 
+// A definition's setup commands run as root, so an identity they left
+// behind lives in the system config rather than the agent user's. git can
+// answer with it, so dancer leaves it be.
+func TestLendIdentityKeepsASystemWideOne(t *testing.T) {
+	requireGit(t)
+	hostConfig(t)
+	hostIdentity(t, "Ada Lovelace", "ada@example.com")
+	env, home, _ := newShEnv(t, "docker", nil)
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig-system"),
+		[]byte("[user]\n\tname = Bot\n\temail = bot@example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	Lend(context.Background(), env, nil)
+
+	if got := containerIdentity(t, home); got != "" {
+		t.Fatalf("container global git config = %q, want the system one left to answer", got)
+	}
+}
+
 // A definition that names its own committer is answered with silence, the
 // same way its own GH_TOKEN stops the login being lent.
 func TestLendIdentitySkipsWhenTheDefinitionHasOne(t *testing.T) {

@@ -27,7 +27,7 @@ const homeSkeleton = "/opt/dancer-home"
 // provisionVersion changes whenever provisionScript does; it is part of the
 // derived image tag, so an upgraded dancer rebuilds instead of reusing an
 // image built by the old script.
-const provisionVersion = "3"
+const provisionVersion = "4"
 
 // agentInstall maps an agent kind to the command that installs its CLI.
 var agentInstall = map[string]string{
@@ -235,9 +235,12 @@ pm_install() {
 
 pm_refresh
 say "installing base tools"
-pm_install ca-certificates curl git tar sudo
+pm_install ca-certificates curl git sudo
 # Nice to have for agents that grep; not worth failing the build over.
 pm_install ripgrep || say "ripgrep unavailable, skipping"
+# tar is only the gh fallback's business, and gh_from_release checks for it
+# itself, so an image whose package manager has no tar package still builds.
+command -v tar >/dev/null 2>&1 || pm_install tar || say "tar unavailable, skipping"
 `, uid, gid, ProvisionedHome)
 
 	// The GitHub CLI is part of the base kit rather than something to ask
@@ -259,11 +262,27 @@ gh_from_release() {
 	gh_ver=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest 2>/dev/null | sed -n 's#.*/tag/v##p')
 	[ -n "$gh_ver" ] || return 1
 	gh_dir="gh_${gh_ver}_linux_${gh_arch}"
-	curl -fsSL "https://github.com/cli/cli/releases/download/v${gh_ver}/${gh_dir}.tar.gz" -o /tmp/gh.tgz || return 1
+	gh_base="https://github.com/cli/cli/releases/download/v${gh_ver}"
+	curl -fsSL "${gh_base}/${gh_dir}.tar.gz" -o /tmp/gh.tgz || return 1
+	# The release publishes its own checksums; a binary that goes on PATH
+	# with the operator's GitHub token beside it is worth checking when the
+	# image gives us something to check with.
+	if command -v sha256sum >/dev/null 2>&1 &&
+		curl -fsSL "${gh_base}/gh_${gh_ver}_checksums.txt" -o /tmp/gh.sums; then
+		gh_want=$(grep " ${gh_dir}.tar.gz$" /tmp/gh.sums | cut -d" " -f1 || true)
+		gh_got=$(sha256sum /tmp/gh.tgz | cut -d" " -f1)
+		if [ -z "$gh_want" ] || [ "$gh_want" != "$gh_got" ]; then
+			say "github cli tarball failed its checksum, not installing"
+			rm -f /tmp/gh.tgz /tmp/gh.sums
+			return 1
+		fi
+	else
+		say "cannot verify the github cli tarball checksum in this image"
+	fi
 	tar -xzf /tmp/gh.tgz -C /tmp || return 1
 	cp "/tmp/${gh_dir}/bin/gh" /usr/local/bin/gh || return 1
 	chmod 0755 /usr/local/bin/gh
-	rm -rf /tmp/gh.tgz "/tmp/${gh_dir}"
+	rm -rf /tmp/gh.tgz /tmp/gh.sums "/tmp/${gh_dir}"
 	command -v gh >/dev/null 2>&1
 }
 

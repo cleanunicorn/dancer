@@ -220,7 +220,8 @@ files first — they carry the contract, the concrete packages under them are im
   `gh pr create` and `git push` speak for the operator's account. The token comes from that
   hosts.yml, else `gh auth token` (a login the host keeps in a keyring), else
   `GH_TOKEN`/`GITHUB_TOKEN` in dancer's own environment; a hosts.yml in the container newer than
-  the host's is left alone. Nothing is lent to local (same home) or ssh (someone else's machine),
+  the host's is left alone (only the first source carries an mtime — a bare token is stamped now
+  and re-lent every task). Nothing is lent to local (same home) or ssh (someone else's machine),
   or when the definition's env carries `GH_TOKEN`/`GITHUB_TOKEN`. It lends the host's **git
   identity** with it (`internal/gh/identity.go`): `user.name`/`user.email` from the host's git
   config, else `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, written as the container's global git config — a

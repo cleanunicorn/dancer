@@ -461,9 +461,14 @@ The token is taken from the first of these that has one:
 3. `GH_TOKEN` / `GITHUB_TOKEN` in dancer's own environment
 
 A `hosts.yml` inside the container that is newer than the host's is left
-alone, so a login made in there survives. To give a container an account of
-its own — a bot, a fine-grained token — put one in its env and dancer lends
-none:
+alone, so a login made in there survives — when what dancer lends is the
+host's own `hosts.yml` (source 1), whose mtime says when the host last
+logged in. A token from sources 2 and 3 has no such file behind it and
+counts as current every time, so it is re-lent at every task and a
+`gh auth login` made inside the container does not survive.
+
+To give a container an account of its own — a bot, a fine-grained token —
+put one in its env and dancer lends none:
 
 ```toml
 [definitions.environment.env]

@@ -130,9 +130,20 @@ func TestProvisionScriptInstallsGitHubCLI(t *testing.T) {
 					t.Errorf("script is missing %q", want)
 				}
 			}
-			// A missing gh is a worse container, not a failed build.
+			// A missing gh is a worse container, not a failed build, and
+			// neither is a package manager with no tar to offer it.
 			if !strings.Contains(s, `|| say "github cli unavailable, skipping"`) {
 				t.Error("a failed gh install would fail the whole build")
+			}
+			if !strings.Contains(s, `pm_install tar || say "tar unavailable, skipping"`) {
+				t.Error("a missing tar package would fail the whole build")
+			}
+			// The tarball goes on PATH next to the operator's GitHub token;
+			// it is checked against the release's own checksums.
+			for _, want := range []string{"_checksums.txt", "sha256sum", `"$gh_want" != "$gh_got"`} {
+				if !strings.Contains(s, want) {
+					t.Errorf("the release tarball is not verified: missing %q", want)
+				}
 			}
 		})
 	}

@@ -57,10 +57,15 @@ const noLoginHint = " — the container has no login and the host has none to le
 // there is newer than $1, the host file's mtime as a `touch -t` stamp in
 // UTC. It prints "kept" or "copied". POSIX sh only: it runs in whatever
 // /bin/sh the image has.
+//
+// The scratch files carry $$: a reused container is shared by every task on
+// its thread or definition, and two turns lending at once must not be two
+// writers on one ".credentials.json.tmp".
 const lendScript = `set -e
 d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 f="$d/.credentials.json"
-ref="$d/.dancer-lend-ref"
+ref="$d/.dancer-lend-ref.$$"
+tmp="$f.tmp.$$"
 umask 077
 mkdir -p "$d"
 TZ=UTC touch -t "$1" "$ref"
@@ -69,8 +74,8 @@ if [ -s "$f" ] && [ "$f" -nt "$ref" ]; then
 	echo kept
 	exit 0
 fi
-cat > "$f.tmp"
-mv -f "$f.tmp" "$f"
+cat > "$tmp"
+mv -f "$tmp" "$f"
 TZ=UTC touch -t "$1" "$f"
 rm -f "$ref"
 echo copied

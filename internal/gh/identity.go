@@ -23,9 +23,9 @@ import (
 // environment.
 //
 // It is written once, as the container's global git config, and never
-// overwritten: an identity already set in there was chosen by the operator
-// (a definition's setup command) or by the agent, and dancer's guess does
-// not get to win. That also makes it stable across a reused container,
+// overwritten: an identity git can already answer with in there — in any
+// scope — was chosen by the operator (a definition's setup command) or by
+// the agent, and dancer's guess does not get to win. That also makes it stable across a reused container,
 // whose $HOME is a volume.
 //
 // Nothing is lent when the definition's env sets an identity of its own
@@ -38,9 +38,14 @@ var identityEnv = []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"}
 // identityScript sets the environment's global git identity to $1 (name)
 // and $2 (email) unless it already has one. It prints "set", "kept" or
 // "none". POSIX sh only.
+//
+// The check reads every scope, not just --global: a definition's setup
+// commands run as root, so an identity they left behind is as likely to be
+// in /etc/gitconfig as in the agent user's own config, and dancer's guess
+// does not get to overrule either.
 const identityScript = `set -e
 command -v git >/dev/null 2>&1 || { echo no-git; exit 0; }
-if [ -n "$(git config --global --get user.email 2>/dev/null || true)" ]; then
+if [ -n "$(git config --get user.email 2>/dev/null || true)" ]; then
 	echo kept
 	exit 0
 fi

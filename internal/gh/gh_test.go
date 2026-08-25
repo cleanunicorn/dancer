@@ -143,8 +143,13 @@ func TestLendCopiesHostHostsFile(t *testing.T) {
 	if !fi.ModTime().Equal(hostTime) {
 		t.Errorf("mtime = %v, want the host's %v", fi.ModTime(), hostTime)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".config", "gh", ".dancer-lend-ref")); err == nil {
-		t.Error("reference file left behind")
+	if left, _ := filepath.Glob(filepath.Join(home, ".config", "gh", ".dancer-lend-ref*")); len(left) > 0 {
+		t.Errorf("reference file left behind: %v", left)
+	}
+	// The scratch file is per-process, so two lends into one reused
+	// container are never two writers on the same path.
+	if left, _ := filepath.Glob(filepath.Join(home, ".config", "gh", "hosts.yml.tmp*")); len(left) > 0 {
+		t.Errorf("temporary file left behind: %v", left)
 	}
 	// git has to speak for the same account, or `git push` in the
 	// container asks for a password nobody can type.
@@ -172,6 +177,28 @@ func TestLendKeepsNewerCopy(t *testing.T) {
 	Lend(context.Background(), env, nil)
 	if got, _ := os.ReadFile(inside); !strings.Contains(string(got), "gho_host2") {
 		t.Fatalf("newer host copy not lent: %q", got)
+	}
+}
+
+// A token with no file behind it (`gh auth token`, GH_TOKEN) is stamped
+// with the current time, so it is lent again at every task and a login made
+// inside the container does not survive it. That is what SETUP.md promises;
+// the keep-newer rule only holds for the host's own hosts.yml.
+func TestLendReLendsASynthesizedToken(t *testing.T) {
+	hostConfig(t)
+	env, home, _ := newShEnv(t, environment.KindDocker, nil)
+	t.Setenv("GH_TOKEN", "gho_env")
+	inside := filepath.Join(home, ".config", "gh")
+	writeHosts(t, inside, "github.com:\n    oauth_token: gho_inside\n", time.Now().Add(-time.Minute))
+
+	Lend(context.Background(), env, nil)
+
+	got, err := os.ReadFile(filepath.Join(inside, "hosts.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "gho_env") {
+		t.Fatalf("hosts.yml = %q, want the synthesized token lent again", got)
 	}
 }
 
