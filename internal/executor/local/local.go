@@ -27,6 +27,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/agent"
 	"github.com/cleanunicorn/dancer/internal/environment"
 	"github.com/cleanunicorn/dancer/internal/executor"
+	"github.com/cleanunicorn/dancer/internal/gh"
 )
 
 // ErrNotRunning is returned by Send/Cancel when the task has no live process.
@@ -100,6 +101,9 @@ func (e *Executor) Run(ctx context.Context, t executor.Task, sink executor.Sink)
 		return fmt.Errorf("executor: start environment: %w", err)
 	}
 	defer env.Stop(context.Background())
+	// A container has no GitHub login of its own; lend the host's before
+	// the agent starts, so `gh` and `git push` work in it (internal/gh).
+	gh.Lend(ctx, env, spec.Env)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

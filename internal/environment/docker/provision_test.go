@@ -110,6 +110,34 @@ func TestProvisionScriptContents(t *testing.T) {
 	}
 }
 
+// TestProvisionScriptInstallsGitHubCLI: `gh` is part of every provisioned
+// image, whatever was asked for, because dancer lends it a login at run
+// time (internal/gh) and an agent working on a repo needs it.
+func TestProvisionScriptInstallsGitHubCLI(t *testing.T) {
+	for name, p := range map[string]environment.Provision{
+		"agents only": {Agents: []string{"claude"}},
+		"nothing":     {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := provisionScript(p, 1000, 1000)
+			for _, want := range []string{
+				`if command -v gh >/dev/null 2>&1; then`,
+				"gh_from_release()",
+				"github-cli",
+				"https://github.com/cli/cli/releases/latest",
+			} {
+				if !strings.Contains(s, want) {
+					t.Errorf("script is missing %q", want)
+				}
+			}
+			// A missing gh is a worse container, not a failed build.
+			if !strings.Contains(s, `|| say "github cli unavailable, skipping"`) {
+				t.Error("a failed gh install would fail the whole build")
+			}
+		})
+	}
+}
+
 // TestProvisionScriptQuotesPackages keeps a package name from turning into a
 // shell command.
 func TestProvisionScriptQuotesPackages(t *testing.T) {

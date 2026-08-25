@@ -12,6 +12,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/config"
 	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dancer/internal/gh"
 	slackt "github.com/cleanunicorn/dancer/internal/transport/slack"
 )
 
@@ -114,6 +115,7 @@ func runDoctor(cfgPath string) error {
 	}
 	if needDocker {
 		add(checkDocker())
+		add(checkGitHub())
 	}
 	_ = needSSH
 
@@ -187,6 +189,21 @@ func checkDocker() check {
 		return check{name: "docker", ok: false, info: "docker daemon not reachable: " + err.Error()}
 	}
 	return check{name: "docker", ok: true, info: "server " + strings.TrimSpace(string(out))}
+}
+
+// checkGitHub reports the GitHub login dancer would lend to a container
+// (internal/gh) and where it comes from. Nothing here is fatal — an agent
+// that never touches GitHub does not need one — so a host with no login is
+// a note rather than a failed check.
+func checkGitHub() check {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	login, err := gh.HostLogin(ctx)
+	if err != nil {
+		return check{name: "github", ok: true, note: true, info: "no login to lend — `gh` in a container stays logged out; " +
+			"run `gh auth login` on this host, or set GH_TOKEN in the definition's environment env"}
+	}
+	return check{name: "github", ok: true, info: "lending the login from " + login.Source + " to containers"}
 }
 
 func checkSSH(host, key, claudeBin string) check {

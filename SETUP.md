@@ -445,12 +445,42 @@ CLAUDE_CODE_OAUTH_TOKEN = "…"     # from `claude setup-token` on a logged-in m
 When neither exists the turn ends with `Not logged in`, and dancer says so
 in the thread along with what to do about it.
 
+### GitHub
+
+The container gets your GitHub login the same way. Every provisioned image
+carries the `gh` CLI, and before a task starts dancer writes the host's
+`~/.config/gh/hosts.yml` into the container's gh config dir and runs
+`gh auth setup-git` there — so `gh pr create`, `gh issue list` and
+`git push` all work as you, with no token in the config file.
+
+The token is taken from the first of these that has one:
+
+1. the host's `hosts.yml` (`$GH_CONFIG_DIR`, else `~/.config/gh`), copied
+   as it is, enterprise hosts included
+2. `gh auth token` on the host, for a login `gh` keeps in the system keyring
+3. `GH_TOKEN` / `GITHUB_TOKEN` in dancer's own environment
+
+A `hosts.yml` inside the container that is newer than the host's is left
+alone, so a login made in there survives. To give a container its own
+identity instead — a bot account, a fine-grained token — put one in its env
+and dancer lends nothing:
+
+```toml
+[definitions.environment.env]
+GH_TOKEN = "github_pat_…"
+```
+
+With no login anywhere the task still runs; only GitHub is out of reach,
+and `gh` says so itself. `dancer doctor` prints what would be lent.
+
 ### Provisioning
 
 With `provision = "auto"` (the default) dancer installs, as root, into a
 throwaway container started from `image`:
 
-- `ca-certificates`, `curl`, `git`, and `ripgrep` if the distro has it
+- `ca-certificates`, `curl`, `git`, `tar`, and `ripgrep` if the distro has it
+- the GitHub CLI (`gh`), from the distro if it packages it, else the
+  official release tarball
 - Node 18+ if the image has none
 - the agent CLI for the definition's `kind` — `claude` or `codex`
 - a user with your uid/gid and a writable `$HOME` at `/home/dancer`, with
@@ -473,7 +503,8 @@ setup    = ["pip install --break-system-packages ruff"]   # extra root commands,
 
 An image that already carries the agent CLI and git is used **exactly as it
 is** — dancer checks before it builds anything, so a purpose-built image
-never gets rewritten. `provision = "none"` turns the whole thing off.
+never gets rewritten (put `gh` in it yourself if you want the GitHub login
+lent into it). `provision = "none"` turns the whole thing off.
 
 The first task on a cold image spends about a minute building; every later
 task starts instantly. Watch for `docker: provisioning image` in the log.

@@ -27,7 +27,7 @@ const homeSkeleton = "/opt/dancer-home"
 // provisionVersion changes whenever provisionScript does; it is part of the
 // derived image tag, so an upgraded dancer rebuilds instead of reusing an
 // image built by the old script.
-const provisionVersion = "2"
+const provisionVersion = "3"
 
 // agentInstall maps an agent kind to the command that installs its CLI.
 var agentInstall = map[string]string{
@@ -235,10 +235,49 @@ pm_install() {
 
 pm_refresh
 say "installing base tools"
-pm_install ca-certificates curl git sudo
+pm_install ca-certificates curl git tar sudo
 # Nice to have for agents that grep; not worth failing the build over.
 pm_install ripgrep || say "ripgrep unavailable, skipping"
 `, uid, gid, ProvisionedHome)
+
+	// The GitHub CLI is part of the base kit rather than something to ask
+	// for: an agent working on a repo opens pull requests, reads issues and
+	// pushes branches, and dancer hands the container the host's GitHub
+	// login at run time so it can (internal/gh). Distros package it under
+	// two names and not in every release, so the official release tarball
+	// is the fallback — a static Go binary, which is why it also works on
+	// musl. A container without it is worse, not broken, so a failure here
+	// only warns.
+	b.WriteString(`
+gh_from_release() {
+	command -v tar >/dev/null 2>&1 || return 1
+	case "$(uname -m)" in
+		x86_64|amd64)  gh_arch=amd64 ;;
+		aarch64|arm64) gh_arch=arm64 ;;
+		*) return 1 ;;
+	esac
+	gh_ver=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/cli/cli/releases/latest 2>/dev/null | sed -n 's#.*/tag/v##p')
+	[ -n "$gh_ver" ] || return 1
+	gh_dir="gh_${gh_ver}_linux_${gh_arch}"
+	curl -fsSL "https://github.com/cli/cli/releases/download/v${gh_ver}/${gh_dir}.tar.gz" -o /tmp/gh.tgz || return 1
+	tar -xzf /tmp/gh.tgz -C /tmp || return 1
+	cp "/tmp/${gh_dir}/bin/gh" /usr/local/bin/gh || return 1
+	chmod 0755 /usr/local/bin/gh
+	rm -rf /tmp/gh.tgz "/tmp/${gh_dir}"
+	command -v gh >/dev/null 2>&1
+}
+
+if command -v gh >/dev/null 2>&1; then
+	say "github cli already present"
+else
+	say "installing github cli"
+	case "$pm" in
+		apk|pacman) pm_install github-cli >/dev/null 2>&1 || true ;;
+		*)          pm_install gh >/dev/null 2>&1 || true ;;
+	esac
+	command -v gh >/dev/null 2>&1 || gh_from_release || say "github cli unavailable, skipping"
+fi
+`)
 
 	if len(p.Agents) > 0 {
 		b.WriteString(`

@@ -3,13 +3,9 @@ package claude
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
@@ -128,44 +124,12 @@ func (a *Agent) lendLogin(ctx context.Context, env environment.Environment, def 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := lend(ctx, env, data, fi.ModTime())
+	stamp := fi.ModTime().UTC().Format("200601021504.05")
+	out, err := environment.Run(ctx, env, data, "sh", "-c", lendScript, "sh", stamp)
 	if err != nil {
 		slog.Warn("claude: could not lend host login", "err", err)
 		return ""
 	}
 	slog.Debug("claude: lent host login", "result", out)
 	return ""
-}
-
-// lend runs lendScript in env with the credentials on stdin and returns
-// what it printed.
-func lend(ctx context.Context, env environment.Environment, creds []byte, mtime time.Time) (string, error) {
-	stamp := mtime.UTC().Format("200601021504.05")
-	proc, err := env.Exec(ctx, "sh", "-c", lendScript, "sh", stamp)
-	if err != nil {
-		return "", err
-	}
-	var stdout, stderr bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = io.Copy(&stdout, proc.Stdout())
-	}()
-	go func() { _, _ = io.Copy(&stderr, proc.Stderr()) }()
-	if _, err := proc.Stdin().Write(creds); err != nil {
-		proc.Kill()
-		return "", fmt.Errorf("write credentials: %w", err)
-	}
-	if err := proc.Stdin().Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-		return "", fmt.Errorf("close stdin: %w", err)
-	}
-	code, err := proc.Wait()
-	<-done
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("exit %d: %s", code, strings.TrimSpace(stderr.String()))
-	}
-	return strings.TrimSpace(stdout.String()), nil
 }
