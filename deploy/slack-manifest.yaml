@@ -32,9 +32,11 @@ oauth_config:
       - im:history
       - im:write
       - users:read
-      # Optional: lets the web UI show Slack channel names instead of ids.
+      # Optional: lets the web UI show Slack channel names instead of ids
+      # (conversations.info; im:read for the bot's DMs, shown as "DM").
       - channels:read
       - groups:read
+      - im:read
 settings:
   event_subscriptions:
     bot_events:

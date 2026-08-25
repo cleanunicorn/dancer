@@ -60,7 +60,7 @@ human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE
 `QUED`, `CNCL`, `CLSD`. Threads hosted in Slack are on blue paper, the web's own on buff.
 
 - **The rack**, down the left edge, lists channels per transport (Slack channels by name
-  when the app has `channels:read`/`groups:read`, else by id). Strips that need you are
+  when the app has `channels:read`/`groups:read` (`im:read` for DMs), else by id). Strips that need you are
   moved to a *needs you* bay at the top, cocked out of the rack and lit; the tab title
   shows the same, plus an unread count, and a browser notification fires when a prompt
   needs you, if you allowed them.
@@ -131,7 +131,7 @@ carries the look: HeroUI's theme variables are overridden in `ui/src/styles.css`
   spaces or tabs.
 - **Login fails** — `bin/dancer user list` shows the accounts; `user passwd` resets one.
   Make sure dancer and the `user` command use the same database (`$DANCER_CONFIG`).
-- **Slack channels show as ids** — add `channels:read` and `groups:read` to the Slack app
+- **Slack channels show as ids** — add `channels:read`, `groups:read` and `im:read` to the Slack app
   and reinstall it.
 - **No browser notifications** — the page asks once; check the site's notification
   permission in the browser.
