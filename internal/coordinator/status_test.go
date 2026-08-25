@@ -21,7 +21,8 @@ import (
 // TestLiveStatus: while a task runs the thread gets heartbeats (a keyed
 // status line) and its root message carries ⏳; a permission prompt
 // swaps that for ✋ and the status line leaves; the answer brings both
-// back; the end of the turn clears the mark.
+// back; the end of the turn swaps the mark for 📬 — the thread now waits
+// for its next message — and a follow-up brings ⏳ back.
 func TestLiveStatus(t *testing.T) {
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -67,7 +68,7 @@ func TestLiveStatus(t *testing.T) {
 	if !strings.Contains(done.Text, "tool call") && !strings.Contains(done.Text, "s ·") {
 		t.Errorf("closing line carries no duration: %q", done.Text)
 	}
-	waitReactions(t, tr, th)
+	waitReactions(t, tr, th, answeredReaction)
 
 	// A heartbeat is not an event worth logging.
 	var n int
@@ -79,6 +80,15 @@ func TestLiveStatus(t *testing.T) {
 	})
 	if n > 2 {
 		t.Errorf("%d status redraws were written to the event log", n)
+	}
+
+	// A follow-up takes the 📬 down for ⏳ (the fake answers too fast to
+	// catch it up) and the end of that turn puts it back.
+	tr.say(th, "and again")
+	tr.waitForN(t, th, "✅ done", 2)
+	waitReactions(t, tr, th, answeredReaction)
+	if !tr.unreacted(th, answeredReaction) {
+		t.Errorf("📬 stayed on while the follow-up ran")
 	}
 }
 

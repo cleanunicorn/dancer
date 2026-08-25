@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,13 @@ type fakeTransport struct {
 	forgotten  []transport.ThreadID
 	followed   []transport.ThreadID
 	reacted    map[transport.ThreadID][]string
+	removed    map[transport.ThreadID][]string // every Unreact, whether the reaction was there
+}
+
+func (f *fakeTransport) unreacted(th transport.ThreadID, emoji string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.removed[th], emoji)
 }
 
 func (f *fakeTransport) Name() string { return f.name }
@@ -68,10 +76,15 @@ func (f *fakeTransport) React(ctx context.Context, th transport.ThreadID, emoji 
 	return nil
 }
 
-// Unreact implements transport.Reactor.
+// Unreact implements transport.Reactor. Every removal is recorded, present
+// or not: like Slack, a reaction from a previous process is not in reacted.
 func (f *fakeTransport) Unreact(ctx context.Context, th transport.ThreadID, emoji string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.removed == nil {
+		f.removed = map[transport.ThreadID][]string{}
+	}
+	f.removed[th] = append(f.removed[th], emoji)
 	cur := f.reacted[th]
 	for i, e := range cur {
 		if e == emoji {

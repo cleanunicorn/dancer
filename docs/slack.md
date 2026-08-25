@@ -59,8 +59,11 @@ transport.
 - **Live status line** — the last message in the thread: `⏳ thinking · 4s`,
   `🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls`, edited in place and moved below
   each new message. It is the only message dancer ever deletes.
-- **Reactions on your message** — ⏳ while the agent works, ✋ while it waits for you,
-  ✅ once the thread is closed (`reactions:write`).
+- **Reactions on your message** — one at a time, and never none: ⏳ while the agent
+  works, ✋ while it waits for your decision, 📬 once it has answered and the thread
+  waits for your next message, ❌ when the task failed, ✅ once you close the thread
+  (`reactions:write`). Every task thread is either being worked on, waiting on you, or
+  closed — scan a channel for 📬, ❌ and ✋ to find the ones that need you.
 - **Mentions** — the lines that need a human (prompts, the closing line, errors,
   "dancer is back" notices) tag whoever started the task, so you can mute the thread
   and still be told when to look. The agent's own text never tags anyone.
@@ -97,7 +100,7 @@ add it under **OAuth & Permissions** and reinstall the app.
 |-------|----------|
 | `app_mentions:read`, `channels:history`, `groups:history`, `im:history` | reading mentions, thread replies and DMs |
 | `chat:write`, `im:write` | posting, editing and deleting dancer's own messages |
-| `reactions:write` | ⏳ / ✋ / ✅ on the root message |
+| `reactions:write` | ⏳ / ✋ / 📬 / ❌ / ✅ on the root message |
 | `files:read`, `files:write` | attachments to and from the agent |
 | `users:read` | showing who wrote a message, on other transports |
 | `assistant:write` | the composer status line (optional) |

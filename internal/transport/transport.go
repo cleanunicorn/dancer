@@ -170,8 +170,9 @@ type ThreadCloser interface {
 // Reactor is implemented by transports that can mark a conversation with
 // an emoji (Slack). It is best-effort: a transport lacking the permission
 // returns an error the caller only logs. Unreact takes a mark back; the
-// coordinator uses the pair to show a task's state on the thread's root
-// message (working, waiting for a decision).
+// coordinator uses the pair to show where a thread stands on its root
+// message (working, waiting for a decision, answered and waiting for the
+// next message, failed, closed) — one mark at a time.
 type Reactor interface {
 	React(ctx context.Context, thread ThreadID, emoji string) error
 	Unreact(ctx context.Context, thread ThreadID, emoji string) error

@@ -81,7 +81,14 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 		c.mu.Lock()
 		delete(c.pending, base)
 		c.mu.Unlock()
-		if d.Choice == "" || ctx.Err() != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if d.Choice == "" {
+			// Expired: the ✋ comes off, unless the thread moved on to a turn of its own.
+			if _, busy := c.lookup(t.Thread); !busy {
+				c.mark(ctx, t.Transport, t.Thread, store.StatusIdle)
+			}
 			return
 		}
 		c.append(ctx, t.ID, t.Thread, "decision", d)
@@ -119,6 +126,7 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 		case "drop":
 			st.Status = store.StatusCancelled
 			_ = c.Store.PutTask(ctx, st)
+			c.mark(ctx, st.Transport, st.Thread, st.Status)
 			c.notice(ctx, st, "⏹️ dropped — "+pickUpHint(st))
 			return
 		default:
@@ -127,6 +135,7 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 		if st.Session == "" {
 			// Never got a session: there is nothing to resume, and the
 			// question's own hint said so. Start it again by hand.
+			c.mark(ctx, st.Transport, st.Thread, st.Status)
 			c.notice(ctx, st, "⏹️ this task never started — "+pickUpHint(st))
 			return
 		}

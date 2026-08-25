@@ -157,6 +157,17 @@ func (c *Coordinator) observersBesides(name string) []transport.Transport {
 	return out
 }
 
+// latestByThread picks each thread's most recently updated task.
+func latestByThread(tasks []store.TaskState) map[transport.ThreadID]store.TaskState {
+	latest := map[transport.ThreadID]store.TaskState{}
+	for _, t := range tasks {
+		if cur, ok := latest[t.Thread]; !ok || t.UpdatedAt.After(cur.UpdatedAt) {
+			latest[t.Thread] = t
+		}
+	}
+	return latest
+}
+
 // Threads implements transport.History: one entry per conversation that
 // ever had a task, newest first.
 func (c *Coordinator) Threads(ctx context.Context) ([]transport.ThreadInfo, error) {
@@ -164,12 +175,7 @@ func (c *Coordinator) Threads(ctx context.Context) ([]transport.ThreadInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	latest := map[transport.ThreadID]store.TaskState{}
-	for _, t := range tasks {
-		if cur, ok := latest[t.Thread]; !ok || t.UpdatedAt.After(cur.UpdatedAt) {
-			latest[t.Thread] = t
-		}
-	}
+	latest := latestByThread(tasks)
 	out := make([]transport.ThreadInfo, 0, len(latest))
 	for th, t := range latest {
 		model := t.Model

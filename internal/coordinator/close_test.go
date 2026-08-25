@@ -52,9 +52,7 @@ func TestCloseThread(t *testing.T) {
 	if !tr.forgot(th) {
 		t.Fatal("transport was not told to forget the thread")
 	}
-	if got := tr.reactions(th); len(got) != 1 || got[0] != closedReaction {
-		t.Fatalf("reactions on %s = %v", th, got)
-	}
+	waitReactions(t, tr, th, closedReaction)
 	closed, err := st.ClosedThreads(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +129,12 @@ func TestCloseThread(t *testing.T) {
 	tr2.waitFor(t, th, "echo:actually, one more thing")
 	if closed, err := st2.ClosedThreads(ctx2); err != nil || len(closed) != 0 {
 		t.Fatalf("closed threads after reopen = %v (%v)", closed, err)
+	}
+	// The ✅ the previous process left is taken back and the thread waits
+	// on a human again once the turn is over.
+	waitReactions(t, tr2, th, answeredReaction)
+	if !tr2.unreacted(th, closedReaction) {
+		t.Fatal("✅ was not taken off the reopened thread")
 	}
 }
 
