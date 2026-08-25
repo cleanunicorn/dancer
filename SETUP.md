@@ -104,8 +104,12 @@ the mention.
 The last message in a task thread is a live status line — `⏳ thinking · 4s`,
 `🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls` — edited in place every
 few seconds and moved below each new message, and your message carries ⏳
-(✋ while the agent waits for your answer). Both go when the turn ends, and the
-closing line says how long it took, how many tools it used and what it cost.
+(✋ while the agent waits for your answer). When the turn ends the status line
+goes, the closing line says how long it took, how many tools it used and what
+it cost, and the mark becomes 📬: the agent has answered and the thread waits
+for your next message — or for `close`. A failed task leaves ❌ instead. A
+thread is never without a mark, so a channel reads at a glance: ⏳ and ✋ are
+in progress, 📬 and ❌ are yours to answer or close, ✅ is done with.
 
 The lines that need you — a permission or question prompt, the closing line,
 an error, a "dancer is back" notice that asks you to pick the task up —
@@ -122,7 +126,7 @@ created the app before it was added, either add those to the app and
 reinstall, or leave it out — dancer notices the first failure, logs one line
 and keeps the in-thread status line.
 
-The ⏳/✋ marks need the `reactions:write` bot scope.
+The ⏳/✋/📬/❌ marks need the `reactions:write` bot scope.
 
 ## Closing a thread
 

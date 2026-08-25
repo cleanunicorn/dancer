@@ -132,6 +132,12 @@ func TestCloseThread(t *testing.T) {
 	if closed, err := st2.ClosedThreads(ctx2); err != nil || len(closed) != 0 {
 		t.Fatalf("closed threads after reopen = %v (%v)", closed, err)
 	}
+	// The ✅ the previous process left is taken back and the thread waits
+	// on a human again once the turn is over.
+	waitReactions(t, tr2, th, answeredReaction)
+	if !tr2.unreacted(th, closedReaction) {
+		t.Fatalf("✅ was not taken off the reopened thread; removed: %v", tr2.removed[th])
+	}
 }
 
 // TestReopenRightAfterClose: the cancelled task must let go of the thread

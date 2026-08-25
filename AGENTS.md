@@ -151,7 +151,9 @@ files first — they carry the contract, the concrete packages under them are im
   permission/question decision relay (`pending`/`askText` maps keyed by prompt id), guided wizards
   (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), restart recovery. It is also
   the clock: every `Heartbeat` (10s) while a turn runs it broadcasts `EventHeartbeat`, and on a
-  `transport.Reactor` it marks the thread's root message ⏳ (working) / ✋ (waiting for a human).
+  `transport.Reactor` it marks the thread's root message ⏳ (working) / ✋ (waiting for a decision) /
+  📬 (answered, waiting for the next message) / ❌ (failed) / ✅ (closed) — one mark, always
+  (`mark`, `reactionFor`; `seedMarks` remembers the previous process's marks across a restart).
 - **`executor`** (local) — one worker per task: provisions the environment, starts the agent,
   keeps a finished turn's process alive for `idle_timeout` so follow-ups are instant, then resumes
   the session with `--resume`.

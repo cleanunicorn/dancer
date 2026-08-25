@@ -21,7 +21,10 @@ restarts — a restarted dancer resumes the tasks it cut short by itself.
 While the agent works, the last message in the thread is a live status line
 (`🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls`) that is edited in place
 every few seconds, and your message carries ⏳ — ✋ while the agent waits for
-your answer. Both go away when the turn ends. The lines that need you — a
+your answer. When the turn ends the status line goes and the mark becomes 📬:
+the thread waits for your next message, or for `close`, which turns it ✅. A
+thread always carries one mark, so a channel shows which ones need you. The
+lines that need you — a
 permission or question prompt, the closing line, an error — mention whoever
 started the task, so you can mute the thread and still be told when to look.
 The closing line ends with the charge on an API key; on a Claude subscription
