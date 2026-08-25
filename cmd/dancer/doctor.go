@@ -12,6 +12,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/config"
 	"github.com/cleanunicorn/dancer/internal/decider"
 	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dancer/internal/gh"
 	slackt "github.com/cleanunicorn/dancer/internal/transport/slack"
 )
 
@@ -114,6 +115,7 @@ func runDoctor(cfgPath string) error {
 	}
 	if needDocker {
 		add(checkDocker())
+		add(checkGitHub())
 	}
 	_ = needSSH
 
@@ -187,6 +189,28 @@ func checkDocker() check {
 		return check{name: "docker", ok: false, info: "docker daemon not reachable: " + err.Error()}
 	}
 	return check{name: "docker", ok: true, info: "server " + strings.TrimSpace(string(out))}
+}
+
+// checkGitHub reports what dancer would lend a container to work on GitHub
+// (internal/gh): the login, and the identity its commits would carry.
+// Nothing here is fatal — an agent that never touches GitHub needs neither
+// — so a gap is a note rather than a failed check.
+func checkGitHub() check {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	login, loginErr := gh.HostLogin(ctx)
+	id, idErr := gh.HostIdentity(ctx)
+
+	who := "no git identity to lend — set user.email on this host, or `git commit` in a container stops"
+	if idErr == nil {
+		who = "committing as " + id.String()
+	}
+	if loginErr != nil {
+		return check{name: "github", ok: true, note: true, info: "no login to lend — `gh` in a container stays logged out; " +
+			"run `gh auth login` on this host, or set GH_TOKEN in the definition's environment env; " + who}
+	}
+	return check{name: "github", ok: true, note: idErr != nil,
+		info: "lending the login from " + login.Source + " to containers, " + who}
 }
 
 func checkSSH(host, key, claudeBin string) check {

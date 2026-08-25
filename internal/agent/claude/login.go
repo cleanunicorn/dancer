@@ -3,13 +3,9 @@ package claude
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cleanunicorn/dancer/internal/agent"
@@ -61,10 +57,15 @@ const noLoginHint = " — the container has no login and the host has none to le
 // there is newer than $1, the host file's mtime as a `touch -t` stamp in
 // UTC. It prints "kept" or "copied". POSIX sh only: it runs in whatever
 // /bin/sh the image has.
+//
+// The scratch files carry $$: a reused container is shared by every task on
+// its thread or definition, and two turns lending at once must not be two
+// writers on one ".credentials.json.tmp".
 const lendScript = `set -e
 d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 f="$d/.credentials.json"
-ref="$d/.dancer-lend-ref"
+ref="$d/.dancer-lend-ref.$$"
+tmp="$f.tmp.$$"
 umask 077
 mkdir -p "$d"
 TZ=UTC touch -t "$1" "$ref"
@@ -73,8 +74,8 @@ if [ -s "$f" ] && [ "$f" -nt "$ref" ]; then
 	echo kept
 	exit 0
 fi
-cat > "$f.tmp"
-mv -f "$f.tmp" "$f"
+cat > "$tmp"
+mv -f "$tmp" "$f"
 TZ=UTC touch -t "$1" "$f"
 rm -f "$ref"
 echo copied
@@ -128,44 +129,12 @@ func (a *Agent) lendLogin(ctx context.Context, env environment.Environment, def 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := lend(ctx, env, data, fi.ModTime())
+	stamp := fi.ModTime().UTC().Format("200601021504.05")
+	out, err := environment.Run(ctx, env, data, "sh", "-c", lendScript, "sh", stamp)
 	if err != nil {
 		slog.Warn("claude: could not lend host login", "err", err)
 		return ""
 	}
 	slog.Debug("claude: lent host login", "result", out)
 	return ""
-}
-
-// lend runs lendScript in env with the credentials on stdin and returns
-// what it printed.
-func lend(ctx context.Context, env environment.Environment, creds []byte, mtime time.Time) (string, error) {
-	stamp := mtime.UTC().Format("200601021504.05")
-	proc, err := env.Exec(ctx, "sh", "-c", lendScript, "sh", stamp)
-	if err != nil {
-		return "", err
-	}
-	var stdout, stderr bytes.Buffer
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = io.Copy(&stdout, proc.Stdout())
-	}()
-	go func() { _, _ = io.Copy(&stderr, proc.Stderr()) }()
-	if _, err := proc.Stdin().Write(creds); err != nil {
-		proc.Kill()
-		return "", fmt.Errorf("write credentials: %w", err)
-	}
-	if err := proc.Stdin().Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-		return "", fmt.Errorf("close stdin: %w", err)
-	}
-	code, err := proc.Wait()
-	<-done
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("exit %d: %s", code, strings.TrimSpace(stderr.String()))
-	}
-	return strings.TrimSpace(stdout.String()), nil
 }

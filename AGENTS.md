@@ -162,8 +162,8 @@ files first — they carry the contract, the concrete packages under them are im
 - **`environment`** (local, docker, ssh) — "I can exec a command and stream its stdio", nothing more.
   Docker and SSH shell out to the `docker` and `ssh` CLIs deliberately (no SDKs; the user's ssh
   config/agent and docker context just work). Docker also *provisions*: `Spec.Provision` turns a
-  plain base image into an agent-ready one (git, Node, the agent CLI, a user with the host uid and
-  a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
+  plain base image into an agent-ready one (git, the GitHub CLI, Node, the agent CLI, a user with
+  the host uid and a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
   `Spec.Reuse`/`ReuseKey` keep one container per thread or definition with `$HOME` on a volume.
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
@@ -214,6 +214,22 @@ files first — they carry the contract, the concrete packages under them are im
   (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, …), and never to local (same home) or ssh
   (someone else's machine). Without a host login the CLI's `Not logged in` result is annotated
   with what to do. `TestLiveDockerLogin` (`DANCER_LIVE=1`) proves it in a provisioned `ubuntu:24.04`.
+- **A container borrows the host's GitHub login the same way** (`internal/gh`). Provisioning puts
+  `gh` in every derived image, and before a task starts the executor writes the host's
+  `~/.config/gh/hosts.yml` into the container's gh config dir and runs `gh auth setup-git`, so both
+  `gh pr create` and `git push` speak for the operator's account. The token comes from that
+  hosts.yml, else `gh auth token` (a login the host keeps in a keyring), else
+  `GH_TOKEN`/`GITHUB_TOKEN` in dancer's own environment; a hosts.yml in the container newer than
+  the host's is left alone (only the first source carries an mtime — a bare token is stamped now
+  and re-lent every task). Nothing is lent to local (same home) or ssh (someone else's machine),
+  or when the definition's env carries `GH_TOKEN`/`GITHUB_TOKEN`. It lends the host's **git
+  identity** with it (`internal/gh/identity.go`): `user.name`/`user.email` from the host's git
+  config, else `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, written as the container's global git config — a
+  fresh container has no committer either, and `git commit` there stops before the token is ever
+  used. The identity is lent even when the login is the definition's own, and never overwrites one
+  already in the container (`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` in the definition's env opts
+  out). Nothing here can fail a task: without a login the agent meets `gh`'s own "please run gh
+  auth login", and `dancer doctor` says what would be lent and who a container would commit as.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

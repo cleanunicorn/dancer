@@ -331,7 +331,7 @@ func TestProvisionRealImage(t *testing.T) {
 	if e.Home() != ProvisionedHome {
 		t.Fatalf("home = %q, want %q", e.Home(), ProvisionedHome)
 	}
-	p, err := e.Exec(ctx, "sh", "-c", `command -v claude && command -v git && touch "$HOME/writable" && echo ok`)
+	p, err := e.Exec(ctx, "sh", "-c", `command -v claude && command -v git && command -v gh && touch "$HOME/writable" && echo ok`)
 	if err != nil {
 		t.Fatal(err)
 	}

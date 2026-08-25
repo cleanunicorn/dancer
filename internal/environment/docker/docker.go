@@ -8,11 +8,11 @@
 // Two things make a plain base image usable:
 //
 //   - Provisioning (Spec.Provision). Given `ubuntu:24.04`, dancer installs
-//     git, curl, Node and the agent CLIs, creates a user matching the host
-//     uid/gid with a writable $HOME, and commits the result as a derived
-//     image tagged by a hash of the request. The build happens once; every
-//     later task starts from the cached tag. An image that already carries
-//     the agent CLI is left untouched.
+//     git, curl, the GitHub CLI, Node and the agent CLIs, creates a user
+//     matching the host uid/gid with a writable $HOME, and commits the
+//     result as a derived image tagged by a hash of the request. The build
+//     happens once; every later task starts from the cached tag. An image
+//     that already carries the agent CLI is left untouched.
 //
 //   - Reuse (Spec.Reuse / Spec.ReuseKey). A container can outlive its task
 //     and be shared by every task with the same key — one per thread, say.
