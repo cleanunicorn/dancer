@@ -12,11 +12,14 @@
 // CloseThread) is not re-seeded on the transport, not resumed on a restart
 // and not spoken to, until a human brings work back to it.
 //
-// And it keeps humans told that a task is alive: every Heartbeat while a
-// turn runs it broadcasts surface.EventHeartbeat (the chat surface's
-// status line lives on it), and on a transport that can react it marks
-// the thread's root message ⏳ while the agent works and ✋ while the
-// agent waits for an answer, clearing the mark when the turn ends.
+// And it keeps humans told where every thread stands: every Heartbeat
+// while a turn runs it broadcasts surface.EventHeartbeat (the chat
+// surface's status line lives on it), and on a transport that can react it
+// keeps one mark on the thread's root message — ⏳ while the agent works,
+// ✋ while it waits for a decision, 📬 once it has answered and the thread
+// waits for its next message, ❌ when the task failed, ✅ once the thread
+// is closed. A task thread is never bare: it is being worked on, waiting
+// on a human, or closed (see mark).
 package coordinator
 
 import (
@@ -124,6 +127,7 @@ type Coordinator struct {
 	closed  map[transport.ThreadID]bool               // threads a human ended; projection of the store
 	sinks   map[executor.TaskID]*taskSink             // live tasks, for follow-up heartbeats
 	marks   map[transport.ThreadID]string             // reaction currently on a thread's root message
+	markMu  map[transport.ThreadID]*sync.Mutex        // serializes a thread's mark swap (see mark)
 	outMu   map[transport.ThreadID]*sync.Mutex        // serializes render+send per thread (keyed messages need order)
 	hosts   map[transport.ThreadID]string             // transport hosting a thread, once known (see threads.go)
 	titles  map[transport.ThreadID]string             // first human line of a thread, once read
@@ -145,6 +149,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		closed:     map[transport.ThreadID]bool{},
 		sinks:      map[executor.TaskID]*taskSink{},
 		marks:      map[transport.ThreadID]string{},
+		markMu:     map[transport.ThreadID]*sync.Mutex{},
 		outMu:      map[transport.ThreadID]*sync.Mutex{},
 		hosts:      map[transport.ThreadID]string{},
 		titles:     map[transport.ThreadID]string{},
@@ -163,6 +168,9 @@ func (c *Coordinator) Run(ctx context.Context) error {
 		}
 	}
 	if err := c.loadClosed(ctx); err != nil {
+		return err
+	}
+	if err := c.seedMarks(ctx); err != nil {
 		return err
 	}
 	if err := c.recover(ctx); err != nil {
@@ -235,15 +243,13 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 }
 
 // seedThreads tells thread-tracking transports about every stored task
-// thread, so replies in old threads are still forwarded after a restart,
-// and records the mark each thread is carrying from before it.
+// thread, so replies in old threads are still forwarded after a restart.
 func (c *Coordinator) seedThreads(ctx context.Context) {
 	tasks, err := c.Store.ListTasks(ctx, "")
 	if err != nil {
 		c.Log.Error("seed threads", "err", err)
 		return
 	}
-	c.seedMarks(tasks)
 	n := 0
 	for _, t := range tasks {
 		if c.threadClosed(t.Thread) {
@@ -310,7 +316,6 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				c.Log.Warn("not resuming task: its transport is not configured", "task", t.ID, "thread", t.Thread, "transport", t.Transport)
 				continue
 			}
-			c.unmark(ctx, t.Transport, t.Thread) // a mark the previous process left
 			v := decider.Verdict{Action: actionWait}
 			if c.autoResumable(t) {
 				// The rules say this one may continue; the decider chooses
@@ -339,24 +344,31 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				return err
 			}
 			c.Log.Info("recovered task", "task", t.ID, "status", t.Status, "action", v.Action, "resumes", t.Resumes)
-			tt := t
-			if v.Action != actionContinue {
-				c.mark(ctx, tt.Transport, tt.Thread, tt.Status) // waits on a human from here; a resumed one marks itself working
+			if v.Action == actionContinue {
+				resume = append(resume, resumable{task: t, prompt: v.Prompt}) // drive marks it working
+				continue
 			}
+			// From here the thread waits on a human: say so on its root
+			// message, then in the thread.
+			marked := t.Status
+			if v.Action == actionAsk {
+				marked = store.StatusWaitingPermission // the question is a decision
+			}
+			c.mark(ctx, t.Transport, t.Thread, marked)
 			switch {
-			case v.Action == actionContinue:
-				resume = append(resume, resumable{task: tt, prompt: v.Prompt})
 			case v.Action == actionAsk:
-				c.askAboutResume(ctx, tt, v)
+				c.askAboutResume(ctx, t, v)
 			case v.Action == actionAbandon:
-				c.notice(ctx, tt, "⏹️ dancer is back — leaving this task: "+reasonOr(v.Reason, "it is no longer worth continuing")+
-					". "+capitalize(pickUpHint(tt)))
-			case tt.Status == store.StatusIdle:
+				c.notice(ctx, t, "⏹️ dancer is back — leaving this task: "+reasonOr(v.Reason, "it is no longer worth continuing")+
+					". "+capitalize(pickUpHint(t)))
+			case t.Status == store.StatusIdle:
 				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
 				if v.Reason != "" {
 					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
 				}
-				c.notice(ctx, tt, text)
+				c.notice(ctx, t, text)
+			case t.Status == store.StatusFailed:
+				c.notice(ctx, t, "⏹️ dancer is back — this task never got going and cannot be resumed; "+pickUpHint(t))
 			}
 		}
 	}
@@ -647,7 +659,7 @@ func (c *Coordinator) closeThread(ctx context.Context, s surface.Surface, it sur
 	c.Log.Info("thread closed", "thread", it.Thread, "task", id, "was_running", running)
 	c.emit(ctx, surface.Event{Kind: surface.EventClosed, Thread: it.Thread, TaskID: id}, s)
 	host := c.taskTransport(ctx, s, it.Thread) // the thread's own transport, wherever `close` was typed
-	c.markClosed(ctx, host, it.Thread)
+	c.mark(ctx, host, it.Thread, "")           // closed now: the ✅ wins over whatever the task is in
 	c.forget(host, it.Thread)
 }
 
@@ -687,17 +699,15 @@ func (c *Coordinator) reopenThread(ctx context.Context, s surface.Surface, th tr
 	if tc, ok := c.transports[host].(transport.ThreadCloser); ok {
 		tc.Follow(th)
 	}
-	// The ✅ comes off: the thread waits on a human again, until the message
-	// that reopened it starts a turn and marks it working.
-	c.mark(ctx, host, th, store.StatusIdle)
+	// The ✅ comes off and the latest task says what waits there now, until
+	// the message that reopened the thread starts a turn and marks it working.
+	status := ""
+	if st, err := c.Store.LatestTaskForThread(ctx, th); err == nil {
+		status = st.Status
+	}
+	c.mark(ctx, host, th, status)
 	c.Log.Info("thread reopened", "thread", th)
 	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "♻️ thread reopened"}, s)
-}
-
-// markClosed swaps the thread's state mark for ✅. Call it after
-// setClosed: mark reads the closed set and lets it win over any status.
-func (c *Coordinator) markClosed(ctx context.Context, transportName string, th transport.ThreadID) {
-	c.mark(ctx, transportName, th, "")
 }
 
 // forget tells a thread-tracking transport to stop following a thread.
@@ -888,8 +898,12 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	}
 	id, ok := c.lookup(it.Thread)
 	if ok {
+		seq := int64(-1)
+		if sink := c.sink(id); sink != nil {
+			seq = sink.snapshot().LastSeq
+		}
 		if err := c.Executor.Send(ctx, id, it.Text, attachments(it.Files)); err == nil {
-			c.wake(ctx, id)
+			c.wake(ctx, id, seq)
 			return
 		} else if !errors.Is(err, execlocal.ErrNotRunning) {
 			c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, TaskID: id, Text: "send: " + err.Error()}, s)
@@ -970,7 +984,10 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	if err := c.Store.PutTask(pctx, final); err != nil {
 		c.Log.Error("persist final task state", "task", st.ID, "err", err)
 	}
-	c.mark(pctx, st.Transport, st.Thread, final.Status)
+	if cur, bound := c.lookup(st.Thread); !bound || cur == st.ID {
+		// Not when close gave up waiting and the thread already runs another task.
+		c.mark(pctx, st.Transport, st.Thread, final.Status)
+	}
 	// The last heartbeat takes down whatever liveness display a surface
 	// still has up — on a shutdown there is no finished event to do it.
 	c.broadcast(pctx, heartbeat(final))
@@ -1019,15 +1036,15 @@ func (c *Coordinator) beat(ctx context.Context, sink *taskSink) (stop func()) {
 const defaultHeartbeat = 10 * time.Second
 
 // wake records that a live task got a follow-up: it is running again
-// before its first event says so, and surfaces hear it right away.
-func (c *Coordinator) wake(ctx context.Context, id executor.TaskID) {
-	c.mu.Lock()
-	sink := c.sinks[id]
-	c.mu.Unlock()
+// before its first event says so, and surfaces hear it right away. seq is
+// the log position before the follow-up went out: once the agent has spoken
+// since — a quick turn can be over already — its word stands.
+func (c *Coordinator) wake(ctx context.Context, id executor.TaskID, seq int64) {
+	sink := c.sink(id)
 	if sink == nil {
 		return
 	}
-	st, changed := sink.setStatus(ctx, store.StatusIdle, store.StatusRunning)
+	st, changed := sink.setStatus(ctx, store.StatusIdle, store.StatusRunning, seq)
 	if !changed {
 		return
 	}
@@ -1035,30 +1052,41 @@ func (c *Coordinator) wake(ctx context.Context, id executor.TaskID) {
 	c.broadcast(ctx, heartbeat(st))
 }
 
+func (c *Coordinator) sink(id executor.TaskID) *taskSink {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sinks[id]
+}
+
 // mark shows where a thread stands on its root message: ⏳ while the agent
 // works, ✋ while it waits for a decision, 📬 once the turn is over and the
 // thread waits for its next message, ❌ when the task failed, ✅ once the
-// thread is closed. A thread is never left bare: every one of them is
-// either being worked on, waiting on a human, or closed. Best effort, on
-// transports that can react; a mark is only touched when it changes, and
-// the closed mark wins over whatever status the task is in.
+// thread is closed. A task thread is never left bare: it is being worked
+// on, waiting on a human, or closed. Best effort, on transports that can
+// react; a mark is only touched when it changes, and the closed mark wins
+// over whatever status the task is in.
 func (c *Coordinator) mark(ctx context.Context, transportName string, th transport.ThreadID, status string) {
 	r, ok := c.transports[transportName].(transport.Reactor)
 	if !ok {
 		return
 	}
+	// One swap at a time per thread: two transitions in flight at once (a
+	// follow-up's wake against the turn's result) would interleave their
+	// removes and adds and leave a reaction nobody remembers.
+	mu := c.markLock(th)
+	mu.Lock()
+	defer mu.Unlock()
 	c.mu.Lock()
-	want := reactionFor(status)
-	if c.closed[th] {
-		want = closedReaction
-	}
+	want := c.wantMark(th, status)
 	have := c.marks[th]
+	c.mu.Unlock()
 	if have == want {
-		c.mu.Unlock()
 		return
 	}
-	c.marks[th] = want
-	c.mu.Unlock()
+	// A stop's fallout arrives on a cancelled context; the mark still has
+	// to reach the transport.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
 	if have != "" {
 		if err := r.Unreact(ctx, th, have); err != nil {
 			c.Log.Warn("mark: removing reaction failed", "thread", th, "emoji", have, "err", err)
@@ -1067,60 +1095,66 @@ func (c *Coordinator) mark(ctx context.Context, transportName string, th transpo
 	if want != "" {
 		if err := r.React(ctx, th, want); err != nil {
 			c.Log.Warn("mark: reaction failed (needs reactions:write scope?)", "thread", th, "emoji", want, "err", err)
+			want = "" // nothing is on; the next mark, even for the same state, tries again
 		}
-	}
-}
-
-// unmark removes the state marks a previous dancer process may have left
-// on a thread it was working in when it stopped, and forgets the thread's
-// mark so the next one is put on whatever the removal left.
-func (c *Coordinator) unmark(ctx context.Context, transportName string, th transport.ThreadID) {
-	r, ok := c.transports[transportName].(transport.Reactor)
-	if !ok {
-		return
 	}
 	c.mu.Lock()
-	c.marks[th] = ""
+	c.marks[th] = want
 	c.mu.Unlock()
-	for _, emoji := range []string{workingReaction, waitingReaction, answeredReaction, failedReaction} {
-		if err := r.Unreact(ctx, th, emoji); err != nil {
-			c.Log.Debug("unmark: removing reaction failed", "thread", th, "emoji", emoji, "err", err)
-		}
-	}
 }
 
-// seedMarks records the mark each stored thread's root message should be
-// carrying from the previous process — its latest task's state, or closed —
-// so the first change after a restart takes the old mark down instead of
-// piling a new one next to it. Threads recover() already touched keep
-// theirs. Nothing is sent: reactions outlive the process on Slack.
-func (c *Coordinator) seedMarks(tasks []store.TaskState) {
+// wantMark is the mark a thread should carry for a task status; the caller
+// holds c.mu. Closed wins over any status.
+func (c *Coordinator) wantMark(th transport.ThreadID, status string) string {
+	if c.closed[th] {
+		return closedReaction
+	}
+	return reactionFor(status)
+}
+
+func (c *Coordinator) markLock(th transport.ThreadID) *sync.Mutex {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, t := range tasks { // newest first: the first task seen on a thread is its latest
-		if _, known := c.marks[t.Thread]; known {
-			continue
-		}
-		if _, ok := c.transports[t.Transport].(transport.Reactor); !ok {
-			continue
-		}
-		want := reactionFor(t.Status)
-		if c.closed[t.Thread] {
-			want = closedReaction
-		}
-		c.marks[t.Thread] = want
+	mu, ok := c.markMu[th]
+	if !ok {
+		mu = &sync.Mutex{}
+		c.markMu[th] = mu
 	}
+	return mu
 }
 
-// reactionFor is the mark a task's status earns its thread. Every status
-// past the live ones means the thread waits for a human: an idle or done
-// task for its next message, a cancelled one for what to do instead, an
-// interrupted one for the restart that picks it up.
+// seedMarks records the mark each thread's root message is carrying from
+// the previous process — its latest task's state, or closed — so the first
+// change after a restart takes that reaction down instead of piling a new
+// one next to it. Nothing is sent: reactions outlive the process on Slack.
+// It runs before recover(), whose marks then swap the right one.
+func (c *Coordinator) seedMarks(ctx context.Context) error {
+	tasks, err := c.Store.ListTasks(ctx, "")
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for th, t := range latestByThread(tasks) {
+		c.marks[th] = c.wantMark(th, t.Status)
+	}
+	for th := range c.closed {
+		c.marks[th] = closedReaction // a thread closed before it ever had a task
+	}
+	c.Log.Info("seeded thread marks", "threads", len(c.marks))
+	return nil
+}
+
+// reactionFor is the mark a task's status earns its thread. An interrupted
+// task is still being worked on: the next start picks it up, or marks it
+// idle and says so. Every other status past the live ones means the thread
+// waits for a human — an idle or done task for its next message, a
+// cancelled one for what to do instead.
 func reactionFor(status string) string {
 	switch status {
 	case "":
 		return ""
-	case store.StatusQueued, store.StatusRunning:
+	case store.StatusQueued, store.StatusRunning, store.StatusInterrupted:
 		return workingReaction
 	case store.StatusWaitingPermission:
 		return waitingReaction
@@ -1166,13 +1200,15 @@ func (s *taskSink) snapshot() store.TaskState {
 
 // setStatus records a status change that did not come from the agent (a
 // follow-up sent, a decision delivered) and persists it. It only applies
-// when the task is still in the state from: the agent may already have
-// moved on (a denied tool can end the turn at once), and its word wins.
-func (s *taskSink) setStatus(ctx context.Context, from, to string) (st store.TaskState, changed bool) {
+// when the task is still in the state from — the agent may already have
+// moved on (a denied tool can end the turn at once), and its word wins —
+// and, when seq is not negative, only while the agent has said nothing
+// since that log position.
+func (s *taskSink) setStatus(ctx context.Context, from, to string, seq int64) (st store.TaskState, changed bool) {
 	s.putMu.Lock()
 	defer s.putMu.Unlock()
 	s.mu.Lock()
-	if s.state.Status != from {
+	if s.state.Status != from || (seq >= 0 && s.state.LastSeq != seq) {
 		st = s.state
 		s.mu.Unlock()
 		return st, false
@@ -1276,7 +1312,7 @@ func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev age
 // resume records that the human answered and the agent is working again,
 // and tells surfaces so their liveness display comes back.
 func (s *taskSink) resume(ctx context.Context) {
-	st, changed := s.setStatus(ctx, store.StatusWaitingPermission, store.StatusRunning)
+	st, changed := s.setStatus(ctx, store.StatusWaitingPermission, store.StatusRunning, -1)
 	if !changed {
 		return
 	}

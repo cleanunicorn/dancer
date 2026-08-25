@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -40,12 +41,7 @@ type fakeTransport struct {
 func (f *fakeTransport) unreacted(th transport.ThreadID, emoji string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, e := range f.removed[th] {
-		if e == emoji {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.removed[th], emoji)
 }
 
 func (f *fakeTransport) Name() string { return f.name }

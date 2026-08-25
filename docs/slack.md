@@ -62,8 +62,8 @@ transport.
 - **Reactions on your message** — one at a time, and never none: ⏳ while the agent
   works, ✋ while it waits for your decision, 📬 once it has answered and the thread
   waits for your next message, ❌ when the task failed, ✅ once you close the thread
-  (`reactions:write`). Every thread is either being worked on, waiting on you, or
-  closed — scan a channel for 📬 and ✋ to find the ones that need you.
+  (`reactions:write`). Every task thread is either being worked on, waiting on you, or
+  closed — scan a channel for 📬, ❌ and ✋ to find the ones that need you.
 - **Mentions** — the lines that need a human (prompts, the closing line, errors,
   "dancer is back" notices) tag whoever started the task, so you can mute the thread
   and still be told when to look. The agent's own text never tags anyone.

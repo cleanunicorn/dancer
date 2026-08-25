@@ -23,7 +23,7 @@ While the agent works, the last message in the thread is a live status line
 every few seconds, and your message carries ⏳ — ✋ while the agent waits for
 your answer. When the turn ends the status line goes and the mark becomes 📬:
 the thread waits for your next message, or for `close`, which turns it ✅. A
-thread always carries one mark, so a channel shows which ones need you. The
+task thread always carries one mark, so a channel shows which ones need you. The
 lines that need you — a
 permission or question prompt, the closing line, an error — mention whoever
 started the task, so you can mute the thread and still be told when to look.
