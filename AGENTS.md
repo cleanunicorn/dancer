@@ -221,9 +221,14 @@ files first — they carry the contract, the concrete packages under them are im
   hosts.yml, else `gh auth token` (a login the host keeps in a keyring), else
   `GH_TOKEN`/`GITHUB_TOKEN` in dancer's own environment; a hosts.yml in the container newer than
   the host's is left alone. Nothing is lent to local (same home) or ssh (someone else's machine),
-  or when the definition's env carries `GH_TOKEN`/`GITHUB_TOKEN`. Nothing here can fail a task:
-  without a login the agent meets `gh`'s own "please run gh auth login", and `dancer doctor` says
-  what would be lent.
+  or when the definition's env carries `GH_TOKEN`/`GITHUB_TOKEN`. It lends the host's **git
+  identity** with it (`internal/gh/identity.go`): `user.name`/`user.email` from the host's git
+  config, else `GIT_AUTHOR_*`/`GIT_COMMITTER_*`, written as the container's global git config — a
+  fresh container has no committer either, and `git commit` there stops before the token is ever
+  used. The identity is lent even when the login is the definition's own, and never overwrites one
+  already in the container (`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` in the definition's env opts
+  out). Nothing here can fail a task: without a login the agent meets `gh`'s own "please run gh
+  auth login", and `dancer doctor` says what would be lent and who a container would commit as.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

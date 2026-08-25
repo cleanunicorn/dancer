@@ -461,17 +461,33 @@ The token is taken from the first of these that has one:
 3. `GH_TOKEN` / `GITHUB_TOKEN` in dancer's own environment
 
 A `hosts.yml` inside the container that is newer than the host's is left
-alone, so a login made in there survives. To give a container its own
-identity instead — a bot account, a fine-grained token — put one in its env
-and dancer lends nothing:
+alone, so a login made in there survives. To give a container an account of
+its own — a bot, a fine-grained token — put one in its env and dancer lends
+none:
 
 ```toml
 [definitions.environment.env]
 GH_TOKEN = "github_pat_…"
 ```
 
+The commits get your name too. A fresh container has no `user.name` or
+`user.email`, so `git commit` in it stops with "Please tell me who you
+are"; dancer writes the host's identity — your `git config user.name` and
+`user.email`, or `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` from dancer's own
+environment — into the container's global git config. It is written once
+and never overwritten, so an identity a `setup` command or the agent set
+stays, and it is lent even to a container with its own token. To choose one
+yourself:
+
+```toml
+[definitions.environment.env]
+GIT_AUTHOR_NAME  = "dancer"
+GIT_AUTHOR_EMAIL = "bot@example.com"     # dancer then lends no identity
+```
+
 With no login anywhere the task still runs; only GitHub is out of reach,
-and `gh` says so itself. `dancer doctor` prints what would be lent.
+and `gh` says so itself. `dancer doctor` prints what would be lent and who
+a container would commit as.
 
 ### Provisioning
 

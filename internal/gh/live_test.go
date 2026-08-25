@@ -12,11 +12,12 @@ import (
 	"github.com/cleanunicorn/dancer/internal/environment/docker"
 )
 
-// TestLiveDockerLend lends this host's GitHub login into a container
-// provisioned from ubuntu:24.04 and proves it took: `gh auth status` there
-// authenticates against the real API, and git is pointed at gh for
-// github.com so a push would use the same account. Run with DANCER_LIVE=1
-// and a docker daemon; the first run builds the image (~90s).
+// TestLiveDockerLend lends this host's GitHub login and identity into a
+// container provisioned from ubuntu:24.04 and proves they took: `gh auth
+// status` there authenticates against the real API, git commits as the
+// host does, and git is pointed at gh for github.com so a push would use
+// the same account. Run with DANCER_LIVE=1 and a docker daemon; the first
+// run builds the image (~90s).
 func TestLiveDockerLend(t *testing.T) {
 	if os.Getenv("DANCER_LIVE") == "" {
 		t.Skip("set DANCER_LIVE=1 to talk to the real GitHub")
@@ -52,6 +53,19 @@ func TestLiveDockerLend(t *testing.T) {
 	t.Logf("gh auth status:\n%s", out)
 	if !strings.Contains(out, "Logged in to") {
 		t.Errorf("the lent login did not authenticate:\n%s", out)
+	}
+
+	who, err := environment.Run(ctx, env, nil, "sh", "-c", "git config --global --get user.name; git config --global --get user.email")
+	if err != nil {
+		t.Fatalf("git identity: %v\n%s", err, who)
+	}
+	t.Logf("committing as:\n%s", who)
+	id, err := HostIdentity(ctx)
+	if err != nil {
+		t.Fatalf("host identity: %v", err)
+	}
+	if !strings.Contains(who, id.Email) {
+		t.Errorf("container commits as %q, want the host's %q", who, id.String())
 	}
 
 	helper, err := environment.Run(ctx, env, nil, "sh", "-c", "git config --get-regexp 'credential.*helper' 2>&1")

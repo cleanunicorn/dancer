@@ -191,19 +191,26 @@ func checkDocker() check {
 	return check{name: "docker", ok: true, info: "server " + strings.TrimSpace(string(out))}
 }
 
-// checkGitHub reports the GitHub login dancer would lend to a container
-// (internal/gh) and where it comes from. Nothing here is fatal — an agent
-// that never touches GitHub does not need one — so a host with no login is
-// a note rather than a failed check.
+// checkGitHub reports what dancer would lend a container to work on GitHub
+// (internal/gh): the login, and the identity its commits would carry.
+// Nothing here is fatal — an agent that never touches GitHub needs neither
+// — so a gap is a note rather than a failed check.
 func checkGitHub() check {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	login, err := gh.HostLogin(ctx)
-	if err != nil {
-		return check{name: "github", ok: true, note: true, info: "no login to lend — `gh` in a container stays logged out; " +
-			"run `gh auth login` on this host, or set GH_TOKEN in the definition's environment env"}
+	login, loginErr := gh.HostLogin(ctx)
+	id, idErr := gh.HostIdentity(ctx)
+
+	who := "no git identity to lend — set user.email on this host, or `git commit` in a container stops"
+	if idErr == nil {
+		who = "committing as " + id.String()
 	}
-	return check{name: "github", ok: true, info: "lending the login from " + login.Source + " to containers"}
+	if loginErr != nil {
+		return check{name: "github", ok: true, note: true, info: "no login to lend — `gh` in a container stays logged out; " +
+			"run `gh auth login` on this host, or set GH_TOKEN in the definition's environment env; " + who}
+	}
+	return check{name: "github", ok: true, note: idErr != nil,
+		info: "lending the login from " + login.Source + " to containers, " + who}
 }
 
 func checkSSH(host, key, claudeBin string) check {

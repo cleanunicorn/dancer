@@ -42,11 +42,13 @@ func newShEnv(t *testing.T, kind environment.Kind, env map[string]string) (shEnv
 		t.Fatal(err)
 	}
 	vars := map[string]string{
-		"HOME":            home,
-		"GH_CONFIG_DIR":   "",
-		"XDG_CONFIG_HOME": "",
-		"GH_SHIM_LOG":     log,
-		"PATH":            shim + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"HOME":              home,
+		"GH_CONFIG_DIR":     "",
+		"XDG_CONFIG_HOME":   "",
+		"GH_SHIM_LOG":       log,
+		"PATH":              shim + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"GIT_CONFIG_GLOBAL": filepath.Join(home, ".gitconfig"),
+		"GIT_CONFIG_SYSTEM": filepath.Join(home, ".gitconfig-system"),
 	}
 	for k, v := range env {
 		vars[k] = v
@@ -68,7 +70,39 @@ func hostConfig(t *testing.T) string {
 	for _, k := range keyEnv {
 		t.Setenv(k, "")
 	}
+	// The same for the identity: a config of its own, so the developer's
+	// name is neither what a test reads nor what one could overwrite.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "gitconfig"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "gitconfig-system"))
+	for _, k := range append(identityEnv, "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME") {
+		t.Setenv(k, "")
+	}
 	return dir
+}
+
+// hostIdentity gives this host the identity a test expects to see lent.
+func hostIdentity(t *testing.T, name, email string) {
+	t.Helper()
+	body := "[user]\n"
+	if name != "" {
+		body += "\tname = " + name + "\n"
+	}
+	if email != "" {
+		body += "\temail = " + email + "\n"
+	}
+	if err := os.WriteFile(os.Getenv("GIT_CONFIG_GLOBAL"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// containerIdentity is what the environment would commit as.
+func containerIdentity(t *testing.T, home string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(home, ".gitconfig"))
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 func writeHosts(t *testing.T, dir, body string, mtime time.Time) string {
@@ -177,8 +211,6 @@ func TestLendSkips(t *testing.T) {
 	}{
 		{"local", environment.KindLocal, nil},
 		{"ssh", environment.KindSSH, nil},
-		{"gh token", environment.KindDocker, map[string]string{"GH_TOKEN": "gho_own"}},
-		{"github token", environment.KindDocker, map[string]string{"GITHUB_TOKEN": "gho_own"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

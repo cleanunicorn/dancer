@@ -1,4 +1,5 @@
-// Package gh lends the host's GitHub CLI login to a container.
+// Package gh lends the host's GitHub CLI login, and the git identity that
+// goes with it, to a container.
 //
 // An agent that opens pull requests needs a logged-in `gh`, and a fresh
 // container has none: `gh pr create` there ends with "To get started with
@@ -8,7 +9,11 @@
 // the environment's gh config dir and runs `gh auth setup-git`, so both
 // `gh` and `git push` speak for the operator's account.
 //
-// The material comes from the first source that has a token:
+// It lends two things: the login `gh` authenticates with, and the name and
+// email git commits with, which a fresh container has no more of than it
+// has a token (identity.go).
+//
+// The login comes from the first source that has a token:
 //
 //   - the host's hosts.yml ($GH_CONFIG_DIR, else $XDG_CONFIG_HOME/gh, else
 //     ~/.config/gh) — copied verbatim, so every host it knows about
@@ -188,14 +193,22 @@ func synthesize(token, source string) Login {
 	return Login{Hosts: []byte(body), ModTime: time.Now(), Source: source}
 }
 
-// Lend copies the host's GitHub login into env, unless env authenticates on
-// its own. envVars is the definition's environment env.
+// Lend gives env what it needs to work on GitHub as the host does: the
+// host's login, unless the definition authenticates on its own, and the
+// host's git identity, unless the container or the definition already has
+// one (identity.go). envVars is the definition's environment env.
 //
 // It never fails a task: a login that cannot be lent is logged, and the
 // agent meets gh's own "please run gh auth login", which says more about
 // what to do than anything dancer could report from here.
 func Lend(ctx context.Context, env environment.Environment, envVars map[string]string) {
-	if env.Kind() != environment.KindDocker || hasKey(envVars) {
+	if env.Kind() != environment.KindDocker {
+		return
+	}
+	// The identity is lent whatever the login turns out to be: a container
+	// that cannot say who committed is stuck before it ever pushes.
+	lendIdentity(ctx, env, envVars)
+	if hasKey(envVars) {
 		return
 	}
 	login, err := HostLogin(ctx)
