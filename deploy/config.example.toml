@@ -14,8 +14,13 @@ auto_resume_within = "12h"  # skip tasks last touched longer ago than this
 max_auto_resumes = 3        # consecutive automatic resumes of one task before it waits for a human
 # resume_prompt = "Continue where you left off."   # what an auto-resumed session is told
 
+# One section per agent CLI; a definition's `kind` says which one runs it.
 [claude]
 binary = "claude"
+[codex]
+binary = "codex"            # driver not built in yet: a definition with kind = "codex" is refused at start
+[opencode]
+binary = "opencode"         # same; kind = "opencode" will take any provider (GLM, DeepSeek, Kimi, …)
 
 # --- decider (optional) ------------------------------------------------------
 # A small model that answers dispatch's judgement calls; see DECIDER.md. Off by
@@ -75,6 +80,7 @@ agent = "sandbox"
 
 [[definitions]]
 name = "coder"
+kind = "claude"                            # claude (default) | codex | opencode — which CLI runs it
 model = "sonnet"                          # haiku | sonnet | opus | fable, or a full model id
 permission_mode = "manual"                 # manual | acceptEdits | auto | bypassPermissions
 allowed_tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"]

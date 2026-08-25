@@ -158,7 +158,12 @@ files first — they carry the contract, the concrete packages under them are im
   keeps a finished turn's process alive for `idle_timeout` so follow-ups are instant, then resumes
   the session with `--resume`.
 - **`agent`** (claude) — normalizes vendor protocol into `agent.Event`. Nothing above this layer
-  sees stream-json.
+  sees stream-json. A definition's `kind` (`agent.Kinds()`: claude, codex, opencode) picks the
+  driver from the registry in `cmd/dispatch/main.go` (`drivers`); config accepts every kind,
+  startup and `doctor` refuse a definition whose kind has no driver in the build. Every driver
+  owes the layers above one tool vocabulary (`agent.ToolBash`, `ToolEdit`, …: Claude's names) and
+  the dispatch permission modes — the mapping tables are in the `agent` package doc — so
+  `allowed_tools`, `auto_allow`, the decider and the status line never learn a vendor's names.
 - **`environment`** (local, docker, ssh) — "I can exec a command and stream its stdio", nothing more.
   Docker and SSH shell out to the `docker` and `ssh` CLIs deliberately (no SDKs; the user's ssh
   config/agent and docker context just work). Docker also *provisions*: `Spec.Provision` turns a

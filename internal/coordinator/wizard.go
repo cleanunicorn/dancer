@@ -451,7 +451,7 @@ func (w *wizard) confirm(ctx context.Context, header, text, yes, yesDesc string)
 
 // run drives the add-agent questions and saves the result.
 func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
-	def := agent.Definition{Kind: agent.KindClaude}
+	def := agent.Definition{Kind: w.defaultKind()}
 	var err error
 
 	def.Name, err = w.askUntil(ctx, agent.Question{Header: "New agent", Text: "Name for the new agent? (letters, digits, `.`, `_`, `-`)"}, func(a string) (string, error) {
@@ -466,6 +466,9 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 		return a, nil
 	})
 	if err != nil {
+		return def, err
+	}
+	if err := w.askKind(ctx, &def); err != nil {
 		return def, err
 	}
 	for _, f := range editFields {
@@ -558,10 +561,66 @@ func (w *wizard) edit(ctx context.Context, def *agent.Definition) (changed bool,
 	}
 }
 
+// kindChoices describes each agent kind on the wizard's buttons.
+var kindChoices = map[agent.Kind]string{
+	agent.KindClaude:   "Claude Code",
+	agent.KindCodex:    "OpenAI Codex",
+	agent.KindOpenCode: "OpenCode — any provider (GLM, DeepSeek, Kimi, …)",
+}
+
+// defaultKind is the agent a new definition gets unless asked: the first
+// registered driver, claude when the coordinator was not told any.
+func (w *wizard) defaultKind() agent.Kind {
+	if len(w.c.AgentKinds) > 0 {
+		return w.c.AgentKinds[0]
+	}
+	return agent.KindClaude
+}
+
+// askKind asks which agent runs the definition, when this build has more
+// than one driver; with a single one there is nothing to choose.
+func (w *wizard) askKind(ctx context.Context, def *agent.Definition) error {
+	kinds := w.c.AgentKinds
+	if len(kinds) < 2 {
+		return nil
+	}
+	var opts []string
+	for _, k := range kinds {
+		desc := kindChoices[k]
+		if desc == "" {
+			desc = string(k)
+		}
+		opts = append(opts, string(k), desc)
+	}
+	a, err := w.askUntil(ctx, agent.Question{Header: "Agent", Text: "Which agent runs it?", Options: options(opts...)}, func(a string) (string, error) {
+		for _, k := range kinds {
+			if strings.EqualFold(a, string(k)) {
+				return string(k), nil
+			}
+		}
+		return "", fmt.Errorf("pick one of the listed agents")
+	})
+	if err != nil {
+		return err
+	}
+	def.Kind = agent.Kind(a)
+	return nil
+}
+
+// askModel asks for the model in the vocabulary of the definition's kind:
+// claude has aliases every install can name, codex wants its own model
+// id, opencode a provider/model pair.
 func (w *wizard) askModel(ctx context.Context, def *agent.Definition) error {
+	q := agent.Question{Header: "Model", Text: "Which model? Pick one or type a full model id.",
+		Options: options("sonnet", "balanced", "opus", "frontier default", "fable", "most capable", "haiku", "fastest")}
+	switch def.Kind {
+	case agent.KindCodex:
+		q = agent.Question{Header: "Model", Text: "Which model? Type a Codex model id, e.g. `gpt-5-codex`."}
+	case agent.KindOpenCode:
+		q = agent.Question{Header: "Model", Text: "Which model? Type it as `provider/model`, e.g. `zai-coding-plan/glm-4.6` or `deepseek/deepseek-chat`."}
+	}
 	var err error
-	def.Model, err = w.askUntil(ctx, agent.Question{Header: "Model", Text: "Which model? Pick one or type a full model id.",
-		Options: options("sonnet", "balanced", "opus", "frontier default", "fable", "most capable", "haiku", "fastest")}, nonEmpty("model"))
+	def.Model, err = w.askUntil(ctx, q, nonEmpty("model"))
 	return err
 }
 
@@ -780,7 +839,7 @@ func describeEnvironment(d agent.Definition) string {
 
 func summarize(title string, d agent.Definition) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n• name: *%s*\n• model: %s\n• environment: %s", title, d.Name, d.Model, describeEnvironment(d))
+	fmt.Fprintf(&b, "%s\n• name: *%s*\n• agent: %s\n• model: %s\n• environment: %s", title, d.Name, agentKind(d.Kind), d.Model, describeEnvironment(d))
 	fmt.Fprintf(&b, "\n• permission mode: %s", d.PermissionMode)
 	if len(d.AllowedTools) > 0 {
 		fmt.Fprintf(&b, "\n• pre-approved tools: %s", strings.Join(d.AllowedTools, ", "))

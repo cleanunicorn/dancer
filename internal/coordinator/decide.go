@@ -420,7 +420,7 @@ func rawInput(in map[string]any) string {
 // touchedFile returns the file a tool call writes to, if it writes to one.
 func touchedFile(ev agent.Event) string {
 	switch ev.Tool {
-	case "Edit", "Write", "MultiEdit", "NotebookEdit":
+	case agent.ToolEdit, agent.ToolWrite, "MultiEdit", "NotebookEdit":
 		if p, ok := ev.ToolInput["file_path"].(string); ok {
 			return p
 		}

@@ -170,7 +170,7 @@ func outsideWorkdir(p, workdir string) bool {
 // a plain argument, and so has to be read the way a shell would read it.
 func isShellTool(tool string) bool {
 	switch tool {
-	case "Bash", "BashOutput", "Shell", "Run":
+	case agent.ToolBash, "BashOutput", "Shell", "Run":
 		return true
 	}
 	return false

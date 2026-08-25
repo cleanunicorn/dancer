@@ -2,7 +2,7 @@
 //
 //	dispatch run    [-config path] [-terminal] [-web]   start the coordinator (default)
 //	dispatch setup  [-config path]               interactive first-time setup
-//	dispatch doctor [-config path]               check config, claude, docker, ssh, slack
+//	dispatch doctor [-config path]               check config, agent CLIs, docker, ssh, slack
 //	dispatch user   add|passwd|rm|list [name]    accounts of the web UI
 package main
 
@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -108,8 +109,14 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 		StateDir:     filepath.Join(filepath.Dir(cfg.Server.DB), "docker"),
 	}
 
+	agents := drivers(cfg)
+	for _, d := range cfg.Definitions {
+		if _, ok := agents[agent.Kind(d.Kind)]; !ok {
+			return fmt.Errorf("definition %q: agent kind %q has no driver in this build (available: %s)", d.Name, d.Kind, kindList(agents))
+		}
+	}
 	ex := execlocal.New(
-		map[agent.Kind]agent.Agent{agent.KindClaude: &agentclaude.Agent{Binary: cfg.Claude.Binary}},
+		agents,
 		map[environment.Kind]environment.Factory{
 			environment.KindLocal:  envlocal.Factory{},
 			environment.KindDocker: dockerFactory,
@@ -173,6 +180,7 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 		web.History = c // the lists and the past come from the log, not from the browser's memory
 	}
 	c.DefaultDefinition = cfg.Server.DefaultAgent
+	c.AgentKinds = registeredKinds(agents)
 	c.ChannelAgents = cfg.ChannelAgents()
 	c.SaveChannelAgent = func(_ context.Context, transportName, channel, agent string) error {
 		return config.AppendChannel(cfgPath, config.Channel{Transport: transportName, ID: channel, Agent: agent})
@@ -226,6 +234,37 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 // reapContainers retires reused containers nobody has touched for a while.
 // It runs once at startup — containers outlive the process, so a restart is
 // the first chance to notice one has gone cold — and hourly after that.
+// drivers is the agent registry: every kind this build can run, keyed by
+// the definition kind that selects it. Config accepts every kind in
+// agent.Kinds; a definition whose kind is missing here is refused at
+// startup with this list, not at its first task.
+func drivers(cfg *config.Config) map[agent.Kind]agent.Agent {
+	return map[agent.Kind]agent.Agent{
+		agent.KindClaude: &agentclaude.Agent{Binary: cfg.Claude.Binary},
+		// codex and opencode drivers: issues #45 and #46.
+	}
+}
+
+// registeredKinds lists the kinds in agents, in agent.Kinds order.
+func registeredKinds(agents map[agent.Kind]agent.Agent) []agent.Kind {
+	var out []agent.Kind
+	for _, k := range agent.Kinds() {
+		if _, ok := agents[k]; ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// kindList is registeredKinds as an error message lists them.
+func kindList(agents map[agent.Kind]agent.Agent) string {
+	var names []string
+	for _, k := range registeredKinds(agents) {
+		names = append(names, string(k))
+	}
+	return strings.Join(names, ", ")
+}
+
 func reapContainers(ctx context.Context, f envdocker.Factory, ttl time.Duration, log *slog.Logger) {
 	if ttl <= 0 {
 		ttl = envdocker.DefaultReuseTTL
