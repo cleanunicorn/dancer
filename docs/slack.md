@@ -88,23 +88,32 @@ prompts:
 - A thread a web user starts in one of the bot's channels is posted at top level by
   the bot and lives in Slack from then on.
 
-Channel names in the web sidebar need `channels:read` and `groups:read` (in the
-manifest); without them the id stands in.
+Channel names in the web sidebar need `channels:read` and `groups:read`, DMs `im:read`
+(all in the manifest); without them the id stands in.
 
 ## Scopes
 
-All in `deploy/slack-manifest.yaml`. If you created the app before a scope was added,
-add it under **OAuth & Permissions** and reinstall the app.
+Bot scopes, all in `deploy/slack-manifest.yaml`. If you created the app before a scope
+was added, add it under **OAuth & Permissions** and reinstall the app. A missing scope
+never stops dancer: the call fails, dancer logs which scope it suspects, and the feature
+that needed it is skipped.
 
-| scope | used for |
-|-------|----------|
-| `app_mentions:read`, `channels:history`, `groups:history`, `im:history` | reading mentions, thread replies and DMs |
-| `chat:write`, `im:write` | posting, editing and deleting dancer's own messages |
-| `reactions:write` | ⏳ / ✋ / 📬 / ❌ / ✅ on the root message |
-| `files:read`, `files:write` | attachments to and from the agent |
-| `users:read` | showing who wrote a message, on other transports |
-| `assistant:write` | the composer status line (optional) |
-| `channels:read`, `groups:read` | channel names in the web UI (optional) |
+| scope | used for | without it |
+|-------|----------|------------|
+| `app_mentions:read`, `channels:history`, `groups:history`, `im:history` | receiving mentions, thread replies and DMs (the `app_mention`, `message.*` events) | dancer hears nothing |
+| `chat:write` | posting, editing and deleting dancer's own messages, in channels and DMs | nothing is posted |
+| `im:write` | opening a DM with a user | not called today; in the manifest for when it is |
+| `reactions:write` | ⏳ / ✋ / 📬 / ❌ / ✅ on the root message | one warning per mark, no reactions |
+| `files:read` | attachments you send: dancer downloads them from Slack and copies them into the agent's environment ([Files to the agent](../SETUP.md#files-to-the-agent)) | every attachment is reported as "could not be fetched" and skipped; the text still reaches the agent |
+| `files:write` | files the agent mentions, uploaded into the thread ([Files from the agent](../SETUP.md#files-from-the-agent)) | a "could not upload" line instead of the file |
+| `users:read` | the display name next to what someone wrote, on other transports | the user id stands in |
+| `assistant:write` | the composer status line (optional, with `assistant_view` and the `assistant_thread_*` events) | one log line, the in-thread status line still works |
+| `channels:read`, `groups:read`, `im:read` | channel names in the web UI (optional; `im:read` for the bot's DMs, shown as "DM") | the channel id stands in |
+
+The app-level token (`xapp-…`) needs one scope of its own, `connections:write`, for
+Socket Mode; it is not in the manifest, you add it when generating the token (step 3
+above). `bin/dancer doctor` checks that both tokens are accepted, not which scopes they
+carry.
 
 ## A feed surface
 

@@ -585,7 +585,7 @@ func (c *Transport) channelName(ctx context.Context, id string) {
 			name = "DM"
 		}
 	} else {
-		c.log.Debug("slack conversations.info (needs channels:read?)", "channel", id, "err", err)
+		c.log.Debug("slack conversations.info (needs channels:read, groups:read or im:read?)", "channel", id, "err", err)
 	}
 	c.mu.Lock()
 	c.channels[id] = name
