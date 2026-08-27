@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/cleanunicorn/dancer/internal/transport"
@@ -56,12 +57,13 @@ func TestStore(t *testing.T) {
 	}
 	ts.Session = "sess"
 	ts.Model = "claude-haiku-4-5"
+	ts.ModelPin = "opus"
 	ts.Status = store.StatusIdle
 	if err := s.PutTask(ctx, ts); err != nil {
 		t.Fatal(err)
 	}
 	back, err := s.GetTask(ctx, "t1")
-	if err != nil || back.Session != "sess" || back.Model != "claude-haiku-4-5" || back.Status != store.StatusIdle || back.Definition.Name != "coder" || back.Transport != "slack" || back.Requester != "U42" {
+	if err != nil || back.Session != "sess" || back.Model != "claude-haiku-4-5" || back.ModelPin != "opus" || back.Status != store.StatusIdle || back.Definition.Name != "coder" || back.Transport != "slack" || back.Requester != "U42" {
 		t.Fatalf("get task = %+v err=%v", back, err)
 	}
 	latest, err := s.LatestTaskForThread(ctx, "th1")
@@ -153,5 +155,47 @@ func TestThreadRecordsOfKind(t *testing.T) {
 	got, err = s.ThreadRecordsOfKind(ctx, th, "inbound", 5)
 	if err != nil || len(got) != 2 || got[0].Seq > got[1].Seq {
 		t.Fatalf("inbound records = %+v, %v (want both, oldest first)", got, err)
+	}
+}
+
+// A database from before a column existed gains it on open, and the
+// tasks already in it keep working — model_pin is the newest, and the
+// oldest schema here is the one that shipped first.
+func TestMigrateAddsTaskColumns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`CREATE TABLE tasks (
+		id TEXT PRIMARY KEY, thread TEXT NOT NULL, definition BLOB NOT NULL,
+		session TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+		last_seq INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`INSERT INTO tasks(id, thread, definition, status, updated_at) VALUES('t1','th1','{}','idle','')`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	back, err := s.GetTask(ctx, "t1")
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	if back.ModelPin != "" {
+		t.Errorf("model_pin = %q, want empty", back.ModelPin)
+	}
+	back.ModelPin = "opus"
+	if err := s.PutTask(ctx, back); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.GetTask(ctx, "t1"); err != nil || again.ModelPin != "opus" {
+		t.Fatalf("get task = %+v err=%v", again, err)
 	}
 }

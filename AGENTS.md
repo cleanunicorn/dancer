@@ -230,6 +230,23 @@ files first — they carry the contract, the concrete packages under them are im
   already in the container (`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` in the definition's env opts
   out). Nothing here can fail a task: without a login the agent meets `gh`'s own "please run gh
   auth login", and `dancer doctor` says what would be lent and who a container would commit as.
+- **An agent's own commands are pass-through, not features.** `/model opus`, `/clear`,
+  `/compact`, a plugin's or the project's — the CLI reads them out of the message text
+  itself, so the chat surface implements none of them: a message that is not one of
+  dancer's bare words becomes a `FollowUp` and reaches the agent's stdin unchanged
+  (`agent.Run.Send`). That is what makes *every* command work, including ones the CLI
+  grows later; `commands` lists the session's own (`agent.Event.Commands`, from the init
+  line). Do not add a case for one. Two things follow. Slack never delivers a message
+  starting with `/` — it looks for a Slack command of that name — so there it is written
+  `@dancer /clear`. And what a command changes lives in the CLI *process*: `--resume`
+  starts a new one, so a `/model` choice would be undone by the first idle timeout. That
+  one is carried: the claude driver reads the name out of a `/model <name>` on its way to
+  the CLI (`modelArg` — it does not run the command, the CLI does) and reports it on the
+  turn's `EventResult.Model`; the coordinator keeps it as `store.TaskState.ModelPin` and
+  asks for it again on every resume. The CLI announces the switch nowhere else a machine
+  can read it — an English "Set model to Sonnet 5 for this session only" is the whole of
+  it, and the resolved name only appears on the *next* turn's init, which a thread left
+  idle never has. Nothing else a command changes is carried.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

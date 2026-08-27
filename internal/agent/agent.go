@@ -49,7 +49,7 @@ type Definition struct {
 type EventType string
 
 const (
-	EventInit            EventType = "init"             // the CLI started a turn: the session, or a turn of its own mid-session (claude: after a sub-agent finishes); Session, Model, Mode, Version, Workdir set
+	EventInit            EventType = "init"             // the CLI started a turn: the session, or a turn of its own mid-session (claude: after a sub-agent finishes); Session, Model, Mode, Version, Commands, Workdir set
 	EventText            EventType = "text"             // assistant text (full or delta)
 	EventToolUse         EventType = "tool_use"         // agent invoked a tool
 	EventToolResult      EventType = "tool_result"      // tool finished
@@ -69,19 +69,26 @@ type Event struct {
 	Text      string // EventText, EventError, EventResult summary
 	Tool      string // EventToolUse / EventToolResult / EventToolDenied / EventNeedsPermission
 	ToolInput map[string]any
-	ToolID    string         // correlates ToolUse, ToolResult, NeedsPermission
-	ParentID  string         // non-empty when emitted by a sub-agent
-	Partial   bool           // EventText: true for streaming deltas
-	Questions []Question     // EventQuestion
-	Files     []File         // files the agent referred to, fetched from its environment
-	Cost      float64        // EventResult: USD at API list prices (see Billing)
-	Usage     *Usage         // EventUsage
-	Model     string         // EventInit: model the session resolved to
-	Mode      PermissionMode // EventInit: permission mode the agent runs with
-	Version   string         // EventInit: agent CLI version
-	Workdir   string         // EventInit: working directory the agent reports
-	Billing   Billing        // EventInit, EventResult: how this session is paid for
-	Raw       []byte         // vendor message, kept for the event log
+	ToolID    string     // correlates ToolUse, ToolResult, NeedsPermission
+	ParentID  string     // non-empty when emitted by a sub-agent
+	Partial   bool       // EventText: true for streaming deltas
+	Questions []Question // EventQuestion
+	Files     []File     // files the agent referred to, fetched from its environment
+	Cost      float64    // EventResult: USD at API list prices (see Billing)
+	Usage     *Usage     // EventUsage
+	Commands  []string   // EventInit: the agent's own commands this session accepts (see Run.Send)
+	// Model is the model the session runs on: what it resolved to
+	// (EventInit), and on EventResult the one this turn switched it to,
+	// set only when a human asked the agent for the switch in its own
+	// words. The switch itself lives in the agent process, so the layer
+	// that keeps the session (store.TaskState.ModelPin) asks for this
+	// model again every time it resumes.
+	Model   string
+	Mode    PermissionMode // EventInit: permission mode the agent runs with
+	Version string         // EventInit: agent CLI version
+	Workdir string         // EventInit: working directory the agent reports
+	Billing Billing        // EventInit, EventResult: how this session is paid for
+	Raw     []byte         // vendor message, kept for the event log
 }
 
 // Billing says whether Cost is a real charge or an API-equivalent estimate.
@@ -147,7 +154,15 @@ type PermissionDecision struct {
 type Run interface {
 	// Events streams normalized events until the turn ends. Closed on exit.
 	Events() <-chan Event
-	// Send delivers a follow-up user message into the running session.
+	// Send delivers a follow-up user message into the running session,
+	// verbatim. An agent CLI reads its own commands out of that text —
+	// "/model opus", "/clear", "/compact", anything the vendor or a
+	// plugin defines — and runs them itself instead of prompting the
+	// model, so dancer supports all of them by passing the text through
+	// and none of them by name. What they change is the CLI process's own
+	// state, which usually lasts only as long as the process: see
+	// store.TaskState.ModelPin for the one dancer carries across a
+	// resume. EventInit.Commands lists what the session accepts.
 	Send(ctx context.Context, text string) error
 	// Decide answers a pending permission request.
 	Decide(ctx context.Context, d PermissionDecision) error

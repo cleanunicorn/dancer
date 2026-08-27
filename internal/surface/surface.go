@@ -75,6 +75,14 @@ type Status struct{ Thread transport.ThreadID }
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
+// ListCommands asks which of its own commands the agent on Thread
+// accepts — "/model", "/clear", "/compact" and whatever else its CLI,
+// its plugins and the project define. dancer does not implement any of
+// them: a message that is one is passed through to the agent verbatim
+// (see agent.Run.Send), so this list is the agent's, read back from what
+// it reported when it last started (agent.Event.Commands).
+type ListCommands struct{ Thread transport.ThreadID }
+
 // AddAgent starts the guided "agent add" flow on Thread: the coordinator
 // asks for each setting in turn and saves the new definition.
 type AddAgent struct{ Thread transport.ThreadID }
@@ -105,18 +113,19 @@ type Say struct {
 	Text   string
 }
 
-func (RunTask) isIntent()     {}
-func (FollowUp) isIntent()    {}
-func (Cancel) isIntent()      {}
-func (CloseThread) isIntent() {}
-func (Status) isIntent()      {}
-func (ListAgents) isIntent()  {}
-func (AddAgent) isIntent()    {}
-func (EditAgent) isIntent()   {}
-func (DeleteAgent) isIntent() {}
-func (SetDefault) isIntent()  {}
-func (Decide) isIntent()      {}
-func (Say) isIntent()         {}
+func (RunTask) isIntent()      {}
+func (FollowUp) isIntent()     {}
+func (Cancel) isIntent()       {}
+func (CloseThread) isIntent()  {}
+func (Status) isIntent()       {}
+func (ListAgents) isIntent()   {}
+func (ListCommands) isIntent() {}
+func (AddAgent) isIntent()     {}
+func (EditAgent) isIntent()    {}
+func (DeleteAgent) isIntent()  {}
+func (SetDefault) isIntent()   {}
+func (Decide) isIntent()       {}
+func (Say) isIntent()          {}
 
 // EventKind classifies coordinator events.
 type EventKind string

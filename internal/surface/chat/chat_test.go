@@ -88,6 +88,13 @@ func TestHandleCommands(t *testing.T) {
 		{"Close", surface.CloseThread{Thread: th}},
 		{"cancel", surface.Cancel{Thread: th}},
 		{"agent", surface.ListAgents{Thread: th}},
+		{"commands", surface.ListCommands{Thread: th}},
+		{"cmds", surface.ListCommands{Thread: th}},
+		// The agent's own commands are not dancer's: they pass through.
+		{"/clear", surface.FollowUp{Thread: th, Text: "/clear"}},
+		{"/model opus", surface.FollowUp{Thread: th, Text: "/model opus"}},
+		{"/compact keep the plan", surface.FollowUp{Thread: th, Text: "/compact keep the plan"}},
+		{"/a-plugin-command --flag", surface.FollowUp{Thread: th, Text: "/a-plugin-command --flag"}},
 		{"agent list", surface.ListAgents{Thread: th}},
 		{"agent add", surface.AddAgent{Thread: th}},
 		{"agent edit", surface.EditAgent{Thread: th}},

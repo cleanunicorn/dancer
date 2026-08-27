@@ -563,6 +563,8 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 			b.WriteString("\n")
 		}
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: strings.TrimRight(b.String(), "\n")}, s)
+	case surface.ListCommands:
+		c.listCommands(ctx, s, it)
 	case surface.AddAgent:
 		c.addAgent(ctx, s, it)
 	case surface.EditAgent:
@@ -947,7 +949,14 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	c.mu.Unlock()
 	c.mark(ctx, st.Transport, st.Thread, store.StatusRunning)
 	stopBeat := c.beat(ctx, sink)
-	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session, Files: files}, sink)
+	// The definition says which model to ask for; a human who sent the
+	// agent "/model …" has said otherwise, and that choice would be lost
+	// on this resume (the CLI keeps it only for its own process).
+	def := st.Definition
+	if st.ModelPin != "" {
+		def.Model = st.ModelPin
+	}
+	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: def, Prompt: prompt, Session: st.Session, Files: files}, sink)
 	stopBeat()
 	c.mu.Lock()
 	delete(c.sinks, st.ID)
@@ -1247,6 +1256,12 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	}
 	if ev.Type == agent.EventInit && ev.Model != "" {
 		s.state.Model = ev.Model
+	}
+	if ev.Type == agent.EventResult && ev.Model != "" {
+		// The turn switched the session's model (a human sent the agent
+		// its own "/model …"). The agent process would forget it; the
+		// resume after the next idle timeout asks for it again.
+		s.state.ModelPin = ev.Model
 	}
 	switch ev.Type {
 	case agent.EventNeedsPermission, agent.EventQuestion:

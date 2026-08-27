@@ -84,7 +84,9 @@ human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE
   you. In a Slack channel, the bot posts your text at top level and the thread lives in
   Slack from then on. A closed strip says so above the printer; a reply reopens it.
 - Commands are the same as on every other transport (`?` in the rack lists them and what
-  each flag means; the table is in the [README](../README.md#commands)).
+  each flag means; the table is in the [README](../README.md#commands)). The agent's own
+  commands work as typed — `/model opus`, `/clear`, `/compact` — with none of Slack's
+  reservation of the leading `/`; `commands` lists what the session accepts.
 - Attachments: a thread's past attachments are shown by name only (dancer never logs file
   bytes). Sending files from the browser is not supported yet; use Slack for that.
 
