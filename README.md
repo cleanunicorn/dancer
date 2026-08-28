@@ -80,7 +80,7 @@ The same on every transport; on Slack, `@dancer` is the mention, on the web UI a
 | `agent edit <name>`          | change an agent's model, environment, permissions, tools or system prompt; `agent edit` picks from a list |
 | `agent delete <name>`        | remove an agent after a confirmation (refused while it is a default) |
 | `close`                      | stop the task and end the thread: dancer goes quiet there and marks it ✅ (mention it in the thread to pick it up again) |
-| `/model opus`, `/clear`, `/compact`, … | the agent's *own* commands, passed through to it as typed — every one its CLI, plugins and the project define, including ones added after this table. On Slack write `@dancer /clear`: Slack keeps a message that *starts* with `/` for itself |
+| `/model opus`, `/clear`, `/compact`, … | the agent's *own* commands, passed through to it as typed — every one its CLI, plugins and the project define, including ones added after this table. A chat app that runs a command name itself (Slack's `/rename`) never delivers it; address the bot first for those (`@dispatch /rename`) |
 | `commands`                   | list the commands the agent on this thread accepts (its list, read from the session) |
 | `status` / `cancel` / `agent list` / `help` | what they say                 |
 

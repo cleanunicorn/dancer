@@ -33,8 +33,8 @@ dancer terminal — type `help` for commands
 
 - Commands are the same as everywhere else (`run`, `default`, `agent add/edit/delete`,
   `status`, `cancel`, `close`, `help`; table in the [README](../README.md#commands)).
-  There is no mention: type the text — including the agent's own commands, which have
-  nothing in their way here: `/model opus`, `/clear`, `/compact`. `commands` lists them.
+  There is no mention: type the text — including the agent's own commands, which nothing
+  here can intercept: `/model opus`, `/clear`, `/compact`. `commands` lists them.
 - The thread is always the same one, `terminal`. A plain line is a follow-up to the task
   on it, or starts one with the default agent when there is none; `run` while a task is
   running is refused ("a task is already running on this thread") — `cancel` first, or

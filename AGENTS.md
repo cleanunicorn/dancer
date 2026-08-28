@@ -236,9 +236,12 @@ files first — they carry the contract, the concrete packages under them are im
   dancer's bare words becomes a `FollowUp` and reaches the agent's stdin unchanged
   (`agent.Run.Send`). That is what makes *every* command work, including ones the CLI
   grows later; `commands` lists the session's own (`agent.Event.Commands`, from the init
-  line). Do not add a case for one. Two things follow. Slack never delivers a message
-  starting with `/` — it looks for a Slack command of that name — so there it is written
-  `@dancer /clear`. And what a command changes lives in the CLI *process*: `--resume`
+  line). Do not add a case for one. Two things follow. A chat client may keep a command
+  name for itself — Slack runs the ones it knows (its own `/rename`, an installed app's)
+  and delivers the rest as ordinary messages, so `/model`, `/clear` and `/compact` arrive
+  intact; a name Slack owns is reached by addressing the bot first, and `stripMention`
+  takes that address off whether Slack linkified it (`<@U…>`) or left the handle as text.
+  And what a command changes lives in the CLI *process*: `--resume`
   starts a new one, so a `/model` choice would be undone by the first idle timeout. That
   one is carried: the claude driver reads the name out of a `/model <name>` on its way to
   the CLI (`modelArg` — it does not run the command, the CLI does) and reports it on the

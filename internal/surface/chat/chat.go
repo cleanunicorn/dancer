@@ -25,13 +25,16 @@
 // message of a thread a command is a prompt like any other, so
 // "/review-pr" opens a task and runs it.
 //
-// Two consequences worth knowing. Slack never delivers a message that
-// starts with "/" — it looks for a Slack command of that name and stops
-// — so on Slack such a message is written "@dancer /clear", which the
-// transport strips down to "/clear". And what a command changes usually
-// lives only in the agent process: a "/model" choice is re-applied on
-// every resume (store.TaskState.ModelPin), the rest lasts until the
-// idle timeout ends the process (see internal/agent/claude, modelArg).
+// Two consequences worth knowing. A chat client may keep a command name
+// for itself: Slack runs the ones it knows (its own "/rename", an
+// installed app's) and never delivers those, while everything else —
+// "/model", "/clear", "/compact" — arrives as an ordinary message. A
+// name Slack owns is reached by addressing the bot first ("@dispatch
+// /rename"), which the transport strips back off. And what a command
+// changes usually lives only in the agent process: a "/model" choice is
+// re-applied on every resume (store.TaskState.ModelPin), the rest lasts
+// until the idle timeout ends the process (see internal/agent/claude,
+// modelArg).
 //
 // The lines that need the human — a turn's closing line, an error, a
 // permission or question prompt, a notice that a restart left the task
@@ -92,7 +95,7 @@ const help = "Commands:\n" +
 	"• `cancel` — stop the task on this thread\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
 	"• `/model opus`, `/clear`, `/compact`, … — the agent's own commands, passed to it as they are (`commands` lists them)\n" +
-	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dancer /clear`\n" +
+	"   if the chat app runs a command name itself (Slack's own `/rename`), address me first: `@me /rename`\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
 	"• `agent add` — define a new agent, question by question\n" +
 	"• `agent edit <name>` — change an agent's model, environment, permissions, tools or prompt\n" +

@@ -60,8 +60,33 @@ type taskPatch struct {
 // apiMessage is the Anthropic Messages API message embedded in
 // assistant/user lines.
 type apiMessage struct {
-	Role    string         `json:"role"`
-	Content []contentBlock `json:"content"`
+	Role    string        `json:"role"`
+	Content contentBlocks `json:"content"`
+}
+
+// contentBlocks is a message body in either shape the CLI uses: the list
+// of blocks it normally sends, or the bare string it uses for a message
+// it wrote itself — the summary and the "<local-command-stdout>" note a
+// "/compact" produces, and the same form dancer writes on the way in
+// (see writeUser). Decoding only the list made a successful compaction
+// report two parse errors into the thread.
+type contentBlocks []contentBlock
+
+func (c *contentBlocks) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var text string
+		if err := json.Unmarshal(b, &text); err != nil {
+			return err
+		}
+		*c = contentBlocks{{Type: "text", Text: text}}
+		return nil
+	}
+	var blocks []contentBlock
+	if err := json.Unmarshal(b, &blocks); err != nil {
+		return err
+	}
+	*c = blocks
+	return nil
 }
 
 type contentBlock struct {

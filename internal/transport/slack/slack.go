@@ -69,7 +69,10 @@ type Transport struct {
 	sm  *socketmode.Client
 	log *slog.Logger
 
-	botUserID    string
+	botUserID string
+	// botName is the bot's Slack handle (auth.test's user, e.g.
+	// "dispatch"), used to strip an address Slack did not linkify.
+	botName      string
 	allowedUsers map[string]bool
 
 	// KnownChannels are channel ids to list even before a thread was seen
@@ -98,7 +101,9 @@ func New(appToken, botToken string, allowedUsers []string, log *slog.Logger) (*T
 	if err != nil {
 		return nil, fmt.Errorf("slack: auth test: %w", err)
 	}
-	return newTransport(api, auth.UserID, allowedUsers, log), nil
+	t := newTransport(api, auth.UserID, allowedUsers, log)
+	t.botName = auth.User
+	return t, nil
 }
 
 // newTransport wires a transport to a Web API client; tests hand it a fake.
@@ -246,7 +251,7 @@ func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound,
 	} else {
 		c.remember(th)
 	}
-	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, UserName: c.userName(ctx, user), Text: stripMention(text, c.botUserID), Files: c.fetch(ctx, th, files)}
+	in := transport.Inbound{Transport: "slack", Thread: th, UserID: user, UserName: c.userName(ctx, user), Text: stripMention(text, c.botUserID, c.botName), Files: c.fetch(ctx, th, files)}
 	select {
 	case inbox <- in:
 	case <-ctx.Done():
@@ -812,9 +817,35 @@ func threadID(ch, threadTS, ts string) transport.ThreadID {
 	return transport.ThreadID(ch + "/" + threadTS)
 }
 
-func stripMention(text, botID string) string {
+// stripMention takes the bot's address off a message: the `<@U…>` Slack
+// makes when the writer picks the bot from the autocomplete, and a
+// leading literal "@name" when they typed it by hand and Slack left it
+// as text — which it does on a phone, and always when the name is not
+// exactly the bot's handle.
+//
+// The literal form is stripped only for the bot's own name, at the
+// front, and only when a space or the end follows: it must not touch an
+// "@" that is part of what the human is saying (an npm scope such as
+// "@babel/core is broken" is a prompt, not an address), and a mention of
+// a real person is a `<@U…>` and never reaches this branch.
+//
+// It matters beyond tidiness: the message the address hid may be one of
+// the agent's own commands, which only works when the text still begins
+// with "/" (see the chat surface's package doc).
+func stripMention(text, botID, botName string) string {
 	text = strings.ReplaceAll(text, mention(botID), "")
-	return strings.TrimSpace(text)
+	text = strings.TrimSpace(text)
+	if botName == "" {
+		return text
+	}
+	rest, ok := strings.CutPrefix(strings.ToLower(text), "@"+strings.ToLower(botName))
+	if !ok {
+		return text
+	}
+	if rest != "" && !strings.ContainsAny(rest[:1], " \t\n") {
+		return text // "@dispatcher …": a different word that starts the same
+	}
+	return strings.TrimSpace(text[len(botName)+1:])
 }
 
 func firstText(m slack.Message) string {

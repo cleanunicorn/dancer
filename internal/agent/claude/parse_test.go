@@ -141,11 +141,12 @@ func TestTranslatePermissionDenied(t *testing.T) {
 }
 
 // The leniency is for system lines only. On an assistant/user line the
-// message must be a well-formed Messages API object: a malformed object or a
-// bare string is still a bad line, so a protocol change does not go dark.
+// message must be a well-formed Messages API object: a malformed object is
+// still a bad line, so a protocol change does not go dark. Its content may
+// be a string or a list of blocks — the CLI uses both, and a string used to
+// be rejected here (see TestTranslateStringContent).
 func TestTranslateMalformedMessage(t *testing.T) {
 	for _, raw := range []string{
-		`{"type":"assistant","message":{"role":"assistant","content":"not-a-list"}}`,
 		`{"type":"assistant","message":"Done."}`,
 		`{"type":"user","message":[]}`,
 	} {
@@ -247,5 +248,42 @@ func TestTranslateInitWithoutSlashCommands(t *testing.T) {
 	}
 	if len(p.Events) != 1 || p.Events[0].Commands != nil {
 		t.Fatalf("commands = %v, want nil", p.Events[0].Commands)
+	}
+}
+
+// A "/compact" makes the CLI write messages of its own, and it writes
+// their content as a bare string rather than a list of blocks. Decoding
+// only the list turned a successful compaction into parse errors in the
+// thread.
+func TestTranslateStringContent(t *testing.T) {
+	// The user lines a compaction emits carry no tool result, so they are
+	// events for nobody — but they must parse.
+	for _, line := range []string{
+		`{"type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation..."},"session_id":"s1"}`,
+		`{"type":"user","message":{"role":"user","content":"<local-command-stdout>Compacted </local-command-stdout>"},"session_id":"s1"}`,
+	} {
+		p, err := translate([]byte(line), time.Now())
+		if err != nil {
+			t.Fatalf("translate(%.40s…): %v", line, err)
+		}
+		if len(p.Events) != 0 {
+			t.Errorf("events = %+v, want none", p.Events)
+		}
+	}
+	// An assistant message in the same shape is text the human should see.
+	p, err := translate([]byte(`{"type":"assistant","message":{"role":"assistant","content":"Compacted"},"session_id":"s1"}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Events) != 1 || p.Events[0].Type != agent.EventText || p.Events[0].Text != "Compacted" {
+		t.Fatalf("events = %+v", p.Events)
+	}
+	// The list form still works.
+	p, err = translate([]byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]},"session_id":"s1"}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Events) != 1 || p.Events[0].Text != "hi" {
+		t.Fatalf("events = %+v", p.Events)
 	}
 }

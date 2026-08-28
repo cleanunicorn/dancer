@@ -50,8 +50,8 @@ rendered in Slack can be answered in the browser and the Slack buttons settle.
   A message that is one of the *agent's* own commands (`/model opus`, `/clear`, `/compact`,
   a plugin's) is not dancer's to read: it goes to the agent as typed, which is how all of
   them work without any being implemented. `commands` lists what the session accepts.
-  Only Slack needs care — it keeps a message starting with `/` for itself, so there it is
-  written `@dancer /clear`.
+  Only a name the chat app runs itself needs care — Slack answers its own `/rename` and
+  never delivers it, so that one is addressed to the bot first (`@dispatch /rename`).
 - Accounts are local (`dancer user add`); the session's name signs what the user writes.
 
 ## Capabilities and Constraints

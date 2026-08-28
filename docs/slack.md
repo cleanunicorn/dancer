@@ -49,13 +49,20 @@ Run `bin/dancer doctor` after editing: it checks both tokens against Slack.
 | reply in the thread          | follow-up to that task (resumes if idle)    |
 | attach a file or image       | copied into the agent's environment, path added to the message ([SETUP.md](../SETUP.md#files-to-the-agent)) |
 | button / reply to a question | answers a permission or `AskUserQuestion` prompt |
-| `@dancer /model opus`        | the agent's own commands — `/model`, `/clear`, `/compact`, a plugin's — passed to it as typed; `commands` lists what this agent accepts |
+| `/model opus`, `/clear`      | the agent's own commands — `/model`, `/clear`, `/compact`, a plugin's — passed to it as typed; `commands` lists what this agent accepts |
 
-**Slack keeps a leading `/` for itself.** A message that *starts* with `/` is read by Slack
-as one of its own commands and never leaves the client, so an agent command is written
-after the mention — `@dancer /clear` — which dancer strips back to `/clear` before the
-agent sees it. In a DM or a thread the mention is otherwise optional; for these it is not.
-The web UI and the terminal have no such rule: there you type `/clear`.
+**Slack only intercepts the command names it knows.** Its own (`/rename`, `/remind`,
+`/invite`, …) and those of installed apps are answered by Slack and never delivered;
+every other `/name` is posted as an ordinary message, so `/model opus`, `/clear` and
+`/compact` reach the agent as typed — no mention needed in a thread dancer already
+follows.
+
+For a name Slack does own, address the bot first — `@dispatch /rename` — and dancer
+strips the address before the agent sees the rest. That works whether Slack turned the
+handle into a mention (you picked it from the autocomplete) or left it as plain text
+(you typed it, as phones tend to). It has to be *the bot's own handle*, though: a name
+Slack does not recognise is just text, and `@dancer /compact` reaches the agent with the
+`@dancer` still on the front — which makes it a prompt rather than a command.
 
 The full command list (`run`, `default`, `agent add/edit/delete`, `close`, `status`,
 `cancel`, `help`) is in the [README](../README.md#commands) and is the same on every
@@ -159,7 +166,11 @@ See [Surfaces](../SETUP.md#surfaces).
   token is the *Bot* User OAuth Token, not the user one.
 - **Attachment "could not be fetched"** — the app lacks `files:read`, or the file is
   larger than dancer accepts.
-- **`/clear` did nothing / "not a valid command"** — Slack swallowed it. Write
-  `@dancer /clear`; see *Use it* above.
+- **A command was answered by the agent instead of run** — the message reached it with
+  something in front of the `/`. Almost always an address Slack did not recognise:
+  `@dancer /compact` when the bot's handle is `dispatch` is a prompt, not a command.
+  Send it bare (`/compact`), or use the real handle. `dancer doctor` prints it.
+- **A command never arrives** — Slack owns that name (its own, or an installed app's) and
+  answered it itself. Put the bot's mention in front: `@dispatch /rename`.
 
 More in [SETUP.md → Troubleshooting](../SETUP.md#troubleshooting).
