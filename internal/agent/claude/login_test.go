@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment/local"
 )
 
 // shEnv runs commands on the host with its own HOME, standing in for a
@@ -75,7 +75,7 @@ func TestLendLoginCopiesHostCredentials(t *testing.T) {
 	if !fi.ModTime().Equal(hostTime) {
 		t.Errorf("mtime = %v, want the host's %v", fi.ModTime(), hostTime)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".claude", ".dancer-lend-ref")); err == nil {
+	if _, err := os.Stat(filepath.Join(home, ".claude", ".dispatch-lend-ref")); err == nil {
 		t.Error("reference file left behind")
 	}
 }

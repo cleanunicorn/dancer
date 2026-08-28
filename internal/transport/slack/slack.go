@@ -8,7 +8,7 @@
 // Keyed messages (Outbound.Key) are edited in place with chat.update and
 // removed with chat.delete, so a surface can keep one live status line per
 // task instead of posting a new message for every change. The same text is
-// mirrored into the thread's assistant status ("dancer ⏳ thinking · 4s"
+// mirrored into the thread's assistant status ("dispatch ⏳ thinking · 4s"
 // above the composer) with assistant.threads.setStatus, which works once
 // the app has the Agents & AI Apps feature and the assistant:write scope;
 // without them the first failure turns the mirror off for the process.
@@ -60,7 +60,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Transport implements transport.Transport for Slack.
@@ -235,7 +235,7 @@ func (c *Transport) deliver(ctx context.Context, inbox chan<- transport.Inbound,
 	th := threadID(ch, threadTS, ts)
 	if !direct && !c.known(th) {
 		// Unrelated chatter in a channel we are in. Logged because it is
-		// also what a second dancer instance sees for every thread the
+		// also what a second dispatch instance sees for every thread the
 		// other instance owns — a silent drop that looks like the bot
 		// going deaf mid-conversation.
 		c.log.Debug("slack message in an unknown thread ignored", "thread", th)
@@ -620,7 +620,7 @@ func (c *Transport) userName(ctx context.Context, id string) string {
 // address puts a mention of user in front of text, so Slack notifies
 // them even with the thread muted. The mention is ordinary mrkdwn, which
 // the markdown block for agent text does not render, so surfaces only set
-// it on dancer's own lines. A user id from another transport (the task
+// it on dispatch's own lines. A user id from another transport (the task
 // was started from the web UI) is not a Slack user: it is shown as a
 // plain "@name", which notifies nobody but still says who it is for.
 func address(text, user string) string {

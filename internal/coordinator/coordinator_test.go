@@ -10,17 +10,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/surface/feed"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/surface/feed"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // fakeTransport records outbound messages and lets the test inject inbound ones.
@@ -485,7 +485,7 @@ func TestGracefulRestart(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("coordinator did not stop")
 	}
-	tr.waitFor(t, th, "dancer is restarting")
+	tr.waitFor(t, th, "dispatch is restarting")
 	id := firstTask(t, st)
 	ts, _ := st.GetTask(context.Background(), id)
 	if ts.Status != store.StatusInterrupted || ts.Session != "sess-1" || ts.Transport != "slack" {
@@ -506,7 +506,7 @@ func TestGracefulRestart(t *testing.T) {
 	c2.DefaultDefinition = "coder"
 	go c2.Run(ctx2)
 	<-tr2.ready
-	if o := tr2.waitFor(t, th, "dancer is back"); o.Mention != "u1" {
+	if o := tr2.waitFor(t, th, "dispatch is back"); o.Mention != "u1" {
 		t.Errorf("restart notice addressed to %q, want the requester u1", o.Mention)
 	}
 	tr2.mu.Lock()

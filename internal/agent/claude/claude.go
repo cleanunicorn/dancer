@@ -30,8 +30,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Agent implements agent.Agent for Claude Code.
@@ -63,10 +63,10 @@ func (a *Agent) Resume(ctx context.Context, env environment.Environment, def age
 // attachments travel, both ways.
 const shareFilesHint = "You are operated through a chat channel (e.g. Slack). The human cannot open files on this machine. " +
 	"To show them a file you produced (screenshot, report, diagram), write its absolute path on its own in your reply, e.g. `/tmp/settings-top.png`; " +
-	"dancer uploads every mentioned path that exists. Images and PDFs render inline in the chat. " +
+	"dispatch uploads every mentioned path that exists. Images and PDFs render inline in the chat. " +
 	"Files the human attaches to a chat message are copied into this environment and their paths are listed at the end of that message; read them from disk (images and PDFs with the Read tool)."
 
-// cliModes maps the one permission mode the CLI names differently: dancer's
+// cliModes maps the one permission mode the CLI names differently: dispatch's
 // ask-for-everything "manual" is the CLI's "default". Every other mode shares
 // its name on both sides.
 var cliModes = map[agent.PermissionMode]string{agent.PermissionManual: "default"}

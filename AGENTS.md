@@ -14,12 +14,12 @@ git worktree add .claude/worktrees/<short-topic> -b <short-topic>
 `.claude/worktrees/` is gitignored and is where existing worktrees live. In Claude Code, the
 `EnterWorktree` tool does the same thing and switches the session into it.
 
-## Stopping a dancer: gracefully, and never by pattern
+## Stopping a dispatch: gracefully, and never by pattern
 
-dancer runs agents that work on *this repo*, so an agent's cleanup command can stop the
-dancer that is running it. Two rules.
+dispatch runs agents that work on *this repo*, so an agent's cleanup command can stop the
+dispatch that is running it. Two rules.
 
-**Shut it down, do not kill it.** SIGTERM is the contract: dancer notifies live threads,
+**Shut it down, do not kill it.** SIGTERM is the contract: dispatch notifies live threads,
 lets in-flight tool calls finish for `drain_timeout` (default 2m), persists final state and
 exits 0 — and interrupted tasks then resume themselves on the next start. `kill -9` skips
 all of that, cutting tool calls mid-write and leaving tasks that have to be picked up by
@@ -33,19 +33,19 @@ while kill -0 "$pid" 2>/dev/null; do sleep 1; done
 For the deployed service, let systemd do it — it sends SIGTERM and waits `TimeoutStopSec=150`:
 
 ```sh
-sudo systemctl stop dancer        # or: restart
+sudo systemctl stop dispatch        # or: restart
 ```
 
-**Never find a dancer by command-line pattern.** `-f` matches anywhere in the command line, so
-`"bin/dancer run"` also matches the deployed `/usr/local/bin/dancer run`. This has taken the
-production instance down mid-task twice — the second time via `pgrep -f "bin/dancer run"`
+**Never find a dispatch by command-line pattern.** `-f` matches anywhere in the command line, so
+`"bin/dispatch run"` also matches the deployed `/usr/local/bin/dispatch run`. This has taken the
+production instance down mid-task twice — the second time via `pgrep -f "bin/dispatch run"`
 followed by `kill <pid>`, so killing "by pid" is no safer when the pid came from a pattern.
 `pgrep`, `pkill`, `ps | grep` and `killall` are all the same hazard.
 
 Keep the pid from the process you started, and use only that:
 
 ```sh
-env DANCER_CONFIG=/tmp/dancer-test/config.toml bin/dancer run & pid=$!
+env DISPATCH_CONFIG=/tmp/dispatch-test/config.toml bin/dispatch run & pid=$!
 # ... test ...
 kill "$pid"; while kill -0 "$pid" 2>/dev/null; do sleep 1; done
 ```
@@ -54,20 +54,20 @@ If you truly have no pid, anchor to the absolute path you launched and check wha
 before signalling anything:
 
 ```sh
-pgrep -af "^/tmp/dancer-test/bin/dancer run"   # -a: read it first, confirm no /usr/local/bin
+pgrep -af "^/tmp/dispatch-test/bin/dispatch run"   # -a: read it first, confirm no /usr/local/bin
 ```
 
-A `pgrep`/`pkill` pattern that could match `/usr/local/bin/dancer` is always a bug.
+A `pgrep`/`pkill` pattern that could match `/usr/local/bin/dispatch` is always a bug.
 
 ## Commands
 
 ```sh
-make build            # bin/dancer
+make build            # bin/dispatch
 make test             # go test ./...
 make test-race        # go test -race -count=1 ./...
 make lint             # gofmt -l check + go vet   (run before finishing a change)
 make fmt tidy
-make run              # bin/dancer run -config $CONFIG   (Slack)
+make run              # bin/dispatch run -config $CONFIG   (Slack)
 make run-terminal     # same, but the terminal transport — the fastest way to try a chat change
 make run-web          # same, but the web transport (browser UI on web.listen)
 make doctor           # config, claude login, docker, ssh hosts, Slack tokens
@@ -79,25 +79,25 @@ Single test / package:
 ```sh
 go test ./internal/coordinator -run TestName -v
 go test -race -count=1 ./internal/coordinator     # coordinator is concurrent; use -race
-DANCER_LIVE=1 go test -count=1 ./internal/agent/claude   # drives the real claude CLI (~cents, haiku)
-DANCER_LIVE=1 go test -count=1 ./internal/decider ./internal/coordinator -run Live   # real decider verdicts
+DISPATCH_LIVE=1 go test -count=1 ./internal/agent/claude   # drives the real claude CLI (~cents, haiku)
+DISPATCH_LIVE=1 go test -count=1 ./internal/decider ./internal/coordinator -run Live   # real decider verdicts
 make e2e              # scripts/e2e.py: whole binary through the terminal transport
 make restart-drill    # scripts/restart-drill.py: SIGTERM mid-tool-call → drain → resume
 ```
 
-`DANCER_DOCKER_PROVISION=1 go test ./internal/environment/docker` builds a real image from
+`DISPATCH_DOCKER_PROVISION=1 go test ./internal/environment/docker` builds a real image from
 `ubuntu:24.04` (~60s, downloads packages); it is skipped otherwise.
 
 Tests that need real infrastructure skip themselves rather than fail: docker tests need a live
-daemon, ssh tests spin up a throwaway `sshd`, live claude tests need `DANCER_LIVE=1` plus a
+daemon, ssh tests spin up a throwaway `sshd`, live claude tests need `DISPATCH_LIVE=1` plus a
 logged-in `claude`. Keep that pattern for new integration tests.
 
-Config path is `$DANCER_CONFIG`, else `~/.config/dancer/config.toml`. `deploy/config.example.toml`
+Config path is `$DISPATCH_CONFIG`, else `~/.config/dispatch/config.toml`. `deploy/config.example.toml`
 is the reference for every key.
 
 ## Architecture
 
-One Go binary (`cmd/dancer`: `run` | `setup` | `doctor` | `user`). Data flows in one loop:
+One Go binary (`cmd/dispatch`: `run` | `setup` | `doctor` | `user`). Data flows in one loop:
 
 ```
 transports --Inbound--> surfaces --Intent--> Coordinator --Task--> Executor --> Agent --> Environment
@@ -113,10 +113,10 @@ files first — they carry the contract, the concrete packages under them are im
   (Slack: `"<channel>/<thread_ts>"`; web: `"<channel>/<id>"`). It never interprets a message.
   Files go both ways: `Outbound.Files` are uploaded after the text; `Inbound.Files` are the
   attachments a human sent, downloaded by the transport (Slack: `files:read`), and the executor
-  copies them into the environment under `/tmp/dancer/inbox/<task>/` and appends the paths to the
+  copies them into the environment under `/tmp/dispatch/inbox/<task>/` and appends the paths to the
   message. `File.Data` is never written to the event log, only the name — so the web UI shows a
   thread's past attachments by name only, and the bytes while the page is open.
-  **A conversation belongs to dancer, not to a transport.** The transport that minted the id
+  **A conversation belongs to dispatch, not to a transport.** The transport that minted the id
   *hosts* it (`TaskState.Transport`) and renders it natively; a `transport.Observer` (the web UI)
   is shown every thread of every transport, and anyone may write into any thread. The
   coordinator relays what humans write to the host and the observers as `Outbound.From`
@@ -128,7 +128,7 @@ files first — they carry the contract, the concrete packages under them are im
   coordinator through `transport.History` (`coordinator/threads.go`) — threads with what runs
   them (agent, model, environment, session), the agent list, and messages with the agent's
   tool calls as `Entry.Tool`, paired from the log's `agent` records; only the live status line
-  and the open prompt per thread are kept in memory. Its users are accounts in the store (`dancer user add`,
+  and the open prompt per thread are kept in memory. Its users are accounts in the store (`dispatch user add`,
   `web/auth.go`: PBKDF2 hashes, sessions by token hash); the session's name is the
   `Inbound.UserID`. `Inbound.UserName` is the display name when a transport has one (Slack:
   users.info, cached).
@@ -163,7 +163,7 @@ files first — they carry the contract, the concrete packages under them are im
   Docker and SSH shell out to the `docker` and `ssh` CLIs deliberately (no SDKs; the user's ssh
   config/agent and docker context just work). Docker also *provisions*: `Spec.Provision` turns a
   plain base image into an agent-ready one (git, the GitHub CLI, Node, the agent CLI, a user with
-  the host uid and a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
+  the host uid and a writable `$HOME`) and `docker commit`s it as `dispatch-env:<hash>`, built once per hash;
   `Spec.Reuse`/`ReuseKey` keep one container per thread or definition with `$HOME` on a volume.
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
@@ -192,7 +192,7 @@ files first — they carry the contract, the concrete packages under them are im
   to reach the transport in that order. Heartbeat output is not written to the event log.
 - **Agent text is Markdown, ours is transport markup.** `Outbound.Markdown` is set only on what the
   agent wrote; Slack renders it through a Block Kit `markdown` block (falling back to plain text)
-  while dancer's own lines stay mrkdwn (`*bold*`, backticks).
+  while dispatch's own lines stay mrkdwn (`*bold*`, backticks).
 - **The Claude handshake is protocol-sensitive** (`internal/agent/claude`): spawn with
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
   `can_use_tool` with a `control_response`. After each turn on a subscription login it also sends a
@@ -213,13 +213,13 @@ files first — they carry the contract, the concrete packages under them are im
   more recently alone. It lends nothing when the definition's env carries a key
   (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, …), and never to local (same home) or ssh
   (someone else's machine). Without a host login the CLI's `Not logged in` result is annotated
-  with what to do. `TestLiveDockerLogin` (`DANCER_LIVE=1`) proves it in a provisioned `ubuntu:24.04`.
+  with what to do. `TestLiveDockerLogin` (`DISPATCH_LIVE=1`) proves it in a provisioned `ubuntu:24.04`.
 - **A container borrows the host's GitHub login the same way** (`internal/gh`). Provisioning puts
   `gh` in every derived image, and before a task starts the executor writes the host's
   `~/.config/gh/hosts.yml` into the container's gh config dir and runs `gh auth setup-git`, so both
   `gh pr create` and `git push` speak for the operator's account. The token comes from that
   hosts.yml, else `gh auth token` (a login the host keeps in a keyring), else
-  `GH_TOKEN`/`GITHUB_TOKEN` in dancer's own environment; a hosts.yml in the container newer than
+  `GH_TOKEN`/`GITHUB_TOKEN` in dispatch's own environment; a hosts.yml in the container newer than
   the host's is left alone (only the first source carries an mtime — a bare token is stamped now
   and re-lent every task). Nothing is lent to local (same home) or ssh (someone else's machine),
   or when the definition's env carries `GH_TOKEN`/`GITHUB_TOKEN`. It lends the host's **git
@@ -229,7 +229,7 @@ files first — they carry the contract, the concrete packages under them are im
   used. The identity is lent even when the login is the definition's own, and never overwrites one
   already in the container (`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` in the definition's env opts
   out). Nothing here can fail a task: without a login the agent meets `gh`'s own "please run gh
-  auth login", and `dancer doctor` says what would be lent and who a container would commit as.
+  auth login", and `dispatch doctor` says what would be lent and who a container would commit as.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

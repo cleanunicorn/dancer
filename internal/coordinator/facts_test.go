@@ -8,17 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // TestFactsReadTheThreadBack builds a thread's history in the log the way
@@ -90,7 +90,7 @@ func TestFactsReadTheThreadBack(t *testing.T) {
 }
 
 // TestFactsAreThisTasksOwn: an earlier task on the same thread does not
-// lend this one its last words, and the outbound copies dancer posted
+// lend this one its last words, and the outbound copies dispatch posted
 // do not push the human's message out of the window.
 func TestFactsAreThisTasksOwn(t *testing.T) {
 	th := transport.ThreadID("C-dev/41.0")
@@ -190,11 +190,11 @@ func TestAskPutsTheChoiceToTheThread(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &stubDecider{verdict: decider.Verdict{Action: actionAsk,
-				Prompt: "The tests were still running when dancer stopped. Finish the run?",
+				Prompt: "The tests were still running when dispatch stopped. Finish the run?",
 				Reason: "could go either way"}}
 			tr, st, th := startWithDecider(t, d, []string{kindResume})
 
-			q := tr.waitFor(t, th, "The tests were still running when dancer stopped")
+			q := tr.waitFor(t, th, "The tests were still running when dispatch stopped")
 			if q.Prompt == nil || len(q.Prompt.Options) != 2 {
 				t.Fatalf("question prompt = %+v", q.Prompt)
 			}

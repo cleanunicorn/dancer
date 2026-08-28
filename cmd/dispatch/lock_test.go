@@ -9,7 +9,7 @@ import (
 )
 
 func TestLockInstanceRejectsSecondHolder(t *testing.T) {
-	db := filepath.Join(t.TempDir(), "nested", "dancer.db")
+	db := filepath.Join(t.TempDir(), "nested", "dispatch.db")
 
 	release, err := lockInstance(db)
 	if err != nil {

@@ -12,10 +12,10 @@ package surface
 import (
 	"context"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Surface interprets inbound traffic and renders coordinator events.
@@ -132,7 +132,7 @@ const (
 	EventHeartbeat  EventKind = "heartbeat"  // the task is still at it (or just stopped being); Task.Status says which
 	EventClosed     EventKind = "closed"     // the conversation on Thread was closed
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
-	EventNotice     EventKind = "notice"     // Text is dancer's own word on Task that asks the human to act (a restart left it for them)
+	EventNotice     EventKind = "notice"     // Text is dispatch's own word on Task that asks the human to act (a restart left it for them)
 	EventError      EventKind = "error"      // Text explains a failure
 )
 
@@ -141,7 +141,7 @@ const (
 // EventHeartbeat is the coordinator's periodic word on a live task: it
 // is sent every few seconds while an agent turn is running, once more
 // when the turn leaves that state (a decision is pending, the turn ended,
-// dancer is shutting down), and right after a follow-up was handed to a
+// dispatch is shutting down), and right after a follow-up was handed to a
 // live process. Surfaces use it to show that something is happening —
 // the chat surface keeps a status line alive with it — and to take that
 // display down when Task.Status is no longer running.

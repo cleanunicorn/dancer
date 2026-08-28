@@ -7,12 +7,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
-// A conversation belongs to dancer, not to a transport. The transport
+// A conversation belongs to dispatch, not to a transport. The transport
 // that minted its ThreadID hosts it — its task records that name
 // (store.TaskState.Transport) — and renders it natively; every other
 // transport that follows it (transport.Observer) is shown the same

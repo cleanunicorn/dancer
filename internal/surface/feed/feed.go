@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Surface implements surface.Surface.

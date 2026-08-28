@@ -1,12 +1,12 @@
-// Package decider answers dancer's policy questions — "should this task be
+// Package decider answers dispatch's policy questions — "should this task be
 // picked up?", "is this tool call worth waking a human for?" — with a small
-// model, and with dancer's own rules as the answer it falls back to.
+// model, and with dispatch's own rules as the answer it falls back to.
 //
 // The contract that keeps this safe: a decider narrows, it never widens. The
 // caller works out which actions are acceptable and what the rules alone
 // would answer, and passes both in the question; a verdict is only ever a
 // choice among Options. A decider that is off, slow, broken or talked into
-// something by an agent's output leaves dancer exactly as it is without one.
+// something by an agent's output leaves dispatch exactly as it is without one.
 package decider
 
 import (
@@ -24,8 +24,8 @@ type Question struct {
 	Task    string   `json:"task"`    // task id, for the log ("" if none)
 	Thread  string   `json:"thread"`  // thread id, for the log
 	Options []string `json:"options"` // the only acceptable actions
-	Facts   any      `json:"facts"`   // what dancer knows; untrusted content
-	Static  Verdict  `json:"static"`  // what dancer's rules alone answer
+	Facts   any      `json:"facts"`   // what dispatch knows; untrusted content
+	Static  Verdict  `json:"static"`  // what dispatch's rules alone answer
 }
 
 // Verdict is the answer. Prompt is only meaningful for kinds that hand text
@@ -51,7 +51,7 @@ type Decider interface {
 	Decide(ctx context.Context, q Question) (Verdict, error)
 }
 
-// Static is the decider that always answers with dancer's own rules. It is
+// Static is the decider that always answers with dispatch's own rules. It is
 // what runs when no decider is configured, and what every other decider
 // falls back to.
 type Static struct{}

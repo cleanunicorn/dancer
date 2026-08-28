@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Auto-resume drill against the real binary and claude (haiku).
 
-    scripts/auto-resume-drill.py bin/dancer
+    scripts/auto-resume-drill.py bin/dispatch
 
 Starts a task whose tool call sleeps 8s, sends SIGTERM while it runs, then
-restarts dancer and checks the task carries on by itself — nothing is typed
+restarts dispatch and checks the task carries on by itself — nothing is typed
 into the thread after the restart.
 """
 import os, select, signal, subprocess, sys, tempfile, time
 bin_ = os.path.abspath(sys.argv[1])
-tmp = tempfile.mkdtemp(prefix="dancer-autoresume-")
+tmp = tempfile.mkdtemp(prefix="dispatch-autoresume-")
 cfg = os.path.join(tmp, "config.toml")
 open(cfg, "w").write(f"""[server]
-db = "{tmp}/dancer.db"
+db = "{tmp}/dispatch.db"
 workdir_root = "{tmp}/work"
 idle_timeout = "60s"
 drain_timeout = "60s"
@@ -46,8 +46,8 @@ p=start(); ok&=wait_for(p,"type `help`")
 send(p,"run coder Run `sleep 8` with Bash, then write the file done.txt containing DONE, then reply exactly: FINISHED")
 time.sleep(6)  # the sleep is in flight
 print(">>> SIGTERM"); p.send_signal(signal.SIGTERM)
-ok&=wait_for(p,"dancer is restarting")
-p.wait(90); print("\n[dancer exited]"); print("STDERR tail:", p.stderr.read()[-600:])
+ok&=wait_for(p,"dispatch is restarting")
+p.wait(90); print("\n[dispatch exited]"); print("STDERR tail:", p.stderr.read()[-600:])
 
 # Restart and type NOTHING: the task has to finish on its own.
 p=start()
@@ -61,7 +61,7 @@ print("done.txt exists:", done)
 send(p,"Reply with exactly: HELLO")   # follow-up on the same live session
 ok&=wait_for(p,"HELLO",120); ok&=wait_for(p,"✅ done",60)
 print(">>> SIGTERM (agent idle, not mid-turn)"); p.send_signal(signal.SIGTERM)
-ok&=wait_for(p,"dancer is restarting"); p.wait(90)
+ok&=wait_for(p,"dispatch is restarting"); p.wait(90)
 p=start(); ok&=wait_for(p,"type `help`")
 time.sleep(5)
 quiet = not wait_for(p,"picking up this task",timeout=5)

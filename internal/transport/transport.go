@@ -1,11 +1,11 @@
 // Package transport defines the communication channels humans use to reach
-// dancer: Slack, a terminal, the web UI, later Telegram.
+// dispatch: Slack, a terminal, the web UI, later Telegram.
 //
 // A Transport moves messages and knows how to address a conversation
 // (ThreadID). It has no idea what the messages mean — that is the job of a
 // surface (package surface), and several surfaces can share one transport.
 //
-// A conversation belongs to dancer, not to the transport it started on.
+// A conversation belongs to dispatch, not to the transport it started on.
 // Its ThreadID is minted by the transport that hosts it (Slack: a channel
 // and a message ts) and that transport renders it natively; but any
 // transport may post into it, and a transport that can list conversations
@@ -61,7 +61,7 @@ type Outbound struct {
 	// From, when set, says a human wrote Text (or made Decision) on
 	// another transport: the coordinator relays what people say so every
 	// transport showing the thread has the whole conversation. A
-	// transport renders it as that person's message, not dancer's
+	// transport renders it as that person's message, not dispatch's
 	// (Slack: "💬 *name* via web: …"; the web UI: a message bubble with
 	// their name). Transports never write it themselves.
 	From *Author
@@ -240,7 +240,7 @@ type AgentInfo struct {
 }
 
 // History is the read side an Observer needs: the channels of every
-// transport, the agents that can be run, the conversations dancer knows
+// transport, the agents that can be run, the conversations dispatch knows
 // and what was said in one, rebuilt from the coordinator's log. Messages
 // come back as the Outbounds the thread saw, with what humans wrote as
 // Outbound.From entries, oldest first, and the tools the agent ran

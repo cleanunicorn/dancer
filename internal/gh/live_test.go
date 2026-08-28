@@ -8,19 +8,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/environment/docker"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment/docker"
 )
 
 // TestLiveDockerLend lends this host's GitHub login and identity into a
 // container provisioned from ubuntu:24.04 and proves they took: `gh auth
 // status` there authenticates against the real API, git commits as the
 // host does, and git is pointed at gh for github.com so a push would use
-// the same account. Run with DANCER_LIVE=1 and a docker daemon; the first
+// the same account. Run with DISPATCH_LIVE=1 and a docker daemon; the first
 // run builds the image (~90s).
 func TestLiveDockerLend(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to talk to the real GitHub")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to talk to the real GitHub")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skip("docker not available")

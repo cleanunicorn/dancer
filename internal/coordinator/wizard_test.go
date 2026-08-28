@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 func TestAddAgentFlow(t *testing.T) {
@@ -126,7 +126,7 @@ func TestAddAgentFlowSurvivesRestart(t *testing.T) {
 	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, 200*time.Millisecond)
 	th := transport.ThreadID("C-dev/11.0")
 
-	// First life: answer the name, then dancer restarts.
+	// First life: answer the name, then dispatch restarts.
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	tr1 := &fakeTransport{name: "slack", ready: make(chan struct{})}
 	c1 := New(st, ex, []transport.Transport{tr1}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
@@ -139,7 +139,7 @@ func TestAddAgentFlowSurvivesRestart(t *testing.T) {
 	tr1.waitFor(t, th, "Which model")
 	cancel1()
 	<-done1
-	tr1.waitFor(t, th, "dancer is restarting")
+	tr1.waitFor(t, th, "dispatch is restarting")
 	if flows, _ := st.ListFlows(context.Background()); len(flows) != 1 || len(flows[0].Answers) != 1 || flows[0].Answers[0] != "reviewer" {
 		t.Fatalf("flows after shutdown = %+v", flows)
 	}
@@ -151,7 +151,7 @@ func TestAddAgentFlowSurvivesRestart(t *testing.T) {
 	c2 := New(st, ex, []transport.Transport{tr2}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
 	go c2.Run(ctx2)
 	<-tr2.ready
-	tr2.waitFor(t, th, "dancer is back")
+	tr2.waitFor(t, th, "dispatch is back")
 	tr2.waitFor(t, th, "Which model")
 	tr2.mu.Lock()
 	for _, o := range tr2.out {
@@ -289,7 +289,7 @@ func TestEditAndDeleteAgent(t *testing.T) {
 	tr.waitFor(t, th2, "Host directory to mount")
 	tr.say(th2, "none")
 	m := tr.waitForN(t, th2, "What do you want to change?", 2)
-	if !strings.Contains(m.Text, "docker ghcr.io/x/claude · provisioned · container per thread · directory dancer manages") || strings.Contains(m.Text, "env FOO") {
+	if !strings.Contains(m.Text, "docker ghcr.io/x/claude · provisioned · container per thread · directory dispatch manages") || strings.Contains(m.Text, "env FOO") {
 		t.Fatalf("menu after environment change (env must not carry over to another kind):\n%s", m.Text)
 	}
 	tr.say(th2, "Cancel")

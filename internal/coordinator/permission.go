@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
 )
 
-// The permission question. dancer's own answer is always actionAsk — a
+// The permission question. dispatch's own answer is always actionAsk — a
 // prompt reached a human today, so that is the behaviour a decider has to
 // improve on, and the one every failure falls back to.
 const (

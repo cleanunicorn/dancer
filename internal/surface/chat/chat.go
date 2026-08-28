@@ -34,10 +34,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Surface implements surface.Surface.
@@ -474,9 +474,9 @@ func plural(n int, noun string) string {
 }
 
 // initLine is the session-details line for an init event, or "" when the
-// thread already saw the same one from this dancer process. A follow-up
+// thread already saw the same one from this dispatch process. A follow-up
 // after idle_timeout resumes the CLI and reports the same details again;
-// a restart clears the memory, so the line comes back when dancer does.
+// a restart clears the memory, so the line comes back when dispatch does.
 // Called with s.mu held.
 func (s *Surface) initLine(ev surface.Event) string {
 	text := describeInit(ev)

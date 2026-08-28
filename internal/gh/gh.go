@@ -4,7 +4,7 @@
 // An agent that opens pull requests needs a logged-in `gh`, and a fresh
 // container has none: `gh pr create` there ends with "To get started with
 // GitHub CLI, please run: gh auth login". Rather than make every docker
-// definition carry a token, dancer lends the host's login the way it lends
+// definition carry a token, dispatch lends the host's login the way it lends
 // the claude one: before a task starts it writes the host's hosts.yml into
 // the environment's gh config dir and runs `gh auth setup-git`, so both
 // `gh` and `git push` speak for the operator's account.
@@ -20,18 +20,18 @@
 //     (github.com, an enterprise server) is lent with it;
 //   - `gh auth token` on the host, for a login kept in the system keyring,
 //     where hosts.yml holds the account but no token;
-//   - GH_TOKEN / GITHUB_TOKEN in dancer's own environment.
+//   - GH_TOKEN / GITHUB_TOKEN in dispatch's own environment.
 //
 // The copy keeps the source's mtime, and a hosts.yml in the environment
 // that is newer than that is left alone: something in there logged in
-// after dancer last lent, and that login is the current one. Only the
+// after dispatch last lent, and that login is the current one. Only the
 // first source has an mtime to keep; a token from the other two is stamped
 // with the current time, so it always counts as the newer login and is
 // re-lent at every task.
 //
 // Nothing is lent when
 //   - the environment is not docker: local is the same home already, and
-//     ssh is someone else's machine with its own login, not dancer's to
+//     ssh is someone else's machine with its own login, not dispatch's to
 //     overwrite;
 //   - the definition's env carries GH_TOKEN or GITHUB_TOKEN: that is the
 //     operator choosing how the container authenticates.
@@ -51,7 +51,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // keyEnv are the variables that authenticate gh without a login. A
@@ -75,7 +75,7 @@ const DefaultHost = "github.com"
 const lendScript = `set -e
 d="${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"
 f="$d/hosts.yml"
-ref="$d/.dancer-lend-ref.$$"
+ref="$d/.dispatch-lend-ref.$$"
 tmp="$f.tmp.$$"
 result=copied
 umask 077
@@ -138,7 +138,7 @@ func HostsPath() string {
 }
 
 // HostLogin finds a login on this host to lend, trying hosts.yml, then the
-// `gh auth token` the CLI can produce from a keyring, then dancer's own
+// `gh auth token` the CLI can produce from a keyring, then dispatch's own
 // environment.
 func HostLogin(ctx context.Context) (Login, error) {
 	if path := HostsPath(); path != "" {
@@ -186,7 +186,7 @@ func cliToken(ctx context.Context) (string, error) {
 }
 
 // usableToken rejects anything that is not a bare token, so nothing that
-// would need quoting or span lines reaches the file dancer writes.
+// would need quoting or span lines reaches the file dispatch writes.
 func usableToken(tok string) bool {
 	return tok != "" && !strings.ContainsAny(tok, " \t\r\n\"'#")
 }
@@ -209,7 +209,7 @@ func synthesize(token, source string) Login {
 //
 // It never fails a task: a login that cannot be lent is logged, and the
 // agent meets gh's own "please run gh auth login", which says more about
-// what to do than anything dancer could report from here.
+// what to do than anything dispatch could report from here.
 func Lend(ctx context.Context, env environment.Environment, envVars map[string]string) {
 	if env.Kind() != environment.KindDocker {
 		return

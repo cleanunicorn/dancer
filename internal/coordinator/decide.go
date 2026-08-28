@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Question kinds. "resume" is asked in recover(), "permission" in
@@ -61,7 +61,7 @@ func (c *Coordinator) askAboutResume(ctx context.Context, t store.TaskState, v d
 	if strings.TrimSpace(text) == "" {
 		text = "This task was cut short by a restart" + reasonSuffix(v.Reason) + ". Continue it?"
 	}
-	q := agent.Question{Header: "dancer is back", Text: text,
+	q := agent.Question{Header: "dispatch is back", Text: text,
 		Options: []agent.Option{
 			{Label: actionContinue, Description: "resume where the agent left off"},
 			{Label: "drop", Description: "leave it; " + pickUpHint(t)},
@@ -171,7 +171,7 @@ func reasonOr(reason, fallback string) string {
 
 // decide answers a policy question. It is total: whatever the decider does
 // — refuse, hang, crash, answer something outside the options — the caller
-// gets a usable verdict, and the answer of dancer's own rules is what it
+// gets a usable verdict, and the answer of dispatch's own rules is what it
 // falls back to. Every verdict is appended to the event log with the facts
 // it was made from.
 func (c *Coordinator) decide(ctx context.Context, q decider.Question) decider.Verdict {
@@ -308,7 +308,7 @@ const (
 // The last human message is the thread's, whichever task it started; the
 // agent events are this task's only — an earlier task's "all done" on the
 // same thread is not this one's last word. They are two reads, because
-// every outbound message dancer posted sits in the same log and a verbose
+// every outbound message dispatch posted sits in the same log and a verbose
 // turn would otherwise push the human's message out of any window.
 func (c *Coordinator) factsForResume(ctx context.Context, t store.TaskState) resumeFacts {
 	f := resumeFacts{

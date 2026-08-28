@@ -16,14 +16,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store"
 )
 
 // Users are accounts of the web UI. Every request to the API carries a
 // session cookie that names one; that name is the Inbound.UserID (and
 // UserName) of whatever the person sends, so the agent's closing line
 // and prompts address them by it and a second person in the same thread
-// is a second name. Accounts are made with `dancer user add` and kept
+// is a second name. Accounts are made with `dispatch user add` and kept
 // in the store with a PBKDF2 hash of the password; sessions are kept
 // there too, by the hash of the token the browser holds, so a restart
 // logs nobody out and a copy of the database logs nobody in.
@@ -39,7 +39,7 @@ type Users interface {
 }
 
 const (
-	sessionCookie = "dancer_session"
+	sessionCookie = "dispatch_session"
 	sessionTTL    = 30 * 24 * time.Hour
 	hashLen       = 32
 )
@@ -48,7 +48,7 @@ const (
 // SHA-256); a stored hash carries its own. Tests lower it.
 var hashIters = 600_000
 
-// ValidName reports whether a user name is one dancer accepts: a short
+// ValidName reports whether a user name is one dispatch accepts: a short
 // word, so it reads well in "✅ done" lines and cannot be confused with
 // a Slack id.
 var ValidName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
@@ -94,7 +94,7 @@ func CheckPassword(encoded, password string) bool {
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
-// GeneratePassword makes a random password for `dancer user add` to
+// GeneratePassword makes a random password for `dispatch user add` to
 // print: 16 characters from an alphabet without look-alikes.
 func GeneratePassword() (string, error) {
 	const alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"

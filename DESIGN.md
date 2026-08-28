@@ -1,5 +1,5 @@
 ---
-name: dancer web UI
+name: dispatch web UI
 description: A flight-progress strip board for supervising coding agents; paper strips in an aluminium rack, lamps for state, ink for what humans write.
 colors:
   # the console (HeroUI theme variables, light values; dark values in .impeccable/design.json)
@@ -184,7 +184,7 @@ components:
     padding: "0 4px"
 ---
 
-# Design System: dancer web UI
+# Design System: dispatch web UI
 
 ## Overview
 
@@ -192,9 +192,9 @@ components:
 
 Every thread is a paper flight-progress strip. The operator reads a rack of printed strips down the left edge and pulls one onto the desk; the open strip sits across the head of the desk with its fields printed on it, the log runs beneath it in a time-gutter grid, and the printer (the composer) sits along the bottom. The console is brushed aluminium in daylight and graphite-blue at night; the paper is always light and the ink is always dark, whichever the scheme. State is carried by a lamp (amber asks, green runs, red failed) and a four-letter printed flag, never by colour alone, and a strip that needs a human is lit and cocked out of the rack so it is found without hunting.
 
-The world refuses the chat-app scaffold: no avatars, no bubbles, no sidebar list of conversations. Instead the material says who is speaking. Humans write on paper (strips, slips, prompts); the machine speaks on the desk (agent Markdown, dancer's own lines in the rack's muted voice). Density is high and quiet: an all-day second-monitor surface that earns trust by being legible from across the room and calm up close.
+The world refuses the chat-app scaffold: no avatars, no bubbles, no sidebar list of conversations. Instead the material says who is speaking. Humans write on paper (strips, slips, prompts); the machine speaks on the desk (agent Markdown, dispatch's own lines in the rack's muted voice). Density is high and quiet: an all-day second-monitor surface that earns trust by being legible from across the room and calm up close.
 
-Type follows the same split. Anything printed on a strip or measured (flags, field values, elapsed times, the time gutter, labels, the live line) is set in the system monospace; prose (titles, agent text, dancer's lines, help) is the system sans. No fonts are bundled.
+Type follows the same split. Anything printed on a strip or measured (flags, field values, elapsed times, the time gutter, labels, the live line) is set in the system monospace; prose (titles, agent text, dispatch's lines, help) is the system sans. No fonts are bundled.
 
 **Key Characteristics:**
 - Paper on a console: warm buff and pale-blue strips lift off a cool grey-blue rack and desk.
@@ -213,11 +213,11 @@ A cool grey-blue console (hue 250) that recedes, warm paper (hues 80-92) that re
 - **Amber Paper** (`{colors.paper-amber}`): the paper a waiting strip, the desk strip while waiting, and an open prompt are printed on. Amber paper and the amber lamp always appear together.
 
 ### Secondary
-- **Green Lamp** (`{colors.lamp-run}`) and **Run Flag Ink** (`{colors.flag-run-ink}`): the agent is working, or the link is up. `{colors.success}` tints a dancer line that begins with a check mark.
-- **Red Lamp** (`{colors.lamp-fail}`), **Fail Flag Ink** (`{colors.flag-fail-ink}`), **Pink Paper** (`{colors.paper-pink}`): a failed task. `{colors.danger}` is the DENY button and a dancer line that begins with a cross.
+- **Green Lamp** (`{colors.lamp-run}`) and **Run Flag Ink** (`{colors.flag-run-ink}`): the agent is working, or the link is up. `{colors.success}` tints a dispatch line that begins with a check mark.
+- **Red Lamp** (`{colors.lamp-fail}`), **Fail Flag Ink** (`{colors.flag-fail-ink}`), **Pink Paper** (`{colors.paper-pink}`): a failed task. `{colors.danger}` is the DENY button and a dispatch line that begins with a cross.
 
 ### Neutral
-- **Console** (`{colors.console-bg}` / `{colors.console-fg}`): the desk. Agent Markdown and dancer's lines sit directly on it; `{colors.console-muted}` is the gutter, the speaker label and dancer's ordinary voice.
+- **Console** (`{colors.console-bg}` / `{colors.console-fg}`): the desk. Agent Markdown and dispatch's lines sit directly on it; `{colors.console-muted}` is the gutter, the speaker label and dispatch's ordinary voice.
 - **Console Surface** (`{colors.console-surface}`, `{colors.console-surface-secondary}`): the printer bar, choice buttons, code headers; `{colors.console-field}` is the textarea and fenced code on the desk.
 - **Rack** (`{colors.rack}` / `{colors.rack-ink}` / `{colors.rack-rule}`): the aluminium the strips sit in, its stamped labels, and the 1px rules between bays. The rack carries a faint 8px horizontal grain (`repeating-linear-gradient`, 3.5% black in light, 2.5% white in dark).
 - **Buff Paper** (`{colors.paper-buff}`): the default strip, slip and desk strip (threads hosted by the web transport). **Blue Paper** (`{colors.paper-blue}`): anything hosted by or written from Slack. **Grey Paper** (`{colors.paper-grey}`): a closed thread or a settled prompt; it casts no shadow.
@@ -229,7 +229,7 @@ A cool grey-blue console (hue 250) that recedes, warm paper (hues 80-92) that re
 
 **The Paper Is Always Lit Rule.** Paper stays light and ink stays dark in both colour schemes; the dark scheme darkens the console and the rack, lowers paper by ~0.03 L, and leaves every `ink` token untouched.
 
-**The Paper/Desk Rule.** What a human writes or must answer is printed on paper; what the machine says sits on the desk. Agent Markdown and dancer's own lines never get a paper background.
+**The Paper/Desk Rule.** What a human writes or must answer is printed on paper; what the machine says sits on the desk. Agent Markdown and dispatch's own lines never get a paper background.
 
 **The Host Colour Rule.** Blue paper means Slack hosts or wrote it; buff means the web. The host colour yields to state: a waiting strip is amber and a failed strip is pink whoever hosts it.
 
@@ -245,7 +245,7 @@ A cool grey-blue console (hue 250) that recedes, warm paper (hues 80-92) that re
 - **Headline** (600, 15px, 1.25): the pulled strip's title on the desk and the wordmark in the rack. Truncates on one line.
 - **Title** (500, 13px, 1.25; 700 while the thread is fresh/unread): a strip's title in the rack. One line, ellipsis.
 - **Body** (400, 14px, 1.55): agent Markdown and human slips; measure 72ch. Markdown headings step 1.2em / 1.1em / 1.02em at 600, never larger.
-- **Sys** (400, 13px, 1.45): dancer's own lines, in `console-muted`; measure 80ch; tinted by leading glyph (ok/bad/warn) and raised to `console-fg` when it mentions the signed-in user.
+- **Sys** (400, 13px, 1.45): dispatch's own lines, in `console-muted`; measure 80ch; tinted by leading glyph (ok/bad/warn) and raised to `console-fg` when it mentions the signed-in user.
 - **Data** (mono 400, 12px, 1.3, tabular): field values on the desk strip, the live status line, the prompt text riding on the strip, file names.
 - **Gutter** (mono 400, 11px, 1.2, tabular): the time column, a strip's second line and age, the speaker line.
 - **Label** (mono 400, 11px, 0.06em, uppercase): bay labels, the speaker label, `@mention`. Field keys on the desk strip and form labels drop to 10px at 0.1em.
@@ -305,13 +305,13 @@ Motion is paper motion only: a strip pulled onto the desk drops in over 220ms (`
 - **Style:** buff paper (blue when written via Slack), 2px corners, paper-at-rest shadow, 0.45rem 0.7rem padding, max 72ch, preformatted wrapping. Speaker line in `ink-2` with the name in `ink`. Links in `ink`, underlined. Code on paper is inked, not lit: 7% black background, `ink-rule` border.
 
 ### Prompt
-- **Style:** amber paper, pulled shadow, lamp lit amber, speaker "dancer" or "@user". Text in mrkdwn; then the choices.
+- **Style:** amber paper, pulled shadow, lamp lit amber, speaker "dispatch" or "@user". Text in mrkdwn; then the choices.
 - **Choices:** ALLOW is the primary button (`accent` amber, dark text), DENY is the danger button, any other choice or an option is a secondary button with a 25% ink border on `console-surface`; free-text answers get a field plus an uppercase ANSWER button. Button faces are mono uppercase `tracking-wider`.
 - **Settled:** grey paper, rest shadow, `ink-2` text, lamp off; the answer appears as a decision stamp ("ALLOW" rotated -1.5deg) followed by who decided, via which transport, and the clock. A prompt answered elsewhere reads "settled elsewhere".
 
-### Agent text and dancer lines (on the desk)
+### Agent text and dispatch lines (on the desk)
 - **Agent:** speaker line "AGENT", then Markdown at body size in a 72ch measure. Fences sit on `console-field` with a `console-border` rule and 3px corners at 12.5px; inline code is mono at 0.92em on a 9% currentColor tint; tables are bordered with `console-surface-secondary` headers; blockquotes are a 1px left rule in muted.
-- **Sys:** 13px sans in `console-muted`, 80ch, no background. Tone follows the leading glyph dancer already emits: check = `success`, cross = `danger`, pause/warn/stop/recycle = `warning`; a line addressed to the signed-in user is `console-fg` with a mono uppercase amber `@name` in front.
+- **Sys:** 13px sans in `console-muted`, 80ch, no background. Tone follows the leading glyph dispatch already emits: check = `success`, cross = `danger`, pause/warn/stop/recycle = `warning`; a line addressed to the signed-in user is `console-fg` with a mono uppercase amber `@name` in front.
 - **Live line:** mono 12px `console-fg` with a green lamp, truncating on one line, at the foot of the log.
 
 ### Lamp and flag
@@ -330,7 +330,7 @@ Motion is paper motion only: a strip pulled onto the desk drops in over 220ms (`
 - **Style:** mono 10.5px on `console-surface`, 1px `console-border` with a 2px bottom, 3px corners, 0 4px padding.
 
 ### The mark
-dancer's mark is a strip with its lamp lit: a 17x10 buff rectangle with a 1px ink stroke and 1px corner, a dashed perforation at x=4.5, an amber lamp at (8.5,10), and two ink lines of printed text. It is drawn from the live tokens in the UI (`var(--paper)`, `var(--ink)`, `var(--lamp-wait)`) and with fixed hex in the favicon. It appears at 18px in the rack, 22px on the login card, 40px on the empty desk.
+dispatch's mark is a strip with its lamp lit: a 17x10 buff rectangle with a 1px ink stroke and 1px corner, a dashed perforation at x=4.5, an amber lamp at (8.5,10), and two ink lines of printed text. It is drawn from the live tokens in the UI (`var(--paper)`, `var(--ink)`, `var(--lamp-wait)`) and with fixed hex in the favicon. It appears at 18px in the rack, 22px on the login card, 40px on the empty desk.
 
 ## Do's and Don'ts
 
@@ -342,12 +342,12 @@ dancer's mark is a strip with its lamp lit: a 17x10 buff rectangle with a 1px in
 - **Do** use the two paper shadows only: at rest for racked and settled paper, pulled for current, cocked, desk and open-prompt paper.
 - **Do** give every strip its perforated left edge (1px dashed `ink-rule`) and 2px corners.
 - **Do** keep the answer on the strip: while a thread waits, the open prompt's choices ride on the desk strip.
-- **Do** keep the ramp between 10px and 15px and measures at 72ch (prose on paper or agent text) and 80ch (dancer lines).
+- **Do** keep the ramp between 10px and 15px and measures at 72ch (prose on paper or agent text) and 80ch (dispatch lines).
 
 ### Don't:
 - **Don't** draw avatars, chat bubbles, or a plain list of conversations; the rack of strips and the desk are the scaffold.
 - **Don't** let colour carry state alone; a tinted line or paper always has its lamp, flag, or leading glyph.
-- **Don't** give agent Markdown or dancer's own lines a paper background or shadow.
+- **Don't** give agent Markdown or dispatch's own lines a paper background or shadow.
 - **Don't** add a third elevation, a border-on-hover, or scale transforms; paper rises by shadow and an 8px translate only.
 - **Don't** round anything past 3px except HeroUI's 0.2rem controls and the 8px lamp; no pills.
 - **Don't** rotate anything except the cocked waiting strip (-0.4deg) and the decision stamp (-1.5deg).

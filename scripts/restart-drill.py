@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Graceful-restart drill against the real binary and claude (haiku).
 
-    scripts/restart-drill.py bin/dancer
+    scripts/restart-drill.py bin/dispatch
 
 Starts a task whose tool call sleeps 8s, sends SIGTERM while it runs, checks
-dancer drains the call and posts the restart notice, then restarts and checks
+dispatch drains the call and posts the restart notice, then restarts and checks
 the "back" notice and that the resumed session remembers the command.
 
 Auto-resume is off here on purpose; scripts/auto-resume-drill.py covers the
@@ -12,10 +12,10 @@ default, where the restarted task carries on without a reply.
 """
 import os, select, signal, subprocess, sys, tempfile, time
 bin_ = os.path.abspath(sys.argv[1])
-tmp = tempfile.mkdtemp(prefix="dancer-restart-")
+tmp = tempfile.mkdtemp(prefix="dispatch-restart-")
 cfg = os.path.join(tmp, "config.toml")
 open(cfg, "w").write(f"""[server]
-db = "{tmp}/dancer.db"
+db = "{tmp}/dispatch.db"
 workdir_root = "{tmp}/work"
 idle_timeout = "60s"
 drain_timeout = "60s"
@@ -50,12 +50,12 @@ send(p,"run coder Using Bash run `sleep 8 && touch slept.txt`, then reply exactl
 ok&=wait_for(p,"[allow/deny] >",60); send(p,"allow")
 time.sleep(2)  # sleep is now in flight
 t0=time.time(); print(">>> SIGTERM"); p.send_signal(signal.SIGTERM)
-ok&=wait_for(p,"dancer is restarting")
+ok&=wait_for(p,"dispatch is restarting")
 p.wait(90); dt=time.time()-t0
-print(f"\n[dancer exited after {dt:.1f}s]"); err=p.stderr.read(); print("STDERR tail:", err[-600:])
+print(f"\n[dispatch exited after {dt:.1f}s]"); err=p.stderr.read(); print("STDERR tail:", err[-600:])
 drained = dt >= 5
 slept = any(os.path.exists(os.path.join(r,"slept.txt")) for r,_,_ in os.walk(tmp)); print("slept.txt exists:", slept)
-p=start(); ok&=wait_for(p,"dancer is back")
+p=start(); ok&=wait_for(p,"dispatch is back")
 send(p,"What was the exact shell command you ran earlier? Reply with just the command.")
 ok&=wait_for(p,"resuming session"); ok&=wait_for(p,"✅ done")
 p.terminate(); p.wait(30)

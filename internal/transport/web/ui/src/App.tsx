@@ -30,7 +30,7 @@ function LoginPage() {
       >
         <div className="flex items-center gap-2.5">
           <Mark size={22} />
-          <span className="text-lg font-semibold leading-none">dancer</span>
+          <span className="text-lg font-semibold leading-none">dispatch</span>
           <span className="flag ml-auto" data-state="new">
             SIGN IN
           </span>
@@ -52,7 +52,7 @@ function LoginPage() {
           {busy ? "Signing in…" : "Sign in"}
         </Button>
         <p className="font-strip text-[11px] text-ink-2">
-          no account? the operator makes one with <code>dancer user add &lt;name&gt;</code>
+          no account? the operator makes one with <code>dispatch user add &lt;name&gt;</code>
         </p>
       </form>
     </div>
@@ -204,7 +204,7 @@ export default function App() {
       if (t.waiting) waiting++;
       unread += t.unread || 0;
     }
-    document.title = (waiting ? "✋ " : "") + (unread ? `(${unread}) ` : "") + "dancer";
+    document.title = (waiting ? "✋ " : "") + (unread ? `(${unread}) ` : "") + "dispatch";
   }, [st.threads]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -225,7 +225,7 @@ export default function App() {
       >
         <div className="flex items-center gap-2.5 px-4 pb-2 pt-3">
           <Mark />
-          <span className="text-[15px] font-semibold leading-none text-foreground">dancer</span>
+          <span className="text-[15px] font-semibold leading-none text-foreground">dispatch</span>
           <span className="font-strip ml-1 text-[10px] uppercase tracking-[0.12em]">strip board</span>
           <Button isIconOnly size="sm" variant="ghost" className="-mr-2 ml-auto h-7 w-7 min-w-0 font-strip text-rack-ink" aria-label="Commands and flags" onPress={() => setHelp(true)}>
             ?

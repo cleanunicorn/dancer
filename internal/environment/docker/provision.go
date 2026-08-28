@@ -11,21 +11,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
-// ProvisionedHome is $HOME inside an image dancer provisioned. It is a real
+// ProvisionedHome is $HOME inside an image dispatch provisioned. It is a real
 // writable directory owned by the container user, so `~/.claude` (login,
 // session history, settings) has somewhere to live.
-const ProvisionedHome = "/home/dancer"
+const ProvisionedHome = "/home/dispatch"
 
 // homeSkeleton is where provisioning stashes a copy of ProvisionedHome, so a
 // persistent home volume mounted over it on a reused container can be seeded
 // with whatever the image put there.
-const homeSkeleton = "/opt/dancer-home"
+const homeSkeleton = "/opt/dispatch-home"
 
 // provisionVersion changes whenever provisionScript does; it is part of the
-// derived image tag, so an upgraded dancer rebuilds instead of reusing an
+// derived image tag, so an upgraded dispatch rebuilds instead of reusing an
 // image built by the old script.
 const provisionVersion = "4"
 
@@ -49,7 +49,7 @@ var build struct {
 }
 
 // ready caches "this base image already has everything asked for", so the
-// probe container runs once per dancer process, not once per task.
+// probe container runs once per dispatch process, not once per task.
 var ready sync.Map // string -> bool
 
 func buildLock(tag string) *sync.Mutex {
@@ -80,7 +80,7 @@ func imageTag(base string, p environment.Provision, uid, gid int) string {
 	fmt.Fprintf(h, "packages=%s\n", strings.Join(pkgs, ","))
 	// Setup order matters, so it is hashed as written.
 	fmt.Fprintf(h, "setup=%s\n", strings.Join(p.Setup, "\n"))
-	return fmt.Sprintf("dancer-env:%x", h.Sum(nil)[:6])
+	return fmt.Sprintf("dispatch-env:%x", h.Sum(nil)[:6])
 }
 
 // ensureImage returns the image to run and $HOME inside it. It is a no-op
@@ -102,7 +102,7 @@ func (f Factory) ensureImage(ctx context.Context, spec environment.Spec, uid, gi
 		return tag, ProvisionedHome, nil
 	}
 	// A purpose-built image that already carries the agent CLI is left
-	// exactly as it is — dancer only derives an image when it has to.
+	// exactly as it is — dispatch only derives an image when it has to.
 	if len(p.Packages) == 0 && len(p.Setup) == 0 {
 		if v, ok := ready.Load(readyKey(spec.Image, p.Agents)); ok {
 			if v.(bool) {
@@ -191,7 +191,7 @@ func buildImage(ctx context.Context, bin, base, tag string, p environment.Provis
 	return nil
 }
 
-// provisionScript is the whole of dancer's opinion about what an agent needs:
+// provisionScript is the whole of dispatch's opinion about what an agent needs:
 // a package manager it can find, git and curl, Node for the agent CLIs, the
 // CLIs themselves, and a real user with a writable home matching the host
 // uid/gid so files on the bind-mounted workdir stay owned by the human.
@@ -202,11 +202,11 @@ func provisionScript(p environment.Provision, uid, gid int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `set -eu
 export DEBIAN_FRONTEND=noninteractive
-DANCER_UID=%d
-DANCER_GID=%d
-DANCER_HOME=%s
+DISPATCH_UID=%d
+DISPATCH_GID=%d
+DISPATCH_HOME=%s
 
-say() { echo "dancer: $*" >&2; }
+say() { echo "dispatch: $*" >&2; }
 
 pm=""
 for c in apt-get apk dnf yum pacman zypper; do
@@ -245,7 +245,7 @@ command -v tar >/dev/null 2>&1 || pm_install tar || say "tar unavailable, skippi
 
 	// The GitHub CLI is part of the base kit rather than something to ask
 	// for: an agent working on a repo opens pull requests, reads issues and
-	// pushes branches, and dancer hands the container the host's GitHub
+	// pushes branches, and dispatch hands the container the host's GitHub
 	// login at run time so it can (internal/gh). Distros package it under
 	// two names and not in every release, so the official release tarball
 	// is the fallback — a static Go binary, which is why it also works on
@@ -332,17 +332,17 @@ command -v npm >/dev/null 2>&1 || pm_install npm
 	}
 
 	fmt.Fprintf(&b, `
-say "creating user %d:%d with home $DANCER_HOME"
-if getent passwd "$DANCER_UID" >/dev/null 2>&1; then
-	existing=$(getent passwd "$DANCER_UID" | cut -d: -f1)
-	usermod -d "$DANCER_HOME" "$existing" >/dev/null 2>&1 || true
+say "creating user %d:%d with home $DISPATCH_HOME"
+if getent passwd "$DISPATCH_UID" >/dev/null 2>&1; then
+	existing=$(getent passwd "$DISPATCH_UID" | cut -d: -f1)
+	usermod -d "$DISPATCH_HOME" "$existing" >/dev/null 2>&1 || true
 else
-	(groupadd -g "$DANCER_GID" dancer || addgroup -g "$DANCER_GID" dancer) >/dev/null 2>&1 || true
-	(useradd -u "$DANCER_UID" -g "$DANCER_GID" -d "$DANCER_HOME" -s /bin/sh -M dancer \
-		|| adduser -D -u "$DANCER_UID" -G dancer -h "$DANCER_HOME" -s /bin/sh dancer) >/dev/null 2>&1 || true
+	(groupadd -g "$DISPATCH_GID" dispatch || addgroup -g "$DISPATCH_GID" dispatch) >/dev/null 2>&1 || true
+	(useradd -u "$DISPATCH_UID" -g "$DISPATCH_GID" -d "$DISPATCH_HOME" -s /bin/sh -M dispatch \
+		|| adduser -D -u "$DISPATCH_UID" -G dispatch -h "$DISPATCH_HOME" -s /bin/sh dispatch) >/dev/null 2>&1 || true
 fi
-mkdir -p "$DANCER_HOME"
-chown -R "$DANCER_UID:$DANCER_GID" "$DANCER_HOME"
+mkdir -p "$DISPATCH_HOME"
+chown -R "$DISPATCH_UID:$DISPATCH_GID" "$DISPATCH_HOME"
 
 # The agent runs as this user, not root, so the workdir it shares with the
 # host stays owned by the human. Without sudo it could not install anything
@@ -351,8 +351,8 @@ chown -R "$DANCER_UID:$DANCER_GID" "$DANCER_HOME"
 # permission mode.
 if command -v sudo >/dev/null 2>&1; then
 	mkdir -p /etc/sudoers.d
-	printf '#%%s ALL=(ALL) NOPASSWD:ALL\n' "$DANCER_UID" > /etc/sudoers.d/dancer
-	chmod 0440 /etc/sudoers.d/dancer
+	printf '#%%s ALL=(ALL) NOPASSWD:ALL\n' "$DISPATCH_UID" > /etc/sudoers.d/dispatch
+	chmod 0440 /etc/sudoers.d/dispatch
 else
 	say "no sudo in this image; the agent cannot install packages itself"
 fi
@@ -364,8 +364,8 @@ git config --system --add safe.directory '*' >/dev/null 2>&1 || true
 # Keep a copy of the home the image ends up with: a reused container mounts a
 # persistent volume over $HOME and seeds it from here on first start.
 mkdir -p %s
-cp -a "$DANCER_HOME/." %s/ 2>/dev/null || true
-chown -R "$DANCER_UID:$DANCER_GID" %s
+cp -a "$DISPATCH_HOME/." %s/ 2>/dev/null || true
+chown -R "$DISPATCH_UID:$DISPATCH_GID" %s
 `, uid, gid, homeSkeleton, homeSkeleton, homeSkeleton)
 
 	for _, c := range p.Setup {

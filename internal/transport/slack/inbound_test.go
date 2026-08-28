@@ -9,7 +9,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // callback wraps an Events API inner event the way Socket Mode hands it
@@ -30,7 +30,7 @@ func hosted(f *fakeSlack, name string, data []byte) slack.File {
 }
 
 // A mention with files delivers them downloaded; so does a reply with a
-// file in a thread dancer follows (a file_share message).
+// file in a thread dispatch follows (a file_share message).
 func TestInboundFiles(t *testing.T) {
 	f, c := newFakeSlack(t)
 	ctx := context.Background()

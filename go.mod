@@ -1,4 +1,4 @@
-module github.com/cleanunicorn/dancer
+module github.com/cleanunicorn/dispatch
 
 go 1.25.0
 

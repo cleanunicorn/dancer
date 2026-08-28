@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 func TestAppendDefinitionKeepsFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	orig := `# my dancer config
+	orig := `# my dispatch config
 [server]
 default_agent = "coder" # keep
 
@@ -125,7 +125,7 @@ kind = "local"
 
 func TestReplaceAndRemoveDefinition(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	orig := `# my dancer config
+	orig := `# my dispatch config
 [server]
 default_agent = "coder" # keep
 

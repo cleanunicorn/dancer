@@ -1,4 +1,4 @@
-# Setting up dancer on a Linux machine
+# Setting up dispatch on a Linux machine
 
 About 20 minutes. You need: a Linux box (or VM) you can run a service on,
 Go 1.25+ to build, Claude Code installed and logged in, and admin rights on a
@@ -7,11 +7,11 @@ Slack workspace.
 ## 1. Build
 
 ```sh
-git clone https://github.com/cleanunicorn/dancer && cd dancer
-make build          # -> bin/dancer
+git clone https://github.com/cleanunicorn/dispatch && cd dispatch
+make build          # -> bin/dispatch
 ```
 
-## 2. Install and log in to Claude Code (as the user that will run dancer)
+## 2. Install and log in to Claude Code (as the user that will run dispatch)
 
 ```sh
 curl -fsSL https://claude.ai/install.sh | bash   # or see https://code.claude.com/docs/en/setup
@@ -19,7 +19,7 @@ claude                                           # then type /login and follow t
 claude -p --model haiku "Reply with OK"          # prints OK when authenticated
 ```
 
-dancer drives `claude -p` as a subprocess; it uses whatever login that user has.
+dispatch drives `claude -p` as a subprocess; it uses whatever login that user has.
 
 ## 3. Create the Slack app
 
@@ -28,7 +28,7 @@ dancer drives `claude -p` as a subprocess; it uses whatever login that user has.
 3. **Basic Information → App-Level Tokens → Generate Token and Scopes**:
    name it `socket`, add scope `connections:write`, generate. Copy the `xapp-…` token.
 4. **Install App → Install to Workspace**. Copy the **Bot User OAuth Token** (`xoxb-…`).
-5. In Slack, invite the bot to a channel: `/invite @dancer`.
+5. In Slack, invite the bot to a channel: `/invite @dispatch`.
 
 The manifest enables Socket Mode, so the machine needs outbound HTTPS only —
 no public URL, no inbound ports.
@@ -42,12 +42,12 @@ To find your Slack user ID (for `allowed_users`): click your profile → **⋯**
 ## 4. Run the wizard
 
 ```sh
-bin/dancer setup
+bin/dispatch setup
 ```
 
 It asks for the database/workdir paths, checks `claude`, takes the two Slack
-tokens, defines your first agent, writes `~/.config/dancer/config.toml`, then
-runs `dancer doctor`. Fix anything marked ✘ and re-run `bin/dancer doctor`.
+tokens, defines your first agent, writes `~/.config/dispatch/config.toml`, then
+runs `dispatch doctor`. Fix anything marked ✘ and re-run `bin/dispatch doctor`.
 
 You can edit the file by hand afterwards — `deploy/config.example.toml` shows
 every option, including docker and ssh environments and a second surface.
@@ -60,7 +60,7 @@ restart: see [Managing agents from chat](#managing-agents-from-chat).
 Terminal first (no Slack needed; details in [docs/terminal.md](docs/terminal.md)):
 
 ```sh
-bin/dancer run -terminal
+bin/dispatch run -terminal
 > agents
 > run coder create hello.py that prints hi, then run it
 ```
@@ -68,23 +68,23 @@ bin/dancer run -terminal
 Then with Slack:
 
 ```sh
-bin/dancer run
+bin/dispatch run
 ```
 
 In the channel you invited the bot to:
 
 ```
-@dancer create hello.py that prints hi, then run it
+@dispatch create hello.py that prints hi, then run it
 ```
 
-dancer answers **in a thread under your message** (look for "1 reply"), using the
+dispatch answers **in a thread under your message** (look for "1 reply"), using the
 channel's default agent; `run <agent> <prompt>` picks a specific one. Slack
-has no autocomplete for text after a mention, so a bare `@dancer run` posts
+has no autocomplete for text after a mention, so a bare `@dispatch run` posts
 the agent list as buttons (a searchable menu from five agents up) and then
 asks for the prompt in the thread; `run <agent>` alone skips straight to the
 prompt question.
 
-Each channel can have its own default agent: `@dancer default reviewer` in
+Each channel can have its own default agent: `@dispatch default reviewer` in
 `#code-review` makes plain messages there run *reviewer*. That appends a
 `[[channels]]` block to `config.toml` (you can also write one by hand with
 the channel id from the channel's details pane); `default` shows the
@@ -112,18 +112,18 @@ task thread is never without a mark, so a channel reads at a glance: ⏳ and ✋
 are in progress, 📬 and ❌ are yours to answer or close, ✅ is done with.
 
 The lines that need you — a permission or question prompt, the closing line,
-an error, a "dancer is back" notice that asks you to pick the task up —
+an error, a "dispatch is back" notice that asks you to pick the task up —
 mention whoever started the task (`@you ✅ done · …`), so you can mute the
 thread and still be told when to look. Only that one person is tagged, even
 if someone else replies in the thread; `⏹️ cancelled` is not tagged; the
 status line and the agent's own text never are. This needs no extra scope.
 
-The same text also shows above the composer ("dancer ⏳ thinking · 4s") when
+The same text also shows above the composer ("dispatch ⏳ thinking · 4s") when
 the app has Slack's *Agents & AI Apps* feature: the manifest enables it
 (`assistant_view`, the `assistant:write` scope, the `assistant_thread_*`
 events). It also turns the app's DM into Slack's assistant split view. If you
 created the app before it was added, either add those to the app and
-reinstall, or leave it out — dancer notices the first failure, logs one line
+reinstall, or leave it out — dispatch notices the first failure, logs one line
 and keeps the in-thread status line.
 
 The ⏳/✋/📬/❌/✅ marks need the `reactions:write` bot scope.
@@ -131,7 +131,7 @@ The ⏳/✋/📬/❌/✅ marks need the `reactions:write` bot scope.
 ## Closing a thread
 
 `close` in a thread ends the conversation there: the task running on it is
-cancelled, the thread's first message gets a ✅, and dancer stops following
+cancelled, the thread's first message gets a ✅, and dispatch stops following
 the thread — later replies in it are ignored instead of resuming the agent,
 and a restart leaves it alone. Mention the bot in the thread again (or type
 in it on the terminal transport) to reopen it and continue where you left
@@ -139,24 +139,24 @@ off; the agent session is still there.
 
 The ✅ needs the `reactions:write` bot scope (in the manifest; if you created
 the app before it was added, add the scope and reinstall — without it closing
-still works, dancer just logs a warning instead of reacting). The only
-message dancer ever deletes is its own live status line: closing tidies the
+still works, dispatch just logs a warning instead of reacting). The only
+message dispatch ever deletes is its own live status line: closing tidies the
 channel by ending threads, Slack's own history stays intact.
 
 ## Managing agents from chat
 
 ```
-@dancer agent add
+@dispatch agent add
 ```
 
-dancer asks, one question per message in the thread: name, model, where it
+dispatch asks, one question per message in the thread: name, model, where it
 runs (local / docker / ssh and the image, host or directory that goes with
 it), permission mode, pre-approved tools (presets or a comma-separated list)
 and an optional system prompt, then shows a summary with **Save / Cancel**.
 Click a button or type the answer; `cancel` at any point abandons the flow.
 Type paths in backticks (`` `/home/me/app` ``): Slack refuses to send a
 message that starts with `/` because it looks like a slash command.
-Answers are saved as you go, so a dancer restart mid-way re-asks the next
+Answers are saved as you go, so a dispatch restart mid-way re-asks the next
 question when it is back.
 
 Saving appends a `[[definitions]]` block to `config.toml` (the rest of the
@@ -165,10 +165,10 @@ it and `run <name> <prompt>` works without a restart. Settings the flow does
 not ask for (`sub_agents`, `mcp_config`, `key_path`, container `env`) can be
 added to that block by hand afterwards.
 
-`@dancer agent edit <name>` shows the agent's settings with a menu — model,
+`@dispatch agent edit <name>` shows the agent's settings with a menu — model,
 environment, permissions, tools, system prompt — re-asks the field you pick,
 and on **Save** rewrites that agent's `[[definitions]]` block (tasks already
-running keep their old settings). `@dancer agent delete <name>` asks for a
+running keep their old settings). `@dispatch agent delete <name>` asks for a
 confirmation and removes the block; an agent that is the global
 `default_agent` or a channel default is refused until the default points
 elsewhere. Both pick the agent from a list when the name is left out.
@@ -176,14 +176,14 @@ elsewhere. Both pick the agent from a list when the name is left out.
 ## 6. Install as a service
 
 ```sh
-make service-install   # installs /usr/local/bin/dancer and a systemd unit for the current user
+make service-install   # installs /usr/local/bin/dispatch and a systemd unit for the current user
 make service-logs
 ```
 
 `make service-install` substitutes your user, group and home into
-`deploy/dancer.service`, enables it and starts it. The unit runs as *your*
+`deploy/dispatch.service`, enables it and starts it. The unit runs as *your*
 user so it finds your Claude Code login and ssh/docker config. Edit
-`/etc/systemd/system/dancer.service` if the binary or config live elsewhere.
+`/etc/systemd/system/dispatch.service` if the binary or config live elsewhere.
 
 Remove with `make service-uninstall`. Rebuild and restart after a code change with `make service-restart`; logs with `make service-logs`.
 
@@ -195,30 +195,30 @@ make update-status     # when it last ran, when it fires next
 make update-logs
 ```
 
-This installs two more system units and a copy of `scripts/dancer-update.sh`:
+This installs two more system units and a copy of `scripts/dispatch-update.sh`:
 
-- `dancer-update.timer` — fires 2 minutes after boot, then every `INTERVAL`
+- `dispatch-update.timer` — fires 2 minutes after boot, then every `INTERVAL`
   (default `5min`). The `OnBootSec` tick is what covers downtime: the machine
   comes back and picks up whatever landed on the branch meanwhile.
-- `dancer-update.service` — a oneshot that does the work, as root.
+- `dispatch-update.service` — a oneshot that does the work, as root.
 
 Each run: `git fetch` into a **deploy checkout** at `SRC` (default
-`/opt/dancer/src`, cloned on the first run) and hard-reset it to `origin/main`.
+`/opt/dispatch/src`, cloned on the first run) and hard-reset it to `origin/main`.
 Then two things are brought into line with the branch.
 
 **The glue** — this script and the three unit files. A release that changes
 `deploy/` is as much "the new version" as one that changes the Go code, and
 deploying only the binary silently leaves the box on the old units. Each unit is
 re-rendered from the checkout using the settings recorded at install time in
-`/etc/dancer/deploy.env`, compared with what is installed, and written only if it
+`/etc/dispatch/deploy.env`, compared with what is installed, and written only if it
 differs, followed by `daemon-reload`. If the updater script itself changed, it is
 installed and re-executed on the spot, so a release lands on the tick that brings
 it in rather than the one after.
 
 **The binary** — if the deployed sha already matches `origin/main` there is
 nothing to build. Otherwise: build into a scratch directory, smoke-test the new
-binary, replace `/usr/local/bin/dancer` with an atomic rename, and
-`systemctl restart dancer`.
+binary, replace `/usr/local/bin/dispatch` with an atomic rename, and
+`systemctl restart dispatch`.
 
 The deploy checkout is root-owned and separate from any checkout you edit in —
 it is reset on every run, so never work in it.
@@ -228,19 +228,19 @@ Three things can go wrong, and each has a defined outcome:
 | failure | what happens |
 |---|---|
 | `main` does not compile | old binary keeps running, nothing restarts, exit 1 in the journal; retried every tick and deploys itself once `main` compiles again |
-| new binary fails `dancer -h` | same — it never reaches `/usr/local/bin/dancer` |
+| new binary fails `dispatch -h` | same — it never reaches `/usr/local/bin/dispatch` |
 | new binary installs but the service will not stay up | the previous binary is restored from `$BIN.prev`, the service is restarted, and that sha is recorded in `deployed.sha.failed` and skipped until the branch moves |
 | a unit file systemd cannot parse | detected via its `LoadState` after `daemon-reload`, restored from `$UNIT.prev`, reloaded again; the binary deploy carries on |
 | a unit that parses but the service will not start on it | restored from `$UNIT.prev` — and if the same tick also deployed a binary, both are put back, since either could be the reason |
 
-That last case is why the deployed sha lives in `/var/lib/dancer/deployed.sha`
+That last case is why the deployed sha lives in `/var/lib/dispatch/deployed.sha`
 and is written *after* the restart is confirmed healthy, not before: a deploy
-that never came up is not a deploy. `DANCER_UPDATE_GRACE` (default 10s) is how
-long the service must stay up to count, and `DANCER_UPDATE_FORCE=1` retries a
-sha that was skipped, and `DANCER_UPDATE_SYNC_GLUE=0` goes back to binary-only
+that never came up is not a deploy. `DISPATCH_UPDATE_GRACE` (default 10s) is how
+long the service must stay up to count, and `DISPATCH_UPDATE_FORCE=1` retries a
+sha that was skipped, and `DISPATCH_UPDATE_SYNC_GLUE=0` goes back to binary-only
 deploys.
 
-`/etc/dancer/deploy.env` is what makes unit re-rendering possible — it records the
+`/etc/dispatch/deploy.env` is what makes unit re-rendering possible — it records the
 `USER_`/`GROUP_`/`HOME_`/`BIN`/`INTERVAL` values the installers were given. It is
 written by `make service-install` and `make update-install`; change a setting by
 re-running those with the new value rather than editing the file. Without it the
@@ -252,7 +252,7 @@ how to deploy glue, so it cannot install the version that does. Run
 that lands on its own.
 
 Restarts go through the same drain path as everything else (see *Restarting
-dancer* below): live threads are notified, in-flight tool calls get
+dispatch* below): live threads are notified, in-flight tool calls get
 `drain_timeout` to finish, and interrupted tasks resume themselves after the
 new binary starts. A deploy that lands mid-task is not a lost task.
 
@@ -263,23 +263,23 @@ Overridable on install:
 | `REPO`     | this clone's `origin` URL  | what to pull from                   |
 | `BRANCH`   | `main`                     | branch to track                     |
 | `INTERVAL` | `5min`                     | poll period                         |
-| `SRC`      | `/opt/dancer/src`          | the deploy checkout                 |
-| `BIN`      | `/usr/local/bin/dancer`    | where the binary is installed       |
+| `SRC`      | `/opt/dispatch/src`          | the deploy checkout                 |
+| `BIN`      | `/usr/local/bin/dispatch`    | where the binary is installed       |
 
 ```sh
-make update-install BRANCH=release INTERVAL=15min SRC=/opt/dancer/src
+make update-install BRANCH=release INTERVAL=15min SRC=/opt/dispatch/src
 make update-now          # deploy right now instead of waiting for the tick
 make update-uninstall    # stop and remove the timer; the binary stays
 ```
 
 A private repo needs credentials root can use non-interactively — a deploy key
-plus `REPO=git@github.com:you/dancer.git` and a `/root/.ssh/config` entry, or a
+plus `REPO=git@github.com:you/dispatch.git` and a `/root/.ssh/config` entry, or a
 token in the URL.
 
 ## Files from the agent
 
 When the agent mentions a file path in its reply (`/tmp/settings-top.png`,
-`out/report.pdf`) and the file exists in its environment, dancer uploads it
+`out/report.pdf`) and the file exists in its environment, dispatch uploads it
 into the thread — images and PDFs show inline. Agents are told this in their
 system prompt, so "send me a screenshot" works. Up to 10 files per message,
 20 MiB each. Requires the `files:write` bot scope (in the manifest; if you
@@ -288,9 +288,9 @@ created the app before it was added, add the scope and reinstall the app).
 ## Files to the agent
 
 Attach files or images to any message that reaches the agent — the mention
-that starts a task, a DM, a reply in the task's thread — and dancer copies
+that starts a task, a DM, a reply in the task's thread — and dispatch copies
 them into the agent's environment (local folder, container or ssh host alike)
-under `/tmp/dancer/inbox/<task id>/` and appends their paths to the message.
+under `/tmp/dispatch/inbox/<task id>/` and appends their paths to the message.
 The agent reads them from disk: a pasted screenshot, a log, a PDF, a CSV. A
 message with only an attachment works too. Names are made path-safe
 (`Screenshot 2026.png` → `Screenshot_2026.png`); a second file of the same
@@ -301,12 +301,12 @@ created the app before it was added, add the scope and reinstall the app —
 without it every attachment is reported as skipped). Files sent with a bare
 `run` are dropped, since the prompt is typed later; send them with the prompt.
 
-## Restarting dancer
+## Restarting dispatch
 
-`make service-restart` (or Ctrl-C / `systemctl restart dancer`) is safe while
+`make service-restart` (or Ctrl-C / `systemctl restart dispatch`) is safe while
 agents run:
 
-1. Every live thread gets "⏸️ dancer is restarting".
+1. Every live thread gets "⏸️ dispatch is restarting".
 2. Agents that are in the middle of a tool call (a test run, a build) are given
    `drain_timeout` (default 2m) to finish that call; then their processes stop.
    Files in the workdir stay.
@@ -316,7 +316,7 @@ agents run:
    message.
 4. A task whose agent had already answered is left alone: its process was only
    being kept alive for a follow-up (`idle_timeout`), so the stop cut nothing
-   short and the thread is still waiting for you, not for dancer.
+   short and the thread is still waiting for you, not for dispatch.
 
 `status` shows such tasks as *interrupted* until they are picked up. `cancel` is
 still immediate. The systemd unit's `TimeoutStopSec` is set above `drain_timeout`.
@@ -325,9 +325,9 @@ Auto-resume is on by default and tunable in `[server]`:
 
 | key                  | default | what it does                                         |
 |----------------------|---------|------------------------------------------------------|
-| `auto_resume`        | `true`  | `false` goes back to "▶️ dancer is back — reply in this thread to continue" |
+| `auto_resume`        | `true`  | `false` goes back to "▶️ dispatch is back — reply in this thread to continue" |
 | `auto_resume_within` | `12h`   | tasks last touched longer ago than this wait for a reply instead |
-| `max_auto_resumes`   | `3`     | consecutive automatic resumes of one task before it waits for a human — a task that keeps taking dancer down cannot restart-loop |
+| `max_auto_resumes`   | `3`     | consecutive automatic resumes of one task before it waits for a human — a task that keeps taking dispatch down cannot restart-loop |
 | `resume_prompt`      | built-in | the message an auto-resumed session is given          |
 
 The counter behind `max_auto_resumes` is cleared as soon as a resumed agent
@@ -335,7 +335,7 @@ finishes a turn.
 
 ## The decider (optional)
 
-Dancer's restart rules are blunt on purpose: everything cut mid-execution is
+Dispatch's restart rules are blunt on purpose: everything cut mid-execution is
 picked up with the same "carry on" sentence. Switching on a decider hands those
 judgement calls to a small model — it can leave a task for you with a reason, or
 word the resume in the task's own terms. See [DECIDER.md](DECIDER.md).
@@ -365,7 +365,7 @@ api_key = "sk-…"                           # leave out for a local server that
 ```
 
 The key lives in `config.toml` next to your Slack tokens (the file is
-`0600`); nothing is read from the environment. `dancer doctor` calls the
+`0600`); nothing is read from the environment. `dispatch doctor` calls the
 endpoint's `/models` with that key and fails the check if it is unreachable
 or the key is rejected — the one misconfiguration that would otherwise fall
 back to the rules silently on every question. No `temperature` or
@@ -380,7 +380,7 @@ files it changed, the tool call that was in flight — and picks one of four:
 |---------|--------------|
 | continue | `⏯️ resuming session`, with a prompt naming what the agent was in the middle of |
 | ask | a question with **continue** / **drop** buttons; replying with your own words resumes it instead |
-| wait | `▶️ dancer is back — <reason>; reply in this thread to continue` |
+| wait | `▶️ dispatch is back — <reason>; reply in this thread to continue` |
 | abandon | `⏹️ leaving this task: <reason>` — no restart offers it again, a reply still can |
 
 With `"permission"` in `uses` it also triages approval prompts, so routine
@@ -407,18 +407,18 @@ list something.
 The decider can only ever narrow what the rules already allow:
 `auto_resume_within`, `max_auto_resumes` and `auto_allow` are applied before it
 is asked, and an answer outside the offered options is discarded. If it fails,
-times out or is not configured, dancer behaves exactly as it does without one.
+times out or is not configured, dispatch behaves exactly as it does without one.
 Every verdict, with its reason, is in the event log and in `status`.
 
 ## Environments
 
-**local** — the agent runs on the dancer host in `workdir` (or a fresh
+**local** — the agent runs on the dispatch host in `workdir` (or a fresh
 directory under `workdir_root` per task).
 
 **docker** — the agent runs in a container from `image`, with `workdir`
 mounted at `/work` and the process running as your uid so files stay yours.
 
-Name any base image you like. Dancer makes it agent-ready the first time it
+Name any base image you like. Dispatch makes it agent-ready the first time it
 is used and caches the result, so you do not have to build and maintain an
 image yourself:
 
@@ -430,25 +430,25 @@ reuse = "thread"
 ```
 
 The container runs with your login. A container has no `~/.claude` of its
-own, so before every turn dancer copies the host's
-`~/.claude/.credentials.json` (the login of the user running dancer) into
+own, so before every turn dispatch copies the host's
+`~/.claude/.credentials.json` (the login of the user running dispatch) into
 the container's `$HOME/.claude`; the CLI inside refreshes the token itself
 from there, and a copy the container refreshed more recently than the host
 is left alone. To give a container its own identity instead, put a key in
-its env — dancer then lends nothing:
+its env — dispatch then lends nothing:
 
 ```toml
 [definitions.environment.env]
 CLAUDE_CODE_OAUTH_TOKEN = "…"     # from `claude setup-token` on a logged-in machine, or use ANTHROPIC_API_KEY
 ```
 
-When neither exists the turn ends with `Not logged in`, and dancer says so
+When neither exists the turn ends with `Not logged in`, and dispatch says so
 in the thread along with what to do about it.
 
 ### GitHub
 
 The container gets your GitHub login the same way. Every provisioned image
-carries the `gh` CLI, and before a task starts dancer writes the host's
+carries the `gh` CLI, and before a task starts dispatch writes the host's
 `~/.config/gh/hosts.yml` into the container's gh config dir and runs
 `gh auth setup-git` there — so `gh pr create`, `gh issue list` and
 `git push` all work as you, with no token in the config file.
@@ -458,17 +458,17 @@ The token is taken from the first of these that has one:
 1. the host's `hosts.yml` (`$GH_CONFIG_DIR`, else `~/.config/gh`), copied
    as it is, enterprise hosts included
 2. `gh auth token` on the host, for a login `gh` keeps in the system keyring
-3. `GH_TOKEN` / `GITHUB_TOKEN` in dancer's own environment
+3. `GH_TOKEN` / `GITHUB_TOKEN` in dispatch's own environment
 
 A `hosts.yml` inside the container that is newer than the host's is left
-alone, so a login made in there survives — when what dancer lends is the
+alone, so a login made in there survives — when what dispatch lends is the
 host's own `hosts.yml` (source 1), whose mtime says when the host last
 logged in. A token from sources 2 and 3 has no such file behind it and
 counts as current every time, so it is re-lent at every task and a
 `gh auth login` made inside the container does not survive.
 
 To give a container an account of its own — a bot, a fine-grained token —
-put one in its env and dancer lends none:
+put one in its env and dispatch lends none:
 
 ```toml
 [definitions.environment.env]
@@ -477,8 +477,8 @@ GH_TOKEN = "github_pat_…"
 
 The commits get your name too. A fresh container has no `user.name` or
 `user.email`, so `git commit` in it stops with "Please tell me who you
-are"; dancer writes the host's identity — your `git config user.name` and
-`user.email`, or `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` from dancer's own
+are"; dispatch writes the host's identity — your `git config user.name` and
+`user.email`, or `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL` from dispatch's own
 environment — into the container's global git config. It is written once
 and never overwritten, so an identity a `setup` command or the agent set
 stays, and it is lent even to a container with its own token. To choose one
@@ -486,17 +486,17 @@ yourself:
 
 ```toml
 [definitions.environment.env]
-GIT_AUTHOR_NAME  = "dancer"
-GIT_AUTHOR_EMAIL = "bot@example.com"     # dancer then lends no identity
+GIT_AUTHOR_NAME  = "dispatch"
+GIT_AUTHOR_EMAIL = "bot@example.com"     # dispatch then lends no identity
 ```
 
 With no login anywhere the task still runs; only GitHub is out of reach,
-and `gh` says so itself. `dancer doctor` prints what would be lent and who
+and `gh` says so itself. `dispatch doctor` prints what would be lent and who
 a container would commit as.
 
 ### Provisioning
 
-With `provision = "auto"` (the default) dancer installs, as root, into a
+With `provision = "auto"` (the default) dispatch installs, as root, into a
 throwaway container started from `image`:
 
 - `ca-certificates`, `curl`, `git`, `tar`, and `ripgrep` if the distro has it
@@ -504,13 +504,13 @@ throwaway container started from `image`:
   official release tarball
 - Node 18+ if the image has none
 - the agent CLI for the definition's `kind` — `claude` or `codex`
-- a user with your uid/gid and a writable `$HOME` at `/home/dancer`, with
+- a user with your uid/gid and a writable `$HOME` at `/home/dispatch`, with
   passwordless `sudo`, so the agent can install whatever it turns out to need
   mid-task (what it may actually run is still gated by its permission mode)
 - `git config --system safe.directory '*'`, so git will touch the mounted
   workdir even though it belongs to a different uid
 
-The result is committed as `dancer-env:<hash>` and reused from then on. The
+The result is committed as `dispatch-env:<hash>` and reused from then on. The
 hash covers the base image, the agent, `packages`, `setup` and your uid, so
 changing any of them rebuilds and changing none of them costs nothing.
 apt, apk, dnf, yum, pacman and zypper images are all handled.
@@ -523,7 +523,7 @@ setup    = ["pip install --break-system-packages ruff"]   # extra root commands,
 ```
 
 An image that already carries the agent CLI and git is used **exactly as it
-is** — dancer checks before it builds anything, so a purpose-built image
+is** — dispatch checks before it builds anything, so a purpose-built image
 never gets rewritten (put `gh` in it yourself if you want the GitHub login
 lent into it). `provision = "none"` turns the whole thing off.
 
@@ -558,7 +558,7 @@ reuse_ttl = "24h"
 ```
 
 **ssh** — the agent runs on `host` in `workdir`; `claude` must be installed and
-logged in there for the ssh user. `dancer doctor` checks both. Uses your
+logged in there for the ssh user. `dispatch doctor` checks both. Uses your
 `~/.ssh/config`, agent and known_hosts; set `key_path` to pin a key.
 
 ## Permission modes
@@ -594,19 +594,19 @@ approvals = true
 
 ## Troubleshooting
 
-- **`claude` check fails in doctor** — run `claude` interactively as the service user and `/login`. If dancer runs under systemd, the unit's `HOME=` must point at that user's home.
-- **Bot does not react to mentions** — re-install the app after changing the manifest; make sure the bot was invited to the channel; check `journalctl -u dancer` for `slack connected`.
+- **`claude` check fails in doctor** — run `claude` interactively as the service user and `/login`. If dispatch runs under systemd, the unit's `HOME=` must point at that user's home.
+- **Bot does not react to mentions** — re-install the app after changing the manifest; make sure the bot was invited to the channel; check `journalctl -u dispatch` for `slack connected`.
 - **Buttons do nothing** — Interactivity must be on (the manifest enables it) and Socket Mode must be enabled.
-- **Permission prompt never appears, task fails with `permission_denials`** — the definition's `permission_mode` is not `manual`/`acceptEdits`, or `claude` is older than 2.1; dancer needs the `--permission-prompt-tool stdio` handshake.
+- **Permission prompt never appears, task fails with `permission_denials`** — the definition's `permission_mode` is not `manual`/`acceptEdits`, or `claude` is older than 2.1; dispatch needs the `--permission-prompt-tool stdio` handshake.
 - **Files in the docker workdir owned by root** — containers run as your uid:gid by default; this only happens if the docker factory `User` was overridden to `root`.
-- **dancer stopped and never came back** — check `systemctl is-active dancer` and look for a
-  `shutdown: notifying live task` line in `journalctl -u dancer` with no `Stopping
-  dancer.service` job line above it. That combination means something sent SIGTERM directly
+- **dispatch stopped and never came back** — check `systemctl is-active dispatch` and look for a
+  `shutdown: notifying live task` line in `journalctl -u dispatch` with no `Stopping
+  dispatch.service` job line above it. That combination means something sent SIGTERM directly
   rather than going through systemd; the usual culprit is an agent cleaning up a test instance
-  with a `pgrep -f` / `pkill -f` pattern like `bin/dancer run`, which also matches
-  `/usr/local/bin/dancer run`. If it dies again seconds after each start, the task that did it
+  with a `pgrep -f` / `pkill -f` pattern like `bin/dispatch run`, which also matches
+  `/usr/local/bin/dispatch run`. If it dies again seconds after each start, the task that did it
   is auto-resuming and repeating the kill: cancel that thread, or start once with
   `auto_resume = false` to break the loop. `Restart=always`
-  and the updater's watchdog both bring it back now; `DANCER_UPDATE_WATCHDOG=0` turns the latter
+  and the updater's watchdog both bring it back now; `DISPATCH_UPDATE_WATCHDOG=0` turns the latter
   off if you want to keep it stopped for maintenance.
-- Everything dancer saw is in the SQLite `log` table: `sqlite3 ~/.config/dancer/dancer.db 'select seq,kind,substr(payload,1,120) from log order by seq desc limit 20'`.
+- Everything dispatch saw is in the SQLite `log` table: `sqlite3 ~/.config/dispatch/dispatch.db 'select seq,kind,substr(payload,1,120) from log order by seq desc limit 20'`.

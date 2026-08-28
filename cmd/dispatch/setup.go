@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/config"
+	"github.com/cleanunicorn/dispatch/internal/config"
 )
 
 // runSetup is the interactive first-time wizard. It writes the config file
@@ -41,7 +41,7 @@ func runSetup(cfgPath string) error {
 		return strings.HasPrefix(a, "y")
 	}
 
-	fmt.Println("dancer setup")
+	fmt.Println("dispatch setup")
 	fmt.Println("------------")
 	if _, err := os.Stat(cfgPath); err == nil {
 		if !yes(fmt.Sprintf("%s exists — overwrite?", cfgPath), false) {
@@ -52,7 +52,7 @@ func runSetup(cfgPath string) error {
 	cfg := &config.Config{}
 
 	fmt.Println("\n1/4  Storage")
-	cfg.Server.DB = ask("SQLite database path", filepath.Join(base, "dancer.db"))
+	cfg.Server.DB = ask("SQLite database path", filepath.Join(base, "dispatch.db"))
 	cfg.Server.WorkdirRoot = ask("Root for per-task working directories", filepath.Join(base, "work"))
 	cfg.Server.IdleTimeout = config.Duration{Duration: 10 * time.Minute}
 	cfg.Server.DrainTimeout = config.Duration{Duration: 2 * time.Minute}
@@ -62,7 +62,7 @@ func runSetup(cfgPath string) error {
 	if _, err := exec.LookPath(cfg.Claude.Binary); err != nil {
 		fmt.Printf("  ! %s not found in PATH — install Claude Code first: https://code.claude.com/docs/en/setup\n", cfg.Claude.Binary)
 	} else {
-		fmt.Println("  ✔ found. Make sure it is logged in (run `claude` once, then /login) under the user that will run dancer.")
+		fmt.Println("  ✔ found. Make sure it is logged in (run `claude` once, then /login) under the user that will run dispatch.")
 	}
 
 	fmt.Println("\n3/4  Slack (Socket Mode)")
@@ -91,11 +91,11 @@ func runSetup(cfgPath string) error {
 	def.Environment.Kind = envKind
 	switch envKind {
 	case "docker":
-		// Any base image works: dancer installs git, node and the agent
+		// Any base image works: dispatch installs git, node and the agent
 		// CLI into it on first use and caches the result.
-		def.Environment.Image = ask("Base image (dancer installs the agent into it)", "ubuntu:24.04")
+		def.Environment.Image = ask("Base image (dispatch installs the agent into it)", "ubuntu:24.04")
 		def.Environment.Reuse = ask("Container lifetime (thread/task/definition)", "thread")
-		def.Environment.Workdir = ask("Host directory to mount at /work (empty = dancer manages it)", "")
+		def.Environment.Workdir = ask("Host directory to mount at /work (empty = dispatch manages it)", "")
 		def.PermissionMode = ask("Permission mode", "acceptEdits")
 	case "ssh":
 		def.Environment.Host = ask("SSH host (user@host or ssh-config alias)", "")
@@ -123,9 +123,9 @@ func runSetup(cfgPath string) error {
 	}
 	fmt.Printf("\nwrote %s\n\n", cfgPath)
 	if err := runDoctor(cfgPath); err != nil {
-		fmt.Println("\nfix the failed checks, then run `dancer doctor` again")
+		fmt.Println("\nfix the failed checks, then run `dispatch doctor` again")
 		return nil
 	}
-	fmt.Println("\nnext: `dancer run` (or `dancer run -terminal` to try it in the terminal)")
+	fmt.Println("\nnext: `dispatch run` (or `dispatch run -terminal` to try it in the terminal)")
 	return nil
 }

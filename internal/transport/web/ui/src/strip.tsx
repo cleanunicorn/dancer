@@ -1,5 +1,5 @@
 // The strip vocabulary: what state a thread is in, the lamp that shows it,
-// the flag printed next to it, and dancer's mark. Shared by the rack
+// the flag printed next to it, and dispatch's mark. Shared by the rack
 // (Sidebar), the desk (Thread) and the log (Message).
 import type { Thread } from "./api";
 
@@ -72,7 +72,7 @@ export function Flag({ state: s }: { state: StripState }) {
   );
 }
 
-// Mark is dancer's mark: a strip with its lamp lit.
+// Mark is dispatch's mark: a strip with its lamp lit.
 export function Mark({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true" className="shrink-0">

@@ -223,7 +223,7 @@ class Store {
     if (this.state.current === m.thread && !document.hidden) this.markSeen(m.thread);
     this.touch();
     this.notify(m, t);
-    // A line from dancer or the agent means the task moved (a turn
+    // A line from dispatch or the agent means the task moved (a turn
     // ended, a thread closed, a session resolved): re-read the facts.
     if (!m.from && !m.key) this.refreshSoon();
   }
@@ -274,7 +274,7 @@ class Store {
     if (!m.prompt) return;
     if (m.mention && m.mention !== this.state.me) return;
     if (!document.hidden && this.state.current === m.thread) return;
-    const n = new Notification("dancer needs an answer", {
+    const n = new Notification("dispatch needs an answer", {
       body: (t.title ? t.title + " — " : "") + m.text.replace(/[*_`]/g, "").slice(0, 120),
       tag: m.thread,
     });
@@ -410,7 +410,7 @@ export function sameMessage(a: Message, b: Message): boolean {
 }
 
 // promptOpen says whether the prompt at list[i] still waits: nothing has
-// answered it, and neither dancer nor the agent said anything after it
+// answered it, and neither dispatch nor the agent said anything after it
 // (the agent only goes on once the prompt is settled, by a human here
 // or elsewhere, or by the decider).
 export function promptOpen(list: Message[], i: number): boolean {

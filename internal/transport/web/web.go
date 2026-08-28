@@ -2,14 +2,14 @@
 // single-page chat UI and streams it every message over server-sent
 // events. The UI is a React app on HeroUI (ui/: Vite, TypeScript,
 // Tailwind; react-markdown renders the agent's Markdown) — the one place
-// in dancer with a JavaScript toolchain. It is drawn as a flight-strip
+// in dispatch with a JavaScript toolchain. It is drawn as a flight-strip
 // board: every thread a paper strip in a rack, flagged and lit by state,
 // the open one pulled across the head of the desk (ui/src/styles.css
 // carries the materials, DESIGN.md the system). Its build is committed under
 // static/ and embedded, so `go build` needs no Node; `make ui` rebuilds
-// it after a change in ui/. It is a transport.Observer — it shows every conversation dancer
+// it after a change in ui/. It is a transport.Observer — it shows every conversation dispatch
 // has, whichever transport hosts it — and runs next to Slack on the same
-// coordinator, so one dancer serves both.
+// coordinator, so one dispatch serves both.
 //
 // It keeps nothing a reload could lose: the channel, agent and thread
 // lists and each thread's messages — the agent's tool calls among them —
@@ -19,7 +19,7 @@
 // keyed message), the prompt that is open on a thread (so the sidebar
 // can offer its choices without opening it), and threads opened here
 // that have no task yet. The page re-reads the thread list after every
-// line from dancer or the agent, and a thread's history when its status
+// line from dispatch or the agent, and a thread's history when its status
 // line comes down, so the facts it shows (status, closed, model, session,
 // tool calls) follow the task.
 //
@@ -33,7 +33,7 @@
 // session cookie names a user, and that name is the Inbound.UserID and
 // UserName of everything they send — so a mention (Outbound.Mention) of
 // it lights up for them and nobody else. Accounts come from
-// `dancer user add`; there is no anonymous mode. The server speaks plain
+// `dispatch user add`; there is no anonymous mode. The server speaks plain
 // HTTP: listen on the loopback interface (the default) or put TLS in
 // front of it.
 package web
@@ -56,7 +56,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 //go:embed static
@@ -444,7 +444,7 @@ func sameSite(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// state is the sidebar: every channel and thread dancer knows.
+// state is the sidebar: every channel and thread dispatch knows.
 func (t *Transport) state(w http.ResponseWriter, r *http.Request, _ string) {
 	var channels []Channel
 	var threads []Thread
@@ -615,9 +615,9 @@ func (t *Transport) deliver(ctx context.Context, in transport.Inbound) error {
 	select {
 	case <-t.ready:
 	case <-ctx.Done():
-		return errors.New("dancer is not accepting messages")
+		return errors.New("dispatch is not accepting messages")
 	case <-time.After(5 * time.Second):
-		return errors.New("dancer is not accepting messages")
+		return errors.New("dispatch is not accepting messages")
 	}
 	select {
 	case t.inbox <- in:
@@ -625,7 +625,7 @@ func (t *Transport) deliver(ctx context.Context, in transport.Inbound) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(10 * time.Second):
-		return errors.New("dancer is busy, try again")
+		return errors.New("dispatch is busy, try again")
 	}
 }
 

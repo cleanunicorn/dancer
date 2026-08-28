@@ -10,7 +10,7 @@ import (
 )
 
 // lockInstance takes an exclusive advisory lock beside the database so only
-// one dancer serves a given store. Two instances sharing a config both
+// one dispatch serves a given store. Two instances sharing a config both
 // connect to Slack, and Socket Mode hands each event to only one of them —
 // the other has never seen the thread and drops the message silently, which
 // looks like the bot going deaf mid-conversation.
@@ -29,9 +29,9 @@ func lockInstance(dbPath string) (func(), error) {
 		holder, _ := io.ReadAll(f) // best effort: the holder writes its pid
 		f.Close()
 		if pid := strings.TrimSpace(string(holder)); pid != "" {
-			return nil, fmt.Errorf("another dancer is already running (pid %s) on %s — stop it first", pid, dbPath)
+			return nil, fmt.Errorf("another dispatch is already running (pid %s) on %s — stop it first", pid, dbPath)
 		}
-		return nil, fmt.Errorf("another dancer is already running on %s — stop it first", dbPath)
+		return nil, fmt.Errorf("another dispatch is already running on %s — stop it first", dbPath)
 	}
 	if err := f.Truncate(0); err == nil {
 		if _, err := f.Seek(0, io.SeekStart); err == nil {

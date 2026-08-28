@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Attachments ride along on prompts and follow-ups, even without text;

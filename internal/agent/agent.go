@@ -10,7 +10,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Kind names an agent implementation.

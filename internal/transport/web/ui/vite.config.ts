@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 // The build lands in ../static, which the Go transport embeds; it is
 // committed so `go build` needs no Node. `npm run dev` proxies the API to
-// a running `dancer run -web`.
+// a running `dispatch run -web`.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: { outDir: "../static", emptyOutDir: true, sourcemap: false },

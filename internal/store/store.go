@@ -8,9 +8,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // ErrNotFound is returned when a task or definition does not exist.
@@ -50,7 +50,7 @@ type TaskState struct {
 	// task that never reached a session with it.
 	Prompt string
 	// Resumes counts consecutive automatic resumes after a restart, so a
-	// task that keeps dying with dancer cannot restart-loop forever. It is
+	// task that keeps dying with dispatch cannot restart-loop forever. It is
 	// cleared by any turn that ends on its own.
 	Resumes int
 	// UpdatedAt is when the projection was last written (set by the store).
@@ -68,7 +68,7 @@ type Store interface {
 	ThreadRecords(ctx context.Context, thread transport.ThreadID, limit int) ([]Record, error)
 	// ThreadRecordsOfKind is ThreadRecords for one kind: the last human
 	// message of a thread is one "inbound" record, however much the agent
-	// and dancer posted after it.
+	// and dispatch posted after it.
 	ThreadRecordsOfKind(ctx context.Context, thread transport.ThreadID, kind string, limit int) ([]Record, error)
 	// ThreadHeadOfKind is the opposite end: the first limit records of
 	// one kind on a thread, oldest first. The first "inbound" record is
@@ -149,7 +149,7 @@ const (
 	StatusRunning           = "running"
 	StatusWaitingPermission = "waiting_permission"
 	StatusIdle              = "idle"        // turn finished, session resumable
-	StatusInterrupted       = "interrupted" // stopped by a dancer shutdown, session resumable
+	StatusInterrupted       = "interrupted" // stopped by a dispatch shutdown, session resumable
 	StatusDone              = "done"
 	StatusFailed            = "failed"
 	StatusCancelled         = "cancelled"

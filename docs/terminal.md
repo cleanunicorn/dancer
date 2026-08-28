@@ -1,14 +1,14 @@
 # Terminal
 
 A stdin/stdout transport: one constant thread, no Slack app, no browser. It is the
-fastest way to try dancer or a chat change, and what `make e2e` drives.
+fastest way to try dispatch or a chat change, and what `make e2e` drives.
 
 Other transports: [Slack](slack.md), [Web UI](web.md).
 
 ## Start it
 
 ```sh
-bin/dancer run -terminal        # the terminal transport alone, whatever the config says
+bin/dispatch run -terminal        # the terminal transport alone, whatever the config says
 make run-terminal               # same, from the repo (builds first)
 ```
 
@@ -19,14 +19,14 @@ make run-terminal               # same, from the repo (builds first)
 transports = ["terminal"]
 ```
 
-With no `transports` line at all, dancer picks `["terminal"]` when `slack.app_token` is
+With no `transports` line at all, dispatch picks `["terminal"]` when `slack.app_token` is
 empty and `["slack"]` when it is set — so a config written before the Slack step just
 works here.
 
 ## Use it
 
 ```
-dancer terminal — type `help` for commands
+dispatch terminal — type `help` for commands
 > agents
 > run coder create hello.py that prints hi, then run it
 ```
@@ -83,5 +83,5 @@ make e2e              # scripts/e2e.py: the whole binary through this transport
 make restart-drill    # SIGTERM mid-tool-call → drain → resume, also through it
 ```
 
-Both need a logged-in `claude`. They talk to dancer over a pipe and wait for the prompt
+Both need a logged-in `claude`. They talk to dispatch over a pipe and wait for the prompt
 hints above (`[allow/deny] >`), so changing those strings means updating the scripts.

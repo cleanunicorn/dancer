@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment/local"
 )
 
 const hostsWithToken = "github.com:\n    oauth_token: gho_hosttoken\n    user: octocat\n"
@@ -143,7 +143,7 @@ func TestLendCopiesHostHostsFile(t *testing.T) {
 	if !fi.ModTime().Equal(hostTime) {
 		t.Errorf("mtime = %v, want the host's %v", fi.ModTime(), hostTime)
 	}
-	if left, _ := filepath.Glob(filepath.Join(home, ".config", "gh", ".dancer-lend-ref*")); len(left) > 0 {
+	if left, _ := filepath.Glob(filepath.Join(home, ".config", "gh", ".dispatch-lend-ref*")); len(left) > 0 {
 		t.Errorf("reference file left behind: %v", left)
 	}
 	// The scratch file is per-process, so two lends into one reused

@@ -16,7 +16,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // fakeSlack is a Web API that says ok to everything and keeps the form of

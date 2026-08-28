@@ -1,6 +1,6 @@
 package claude
 
-import "github.com/cleanunicorn/dancer/internal/agent"
+import "github.com/cleanunicorn/dispatch/internal/agent"
 
 // background tracks the sub-agents the CLI runs behind the main session,
 // because they change what a result line means.

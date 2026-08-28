@@ -24,10 +24,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	"github.com/cleanunicorn/dancer/internal/gh"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/gh"
 )
 
 // ErrNotRunning is returned by Send/Cancel when the task has no live process.
@@ -50,7 +50,7 @@ type Executor struct {
 	MaxFilesPerEvent int
 	// InboxDir is where attachments the human sends are put inside the
 	// environment, one directory per task under it (default
-	// /tmp/dancer/inbox). An absolute path, the same in every environment
+	// /tmp/dispatch/inbox). An absolute path, the same in every environment
 	// kind: /tmp is writable in a container, over ssh and on the host.
 	InboxDir string
 
@@ -311,7 +311,7 @@ func (e *Executor) Send(ctx context.Context, id executor.TaskID, text string, fi
 }
 
 // defaultInboxDir is where attachments land when InboxDir is unset.
-const defaultInboxDir = "/tmp/dancer/inbox"
+const defaultInboxDir = "/tmp/dispatch/inbox"
 
 // inbox is the attachment directory of a task inside its environment.
 func (e *Executor) inbox(id executor.TaskID) string {
