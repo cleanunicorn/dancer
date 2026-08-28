@@ -165,6 +165,14 @@ files first — they carry the contract, the concrete packages under them are im
   plain base image into an agent-ready one (git, the GitHub CLI, Node, the agent CLI, a user with
   the host uid and a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
   `Spec.Reuse`/`ReuseKey` keep one container per thread or definition with `$HOME` on a volume.
+- **`work`** — reads a thread's records back for what it is working on: repository, branch, pull
+  request, issue. It asks GitHub nothing — a thread that opened a PR already said so in the log
+  (`gh pr create`, the URL in the tool result, "fix #47" in the human's message) — so the overview
+  survives a restart and still works after a per-task container is gone. Every reference is graded
+  by how strongly the thread is about it (created here > acted on > mentioned in passing), which is
+  what picks *the* PR out of a thread that named many numbers. The coordinator attaches the result
+  to `surface.Event.Work` at the two moments a human decides whether to open a browser — the end of
+  a turn and an answered `status` — and the chat surface renders it under those lines.
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
   next message resumes the agent session.

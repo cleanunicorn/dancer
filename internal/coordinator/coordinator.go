@@ -533,7 +533,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 				text += " — " + v.Reason
 			}
 		}
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text, Work: c.overview(ctx, it.Thread)}, s)
 	case surface.Cancel:
 		if c.cancelWizard(it.Thread) {
 			return
@@ -1273,7 +1273,13 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		return // rendered by AwaitDecision with its prompt id
 	}
 	e := ev
-	s.c.broadcast(ctx, surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e})
+	out := surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e}
+	if ev.Type == agent.EventResult {
+		// The end of a turn is when a human decides whether to go and
+		// look, so the closing line carries what there is to look at.
+		out.Work = s.c.overview(ctx, st.Thread)
+	}
+	s.c.broadcast(ctx, out)
 }
 
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {

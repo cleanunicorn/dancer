@@ -1,0 +1,112 @@
+package coordinator
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dancer/internal/environment"
+	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
+	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
+	"github.com/cleanunicorn/dancer/internal/store"
+	"github.com/cleanunicorn/dancer/internal/store/sqlite"
+	"github.com/cleanunicorn/dancer/internal/surface"
+	"github.com/cleanunicorn/dancer/internal/surface/chat"
+	"github.com/cleanunicorn/dancer/internal/transport"
+)
+
+// TestStatusCarriesTheWork: `status` answers with the pull request the
+// thread opened and the issue it is for, read back out of the log — the
+// task itself is long over and its container gone.
+func TestStatusCarriesTheWork(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	th := transport.ThreadID("C-dev/1.0")
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutTask(ctx, store.TaskState{ID: "t-1", Transport: "slack", Thread: th,
+		Definition: agent.Definition{Name: "coder"}, Session: "s-1", Status: store.StatusIdle}); err != nil {
+		t.Fatal(err)
+	}
+	appendInbound(t, st, th, "run coder please fix #47")
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "u1",
+		ToolInput: map[string]any{"command": "git switch -c fix-47"}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "u2",
+		ToolInput: map[string]any{"command": `gh pr create --body "Closes #47"`}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "u2",
+		Text: "https://github.com/cleanunicorn/dancer/pull/51"})
+
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	tr.say(th, "status")
+	reply := tr.waitFor(t, th, "task `t-1`")
+	for _, want := range []string{
+		"status *idle*",
+		"🔀 #51 https://github.com/cleanunicorn/dancer/pull/51 · for #47",
+		"🌿 `fix-47`",
+	} {
+		if !strings.Contains(reply.Text, want) {
+			t.Errorf("status reply is missing %q:\n%s", want, reply.Text)
+		}
+	}
+}
+
+// TestStatusOfAThreadWithoutCode: nothing is added when the thread never
+// went near a repository.
+func TestStatusOfAThreadWithoutCode(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	th := transport.ThreadID("C-dev/2.0")
+	if err := st.PutTask(ctx, store.TaskState{ID: "t-2", Transport: "slack", Thread: th,
+		Definition: agent.Definition{Name: "coder"}, Status: store.StatusIdle}); err != nil {
+		t.Fatal(err)
+	}
+	appendInbound(t, st, th, "run coder summarise the meeting notes")
+
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	tr.say(th, "status")
+	reply := tr.waitFor(t, th, "task `t-2`")
+	if strings.Contains(reply.Text, "\n") {
+		t.Errorf("an overview was added to a thread that has no work to show:\n%s", reply.Text)
+	}
+}
+
+// logAgent records an agent event on a thread the way taskSink does.
+func logAgent(t *testing.T, st store.Store, th transport.ThreadID, ev agent.Event) {
+	t.Helper()
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(context.Background(), store.Record{At: time.Now(), Task: "t-1", Thread: th, Kind: "agent", Payload: b}); err != nil {
+		t.Fatal(err)
+	}
+}

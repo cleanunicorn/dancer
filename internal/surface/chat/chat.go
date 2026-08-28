@@ -190,7 +190,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	case surface.EventClosed:
 		return s.endWith(ev.Thread, say("✅ thread closed — mention me here to pick it up again"))
 	case surface.EventReply, surface.EventAllowed:
-		msgs = say(ev.Text)
+		msgs = say(withOverview(ev.Text, ev.Work))
 	case surface.EventNotice:
 		msgs = tell(ev.Text)
 	case surface.EventError:
@@ -251,7 +251,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		t.activity = ""
 		text = fmt.Sprintf("🚫 *%s* refused by the agent's own policy: %s", a.Tool, truncate(a.Text, 300))
 	case agent.EventResult:
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Mention: requester(ev), Files: files(a)}})
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: withOverview(doneLine(t, a, now), ev.Work), Mention: requester(ev), Files: files(a)}})
 	case agent.EventUsage:
 		// Lands after the closing line — or, if the human was quick,
 		// inside the next turn, where it slots in above the status line.
