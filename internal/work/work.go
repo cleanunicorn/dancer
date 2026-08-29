@@ -17,13 +17,24 @@
 // which outranks a number that appeared in passing. That ordering is the
 // whole trick — a long thread mentions many numbers and is about one.
 //
+// What it refuses to believe matters as much as what it reads. A
+// repository is the one a remote command named, not every
+// "github.com/owner/name" a go.mod or a README puts in front of it; a
+// branch is never a command's own flag; and a command that came back with
+// a page of pull requests acted on none of them.
+//
 // Scan is a projection over records the caller already has, not new state:
-// it stores nothing and appends nothing.
+// it stores nothing and appends nothing. It runs at the end of every turn,
+// while a human waits for the closing line, so it is written to skip: most
+// records are ruled out on their bytes and never decoded, and what is left
+// is bounded (maxScan, maxText).
 package work
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,8 +95,22 @@ func (s State) Empty() bool {
 // maxText bounds how much of one record is searched. A tool result can be
 // a whole file or the output of `gh pr list --limit 500`; the references
 // worth finding are near the top of it, and the regexes should not be
-// handed a megabyte.
-const maxText = 16 << 10
+// handed a megabyte. An overview is read at the end of every turn, over
+// the whole tail of the thread, while a human waits for the closing line —
+// so this is a latency budget, not just a safety valve.
+const maxText = 4 << 10
+
+// maxWorked is how many references one piece of text may name before it is
+// read as a listing rather than as work. Past a handful, a command that
+// returned them all did not act on any of them.
+const maxWorked = 3
+
+// maxScan bounds the bytes one scan decodes. The caller's record limit
+// bounds the count, which is not the same thing: a thread of tiny records
+// costs nothing to read whole, while a thread whose every tool result is a
+// file — carried twice, in Text and in Raw — can be a hundred megabytes of
+// JSON, and a human is waiting for the closing line behind it.
+const maxScan = 16 << 20
 
 // maxAlso is how many extra references the overview carries. Past a
 // handful it stops being an overview.
@@ -98,7 +123,7 @@ const maxAlso = 4
 // otherwise keep re-confirming themselves.
 func Scan(recs []store.Record) State {
 	sc := scanner{refs: map[string]*Ref{}, tools: map[string]string{}, repos: map[string]int{}}
-	for _, r := range recs {
+	for _, r := range affordable(recs) { // already filtered and budgeted
 		switch r.Kind {
 		case "inbound":
 			var in transport.Inbound
@@ -107,7 +132,12 @@ func Scan(recs []store.Record) State {
 			}
 			sc.text(in.Text, r.At, SeenMentioned)
 		case "agent":
-			var ev agent.Event
+			// Decoded into the four fields that can carry a reference
+			// rather than the whole agent.Event: a logged event also
+			// carries Raw, the entire vendor message, and base64-decoding
+			// one of those per record is most of the cost of a scan.
+			// TestNarrowEventMatchesAgentEvent pins the field names.
+			var ev event
 			if json.Unmarshal(r.Payload, &ev) != nil {
 				continue
 			}
@@ -115,6 +145,15 @@ func Scan(recs []store.Record) State {
 		}
 	}
 	return sc.state()
+}
+
+// event is the part of an agent.Event a scan reads. Its fields are named
+// exactly as agent.Event names them, because that is what the log holds.
+type event struct {
+	Type      agent.EventType
+	Text      string
+	ToolInput map[string]any
+	ToolID    string
 }
 
 // scanner accumulates what the records say.
@@ -130,7 +169,7 @@ type scanner struct {
 // agent set out to do), its result as an outcome (the URL that came back),
 // and the two are paired by tool id so a URL in the output of `gh pr
 // create` counts as created rather than mentioned.
-func (sc *scanner) event(ev agent.Event, at time.Time) {
+func (sc *scanner) event(ev event, at time.Time) {
 	switch ev.Type {
 	case agent.EventToolUse, agent.EventNeedsPermission:
 		cmd, _ := ev.ToolInput["command"].(string)
@@ -142,8 +181,15 @@ func (sc *scanner) event(ev agent.Event, at time.Time) {
 		}
 		sc.command(cmd, at)
 	case agent.EventToolResult:
-		sc.text(ev.Text, at, seenFor(sc.tools[ev.ToolID]))
-		sc.remotes(ev.Text)
+		cmd := sc.tools[ev.ToolID]
+		sc.text(ev.Text, at, seenFor(cmd))
+		// Only the output of a command that reports a remote is read for
+		// one. Any other output is someone else's repository going past:
+		// `cat go.mod` names three, and believing the last of them would
+		// point every bare "#47" in the thread at a stranger's issue.
+		if namesRemoteRe.MatchString(cmd) {
+			sc.remotes(ev.Text)
+		}
 		sc.pushHint(ev.Text)
 	case agent.EventText, agent.EventResult:
 		sc.text(ev.Text, at, SeenMentioned)
@@ -157,7 +203,9 @@ func (sc *scanner) command(cmd string, at time.Time) {
 	if b := branchOf(cmd); b != "" {
 		sc.branch = b
 	}
-	sc.remotes(cmd)
+	if namesRemoteRe.MatchString(cmd) {
+		sc.remotes(cmd) // `git clone https://github.com/o/r`, `git remote add …`
+	}
 	sc.text(cmd, at, seenFor(cmd))
 	// `gh pr view 51`, `gh issue develop 47`: the bare number after the
 	// subcommand is a reference even without a `#`.
@@ -173,11 +221,18 @@ func (sc *scanner) command(cmd string, at time.Time) {
 // text mines free text — a human's message, the agent's prose, a tool's
 // output — for references at no more than strength max.
 func (sc *scanner) text(s string, at time.Time, max Seen) {
-	if s == "" {
+	if !mayRefer(s) {
 		return
 	}
 	s = clip(s)
-	for _, m := range urlRe.FindAllStringSubmatch(s, -1) {
+	urls := urlRe.FindAllStringSubmatch(s, -1)
+	// One command that returns a page of pull requests is a listing, not
+	// work on any of them: `gh pr status` and `gh pr list` would otherwise
+	// hand SeenWorked to everything open and let the highest number win.
+	if len(urls) > maxWorked {
+		max = SeenMentioned
+	}
+	for _, m := range urls {
 		k := KindPR
 		if m[3] == "issues" {
 			k = KindIssue
@@ -204,7 +259,12 @@ func (sc *scanner) text(s string, at time.Time, max Seen) {
 
 // remotes notes every "owner/repo" a git remote or clone URL names. The
 // last one wins: it is the repository the work most recently touched.
+// Callers gate this on the command having asked about a remote; remoteRe
+// only tightens that, by insisting on a URL shape a remote actually has.
 func (sc *scanner) remotes(s string) {
+	if !strings.Contains(s, "github.com") {
+		return
+	}
 	for _, m := range remoteRe.FindAllStringSubmatch(clip(s), -1) {
 		repo := m[1] + "/" + trimGit(m[2])
 		sc.repo = repo
@@ -215,6 +275,9 @@ func (sc *scanner) remotes(s string) {
 // pushHint reads git's own "create a pull request" advice, which names the
 // branch that was just pushed.
 func (sc *scanner) pushHint(s string) {
+	if !strings.Contains(s, "github.com") {
+		return
+	}
 	if m := pushRe.FindStringSubmatch(clip(s)); m != nil {
 		sc.branch = m[1]
 	}
@@ -305,7 +368,13 @@ func (sc *scanner) state() State {
 		if !all[i].At.Equal(all[j].At) {
 			return all[i].At.After(all[j].At)
 		}
-		return all[i].Number > all[j].Number
+		if all[i].Number != all[j].Number {
+			return all[i].Number > all[j].Number
+		}
+		// collapse leaves one reference per repository and number, so the
+		// repository settles every remaining tie — and the order of the
+		// answer must not depend on a map's iteration order.
+		return all[i].Repo < all[j].Repo
 	})
 	for i := range all {
 		switch {
@@ -359,25 +428,95 @@ const ownerRepo = `([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)`
 // numbered are the `gh pr` and `gh issue` subcommands that act on one
 // reference, and so are followed by its number. Two regexes need the
 // list and would drift apart by hand: one asks whether a command worked
-// on something, the other reads which number it worked on. `gh pr
-// status` acts on no particular number and belongs only to the first.
+// on something, the other reads which number it worked on. A subcommand
+// that acts on no particular number — `status`, `list` — belongs to
+// neither, which is why the list is exactly the ones that do.
 const numbered = `view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review`
 
 var (
 	urlRe    = regexp.MustCompile(`https?://github\.com/` + ownerRepo + `/(pull|issues)/(\d+)`)
 	bareRe   = regexp.MustCompile(`(?:^|[^\w/#-])(?:` + ownerRepo + `)?#(\d{1,5})\b`)
 	closesRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:` + ownerRepo + `)?#(\d{1,5})\b`)
-	remoteRe = regexp.MustCompile(`github\.com[:/]` + ownerRepo)
-	pushRe   = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/(\S+)`)
+	// remoteRe: a repository named the way a remote names one — over ssh
+	// (`git@github.com:o/r`) or by a URL with a scheme. A bare
+	// "github.com/owner/name" is not enough: that is how go.mod, a README
+	// and half the world's prose spell a repository nobody is working on.
+	remoteRe = regexp.MustCompile(`(?:git@|(?:ssh|git|https?)://(?:git@)?)github\.com[:/]` + ownerRepo)
+	// namesRemoteRe: the commands whose output is allowed to name the
+	// repository being worked in. Everything else — `cat go.mod`, a README,
+	// the agent's own prose — may mention a repository without dancer
+	// concluding the thread is working in it.
+	namesRemoteRe = regexp.MustCompile(`\b(?:git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s+repo)\b`)
+	pushRe        = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/(\S+)`)
 	// branchRe: the commands that name a branch dancer should believe.
-	branchRe = regexp.MustCompile(`\bgit\s+(?:checkout\s+-b|switch\s+-c|branch)\s+(?:-\S+\s+)*([A-Za-z0-9._/-]+)`)
-	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+|--\S+\s+)*origin\s+(?:HEAD:)?([A-Za-z0-9._/-]+)`)
-	headRe   = regexp.MustCompile(`--head[=\s]+([A-Za-z0-9._/-]+)`)
+	// Every capture uses branchName, which cannot start with "-" — git
+	// forbids such a branch, so `git branch --show-current` and
+	// `git push origin --delete stale` name no branch at all rather than
+	// naming their own flag. `git branch` is only believed bare: with a
+	// flag it lists (`-a`) or deletes (`-d old`) far more often than it
+	// creates.
+	branchRe = regexp.MustCompile(`\bgit\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
+	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
+	headRe   = regexp.MustCompile(`--head[=\s]+` + branchName)
 	createRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
-	workRe   = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:` + numbered + `|status)\b`)
+	// workRe: subcommands that act on one pull request or issue. `status`
+	// and `list` are absent on purpose — they return everything open, and
+	// grading a listing as work lets an unrelated pull request win.
+	workRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:` + numbered + `)\b`)
 	// ghTargetRe: the number a `gh pr`/`gh issue` subcommand acts on.
 	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
 )
+
+// branchName is a branch as a command spells it. The first character
+// cannot be "-", so a flag is never mistaken for a branch.
+const branchName = `([A-Za-z0-9._/][A-Za-z0-9._/-]*)`
+
+// mayRefer reports whether text could possibly hold a reference, without
+// running a regex over it. Every pattern text mines needs a "#" or the
+// hostname, and most of what a thread logs — source files, test output,
+// diffs — has neither.
+func mayRefer(s string) bool {
+	return strings.Contains(s, "#") || strings.Contains(s, "github.com")
+}
+
+// affordable returns the newest records a scan can pay to decode. The
+// budget is spent from the end because that is where the answer is: the
+// pull request a thread is about was named while the work was being done,
+// not a hundred thousand lines of file-reading ago. Records mayMatter
+// rules out are never decoded, so they are free and cost no budget — a
+// thread of quiet output is read whole however long it is.
+func affordable(recs []store.Record) []store.Record {
+	n := 0
+	keep := make([]store.Record, 0, len(recs))
+	for i := len(recs) - 1; i >= 0; i-- {
+		if !mayMatter(recs[i].Payload) {
+			continue
+		}
+		if n += len(recs[i].Payload); n > maxScan {
+			break
+		}
+		keep = append(keep, recs[i])
+	}
+	slices.Reverse(keep) // back to oldest-first, which is what a scan reads
+	return keep
+}
+
+// toolInput is how a logged event that carries a command spells it. Only
+// tool calls have one; every other event marshals "ToolInput":null.
+var toolInput = []byte(`"ToolInput":{`)
+
+// mayMatter reports whether a record could hold anything a scan reads,
+// judged on its bytes so that most of a thread is never decoded at all.
+// A record matters when it could name a reference — every pattern needs a
+// "#" or the hostname, both of which JSON leaves as they are — or when it
+// is a tool call, whose command names the branch. What is left is the bulk
+// of a coding thread: files read, diffs, test output, each carrying the
+// whole vendor message in Raw, and each cheap to skip and dear to decode.
+func mayMatter(p []byte) bool {
+	return bytes.Contains(p, []byte("#")) ||
+		bytes.Contains(p, []byte("github.com")) ||
+		bytes.Contains(p, toolInput)
+}
 
 // seenFor grades a command: what it creates is the thread's own, what it
 // acts on is what the thread works on, anything else is talk.

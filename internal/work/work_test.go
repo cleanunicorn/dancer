@@ -264,3 +264,201 @@ func TestScanStopsReading(t *testing.T) {
 		t.Errorf("read past the clip: %+v", st)
 	}
 }
+
+// TestScanIgnoresRepositoriesGoingPast: a thread reads other people's
+// repositories all day — go.mod names three, a README links a fourth —
+// and none of them is the repository it is working in. Believing the last
+// one seen pointed every bare "#47" at a stranger's issue.
+func TestScanIgnoresRepositoriesGoingPast(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.says("run coder please fix #47")
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dancer.git (fetch)")
+	l.bash("u2", "cat go.mod", "module github.com/cleanunicorn/dancer\n\nrequire (\n\tgithub.com/BurntSushi/toml v1.4.0\n\tgithub.com/slack-go/slack v0.15.0\n)")
+	l.bash("u3", "cat README.md", "See https://github.com/anthropics/claude-code/issues/999 for the CLI.")
+
+	st := Scan(l.recs)
+	if st.Repo != "cleanunicorn/dancer" {
+		t.Fatalf("Repo = %q, want the one the remote named", st.Repo)
+	}
+	if st.Issue == nil || st.Issue.Number != 47 {
+		t.Fatalf("Issue = %+v", st.Issue)
+	}
+	if st.Issue.URL != "https://github.com/cleanunicorn/dancer/issues/47" {
+		t.Errorf("Issue.URL = %q — a bare #47 was pointed at another repository", st.Issue.URL)
+	}
+}
+
+// TestScanRemoteFromABareURLIsNotBelieved: the shape matters too. A
+// repository spelled without a scheme is prose, not a remote, so it does
+// not become the repository in hand even when a remote command printed it.
+func TestScanRemoteFromABareURLIsNotBelieved(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\tgithub.com/only/prose (fetch)")
+	if st := Scan(l.recs); st.Repo != "" {
+		t.Errorf("Repo = %q, want none", st.Repo)
+	}
+}
+
+// TestScanBranchIsNeverAFlag: git forbids a branch whose name starts with
+// "-", so a command's own flag must never be read as one. `git branch
+// --show-current` is how an agent asks which branch it is on, and it used
+// to answer "--show-current" — and overwrite the real branch with it.
+func TestScanBranchIsNeverAFlag(t *testing.T) {
+	for _, tc := range []struct{ cmd, want string }{
+		{"git switch -c status-overview", "status-overview"},
+		{"git checkout -b fix-47", "fix-47"},
+		{"git branch spike", "spike"},
+		{"git push -u origin status-overview", "status-overview"},
+		{"git push origin HEAD:release", "release"},
+		{"git branch --show-current", ""},
+		{"git branch -a", ""},
+		{"git branch --list", ""},
+		{"git branch -vv", ""},
+		{"git branch -d old-thing", ""},
+		{"git push origin --delete stale", ""},
+	} {
+		if got := branchOf(tc.cmd); got != tc.want {
+			t.Errorf("branchOf(%q) = %q, want %q", tc.cmd, got, tc.want)
+		}
+	}
+}
+
+// TestScanBranchSurvivesALaterListing: the branch is last-write-wins, so a
+// command that names no branch must leave the one already found alone.
+func TestScanBranchSurvivesALaterListing(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git switch -c feature-x", "Switched to a new branch 'feature-x'")
+	l.bash("u2", "git branch --show-current", "feature-x")
+	l.bash("u3", "git branch -a", "* feature-x\n  main")
+	if st := Scan(l.recs); st.Branch != "feature-x" {
+		t.Errorf("Branch = %q, want feature-x", st.Branch)
+	}
+}
+
+// TestScanListingIsNotWork: one command that returns every open pull
+// request acted on none of them. Graded as work, the listing's highest
+// number won and the thread claimed a pull request it never touched.
+func TestScanListingIsNotWork(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u0", "git remote -v", "origin\tgit@github.com:o/r.git (fetch)")
+	l.bash("u1", "gh pr status", "https://github.com/o/r/pull/70\nhttps://github.com/o/r/pull/71\nhttps://github.com/o/r/pull/72\nhttps://github.com/o/r/pull/73")
+	l.bash("u2", "gh pr view 12", "url:\thttps://github.com/o/r/pull/12")
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 12 {
+		t.Fatalf("PR = %+v, want the one that was viewed", st.PR)
+	}
+	if st.PR.Seen != SeenWorked {
+		t.Errorf("PR.Seen = %v, want SeenWorked", st.PR.Seen)
+	}
+	for _, r := range st.Also {
+		if r.Seen != SeenMentioned {
+			t.Errorf("a listed pull request graded %v: %+v", r.Seen, r)
+		}
+	}
+}
+
+// TestScanOrderIsStable: sightings live in a map, and the answer must not
+// depend on the order Go walks it. Two references that tie on every other
+// term settle on the repository.
+func TestScanOrderIsStable(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.says("run coder compare https://github.com/a/lib/issues/5 with https://github.com/z/lib/issues/5")
+	first := Scan(l.recs)
+	for i := 0; i < 50; i++ {
+		got := Scan(l.recs)
+		if got.Issue == nil || first.Issue == nil || *got.Issue != *first.Issue {
+			t.Fatalf("run %d picked %+v, first run picked %+v", i, got.Issue, first.Issue)
+		}
+	}
+}
+
+// TestNarrowEventMatchesAgentEvent pins the contract Scan relies on: the
+// log holds a marshalled agent.Event, and the narrow struct decodes the
+// four fields a scan reads out of it under exactly the same names. It also
+// pins how a tool call spells its input, which mayMatter sniffs for.
+func TestNarrowEventMatchesAgentEvent(t *testing.T) {
+	full := agent.Event{
+		Type:      agent.EventToolUse,
+		Text:      "https://github.com/o/r/pull/51",
+		ToolInput: map[string]any{"command": "git switch -c spike"},
+		ToolID:    "u9",
+		Raw:       []byte(`{"vendor":"payload"}`),
+	}
+	b, err := json.Marshal(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got event
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != full.Type || got.Text != full.Text || got.ToolID != full.ToolID ||
+		got.ToolInput["command"] != full.ToolInput["command"] {
+		t.Errorf("narrow decode = %+v, want %+v — agent.Event's field names moved", got, full)
+	}
+	if !mayMatter(b) {
+		t.Error("a tool call carrying a command was skipped; toolInput no longer matches the log")
+	}
+	plain, err := json.Marshal(agent.Event{Type: agent.EventToolResult, Text: "no references here"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mayMatter(plain) {
+		t.Error("a tool result with nothing to find was decoded anyway")
+	}
+}
+
+// BenchmarkScan is the latency budget: an overview is read at the end of
+// every turn, over the tail of a thread, while a human waits for the
+// closing line. The records are the expensive shape — a thread full of
+// large tool results, each carrying the vendor message in Raw. "quiet" is
+// output with nothing to find, which most of a thread is; "hashes" is
+// output a byte-level skip cannot rule out, which is the worst case.
+func BenchmarkScan(b *testing.B) {
+	for _, tc := range []struct{ name, line string }{
+		{"quiet", "package main // an ordinary source line, no references\n"},
+		{"hashes", "# an ordinary comment line, in a language that has them\n"},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			blob := strings.Repeat(tc.line, 500)
+			recs := make([]store.Record, 0, 1500)
+			for i := 0; i < 1500; i++ {
+				ev := agent.Event{Type: agent.EventToolResult, ToolID: "u", Text: blob, Raw: []byte(blob)}
+				p, err := json.Marshal(ev)
+				if err != nil {
+					b.Fatal(err)
+				}
+				recs = append(recs, store.Record{At: time.Unix(int64(i), 0), Kind: "agent", Payload: p})
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				Scan(recs)
+			}
+		})
+	}
+}
+
+// TestScanReadsTheNewestItCanAfford: the byte budget is spent from the end
+// of the thread, so a run of enormous tool results costs the oldest
+// records, never the ones the work just happened in.
+func TestScanReadsTheNewestItCanAfford(t *testing.T) {
+	blob := strings.Repeat("# a line with a hash, so no byte-level skip applies\n", 20_000) // ~1MB
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u0", "git remote -v", "origin\tgit@github.com:o/r.git (fetch)")
+	l.bash("u1", "gh pr view 1", "url:\thttps://github.com/o/r/pull/1") // oldest: must fall off
+	for i := 0; i < 2+(maxScan/len(blob)); i++ {
+		l.bash("f", "cat big.py", blob)
+	}
+	l.bash("u2", "gh pr view 2", "url:\thttps://github.com/o/r/pull/2") // newest: must survive
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 2 {
+		t.Fatalf("PR = %+v, want the newest one the budget reaches", st.PR)
+	}
+	for _, r := range st.Also {
+		if r.Number == 1 {
+			t.Errorf("a record past the budget was read anyway: %+v", r)
+		}
+	}
+}

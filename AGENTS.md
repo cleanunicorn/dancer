@@ -239,7 +239,12 @@ files first — they carry the contract, the concrete packages under them are im
   thread saying so (the diff stat, the checks, a merge by someone else) is deliberately not here.
   Every sighting is graded — created here > acted on > mentioned in passing — which is what picks
   *the* PR out of a thread that named a dozen numbers, and sightings of one number in one
-  repository collapse into one reference however they were spelled. Outbound records are never
+  repository collapse into one reference however they were spelled. What it *refuses* to believe
+  carries as much: the repository is the one a `git remote` named rather than every
+  `github.com/owner/name` a go.mod scrolls past, a branch is never a command's own flag, and a
+  command that came back with a page of pull requests acted on none of them. A scan runs while a
+  human waits for the closing line, so most records are ruled out on their bytes and never
+  decoded (`maxScan`, `mayMatter`). Outbound records are never
   scanned: dancer's own overview lines carry the references they were mined from and would keep
   re-confirming themselves. The coordinator attaches the answer to `surface.Event.Work`; `chat`
   and `feed` both render it, so the ops channel never falls behind the thread.

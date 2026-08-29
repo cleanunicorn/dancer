@@ -94,8 +94,13 @@ func TestStatusOfAThreadWithoutCode(t *testing.T) {
 
 	tr.say(th, "status")
 	reply := tr.waitFor(t, th, "task `t-2`")
-	if strings.Contains(reply.Text, "\n") {
-		t.Errorf("an overview was added to a thread that has no work to show:\n%s", reply.Text)
+	// Asserted on the overview's own marks, not on the answer having one
+	// line: `status` grows a line of its own whenever a decider has ruled
+	// on the thread, and that line is not an overview.
+	for _, mark := range []string{"🔀", "🎯", "🌿", "💬"} {
+		if strings.Contains(reply.Text, mark) {
+			t.Errorf("an overview (%s) was added to a thread that has no work to show:\n%s", mark, reply.Text)
+		}
 	}
 }
 
