@@ -43,9 +43,17 @@ type TaskState struct {
 	// Model is the model the session resolved to, as the agent reported
 	// it on its first turn (agent.EventInit). Definition.Model is what
 	// was asked for and may be empty; this is what answered.
-	Model   string
-	Status  string // "queued", "running", "waiting_permission", "done", "failed"
-	LastSeq int64
+	Model string
+	// ModelPin is a model a human chose mid-session, by sending the agent
+	// its own "/model opus" (see agent.Run.Send); the turn that carried
+	// it out reports the name on agent.Event.Model. The switch lives in
+	// the agent process, so it would be undone by the first idle timeout
+	// — the resume asks for Definition.Model again. dispatch therefore
+	// asks for this instead, every time it resumes the session, and the
+	// choice holds for the thread. Empty until someone changes it.
+	ModelPin string
+	Status   string // "queued", "running", "waiting_permission", "done", "failed"
+	LastSeq  int64
 	// Prompt is the last prompt handed to the agent. A restart re-runs a
 	// task that never reached a session with it.
 	Prompt string

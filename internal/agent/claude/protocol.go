@@ -29,6 +29,10 @@ type line struct {
 	APIKeySource   string `json:"apiKeySource,omitempty"` // "none" = OAuth/subscription login
 	Cwd            string `json:"cwd,omitempty"`
 	Version        string `json:"claude_code_version,omitempty"`
+	// SlashCommands is every command this session answers — built in
+	// (/model, /clear, /compact), plus the plugins' and the project's.
+	// The CLI recomputes it on each init, so it is always current.
+	SlashCommands []string `json:"slash_commands,omitempty"`
 
 	// type=system subtype=task_started / task_notification / task_updated:
 	// a background task — a sub-agent, a backgrounded shell command — of

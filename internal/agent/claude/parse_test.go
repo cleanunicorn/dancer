@@ -211,3 +211,41 @@ func TestTranslateUsageResponse(t *testing.T) {
 		}
 	}
 }
+
+// The CLI names every command the session accepts on its init line —
+// built in, plugin and project alike. dispatch implements none of them
+// (a message that is one is sent through verbatim), so this list is the
+// only way it can say which exist.
+func TestTranslateInitSlashCommands(t *testing.T) {
+	line := `{"type":"system","subtype":"init","session_id":"s1","model":"claude-haiku-4-5-20251001",` +
+		`"slash_commands":["clear","compact","model","review-pr"],"cwd":"/work"}`
+	p, err := translate([]byte(line), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Events) != 1 || p.Events[0].Type != agent.EventInit {
+		t.Fatalf("events = %+v", p.Events)
+	}
+	want := []string{"clear", "compact", "model", "review-pr"}
+	got := p.Events[0].Commands
+	if len(got) != len(want) {
+		t.Fatalf("commands = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("commands = %v, want %v", got, want)
+		}
+	}
+}
+
+// An older CLI sends no such list; that is not an error, it just means
+// dispatch cannot enumerate what still works when sent.
+func TestTranslateInitWithoutSlashCommands(t *testing.T) {
+	p, err := translate([]byte(`{"type":"system","subtype":"init","session_id":"s1","model":"m"}`), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Events) != 1 || p.Events[0].Commands != nil {
+		t.Fatalf("commands = %v, want nil", p.Events[0].Commands)
+	}
+}

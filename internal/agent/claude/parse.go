@@ -75,6 +75,7 @@ func translate(raw []byte, now time.Time) (parsed, error) {
 			ev.Model = l.Model
 			ev.Mode = fromCLIMode(l.PermissionMode)
 			ev.Version = l.Version
+			ev.Commands = l.SlashCommands
 			ev.Workdir = l.Cwd
 			switch l.APIKeySource {
 			case "none":

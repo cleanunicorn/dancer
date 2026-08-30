@@ -49,6 +49,13 @@ Run `bin/dispatch doctor` after editing: it checks both tokens against Slack.
 | reply in the thread          | follow-up to that task (resumes if idle)    |
 | attach a file or image       | copied into the agent's environment, path added to the message ([SETUP.md](../SETUP.md#files-to-the-agent)) |
 | button / reply to a question | answers a permission or `AskUserQuestion` prompt |
+| `@dispatch /model opus`        | the agent's own commands — `/model`, `/clear`, `/compact`, a plugin's — passed to it as typed; `commands` lists what this agent accepts |
+
+**Slack keeps a leading `/` for itself.** A message that *starts* with `/` is read by Slack
+as one of its own commands and never leaves the client, so an agent command is written
+after the mention — `@dispatch /clear` — which dispatch strips back to `/clear` before the
+agent sees it. In a DM or a thread the mention is otherwise optional; for these it is not.
+The web UI and the terminal have no such rule: there you type `/clear`.
 
 The full command list (`run`, `default`, `agent add/edit/delete`, `close`, `status`,
 `cancel`, `help`) is in the [README](../README.md#commands) and is the same on every
@@ -152,5 +159,7 @@ See [Surfaces](../SETUP.md#surfaces).
   token is the *Bot* User OAuth Token, not the user one.
 - **Attachment "could not be fetched"** — the app lacks `files:read`, or the file is
   larger than dispatch accepts.
+- **`/clear` did nothing / "not a valid command"** — Slack swallowed it. Write
+  `@dispatch /clear`; see *Use it* above.
 
 More in [SETUP.md → Troubleshooting](../SETUP.md#troubleshooting).

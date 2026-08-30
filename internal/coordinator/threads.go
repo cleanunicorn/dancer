@@ -9,6 +9,7 @@ import (
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
 	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
@@ -331,4 +332,54 @@ func (c *Coordinator) Channels() map[string][]transport.Channel {
 		}
 	}
 	return out
+}
+
+// listCommands answers "commands": which of its own commands the agent
+// running this thread accepts. dispatch implements none of them — a
+// message that is one is passed to the agent verbatim (agent.Run.Send)
+// — so the list is the agent's own, taken from the last init it
+// reported on the thread (agent.Event.Commands) and therefore current
+// for the CLI, plugins and project that session actually loaded.
+func (c *Coordinator) listCommands(ctx context.Context, s surface.Surface, it surface.ListCommands) {
+	reply := func(text string) {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: text}, s)
+	}
+	agentName := "this agent"
+	if st, err := c.Store.LatestTaskForThread(ctx, it.Thread); err == nil && st.Definition.Name != "" {
+		agentName = st.Definition.Name
+	}
+	cmds := c.sessionCommands(ctx, it.Thread)
+	if len(cmds) == 0 {
+		reply("no agent has started on this thread yet — its commands are known once it has")
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d commands *%s* answers — send one as a message, e.g. `/model opus`:\n", len(cmds), agentName)
+	for i, name := range cmds {
+		if i > 0 {
+			b.WriteString(" · ")
+		}
+		b.WriteString("`/" + name + "`")
+	}
+	reply(b.String())
+}
+
+// sessionCommands is the command list of the thread's most recent agent
+// init, oldest state ignored: a session that restarted with new plugins
+// reports the new list.
+func (c *Coordinator) sessionCommands(ctx context.Context, th transport.ThreadID) []string {
+	recs, err := c.Store.ThreadRecordsOfKind(ctx, th, "agent", 400)
+	if err != nil {
+		return nil
+	}
+	for i := len(recs) - 1; i >= 0; i-- {
+		var ev agent.Event
+		if json.Unmarshal(recs[i].Payload, &ev) != nil {
+			continue
+		}
+		if ev.Type == agent.EventInit && len(ev.Commands) > 0 {
+			return ev.Commands
+		}
+	}
+	return nil
 }

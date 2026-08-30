@@ -16,6 +16,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/executor"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/work"
 )
 
 // Surface interprets inbound traffic and renders coordinator events.
@@ -75,6 +76,14 @@ type Status struct{ Thread transport.ThreadID }
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
+// ListCommands asks which of its own commands the agent on Thread
+// accepts — "/model", "/clear", "/compact" and whatever else its CLI,
+// its plugins and the project define. dispatch does not implement any of
+// them: a message that is one is passed through to the agent verbatim
+// (see agent.Run.Send), so this list is the agent's, read back from what
+// it reported when it last started (agent.Event.Commands).
+type ListCommands struct{ Thread transport.ThreadID }
+
 // AddAgent starts the guided "agent add" flow on Thread: the coordinator
 // asks for each setting in turn and saves the new definition.
 type AddAgent struct{ Thread transport.ThreadID }
@@ -105,18 +114,19 @@ type Say struct {
 	Text   string
 }
 
-func (RunTask) isIntent()     {}
-func (FollowUp) isIntent()    {}
-func (Cancel) isIntent()      {}
-func (CloseThread) isIntent() {}
-func (Status) isIntent()      {}
-func (ListAgents) isIntent()  {}
-func (AddAgent) isIntent()    {}
-func (EditAgent) isIntent()   {}
-func (DeleteAgent) isIntent() {}
-func (SetDefault) isIntent()  {}
-func (Decide) isIntent()      {}
-func (Say) isIntent()         {}
+func (RunTask) isIntent()      {}
+func (FollowUp) isIntent()     {}
+func (Cancel) isIntent()       {}
+func (CloseThread) isIntent()  {}
+func (Status) isIntent()       {}
+func (ListAgents) isIntent()   {}
+func (ListCommands) isIntent() {}
+func (AddAgent) isIntent()     {}
+func (EditAgent) isIntent()    {}
+func (DeleteAgent) isIntent()  {}
+func (SetDefault) isIntent()   {}
+func (Decide) isIntent()       {}
+func (Say) isIntent()          {}
 
 // EventKind classifies coordinator events.
 type EventKind string
@@ -154,4 +164,10 @@ type Event struct {
 	PromptID string          // EventPermission/EventQuestion: id the Decide intent must echo
 	Question *agent.Question // EventQuestion: the single question this event carries
 	Text     string          // EventReply, EventNotice, EventAllowed, EventError
+	// Work is what the thread is working on — the repository, branch,
+	// pull request and issue read back out of the log (internal/work).
+	// The coordinator fills it in on the moments a human decides whether
+	// to go and look: the end of a turn, and an answered `status`. Nil
+	// when the thread has touched no repository, which is most of them.
+	Work *work.State
 }

@@ -20,6 +20,12 @@
 // waits for its next message, ❌ when the task failed, ✅ once the thread
 // is closed. A task thread is never bare: it is being worked on, waiting
 // on a human, or closed (see mark).
+//
+// Where a thread stands includes where its code went. At the end of a
+// turn and on an answered `status` it reads the thread's own records back
+// for the repository, branch, pull request and issue being worked on
+// (overview.go, over internal/work) and hands the answer to the surfaces
+// on surface.Event.Work, so each renders it its own way.
 package coordinator
 
 import (
@@ -533,7 +539,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 				text += " — " + v.Reason
 			}
 		}
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text, Work: c.overview(ctx, it.Thread)}, s)
 	case surface.Cancel:
 		if c.cancelWizard(it.Thread) {
 			return
@@ -563,6 +569,8 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 			b.WriteString("\n")
 		}
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: strings.TrimRight(b.String(), "\n")}, s)
+	case surface.ListCommands:
+		c.listCommands(ctx, s, it)
 	case surface.AddAgent:
 		c.addAgent(ctx, s, it)
 	case surface.EditAgent:
@@ -947,7 +955,14 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	c.mu.Unlock()
 	c.mark(ctx, st.Transport, st.Thread, store.StatusRunning)
 	stopBeat := c.beat(ctx, sink)
-	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: st.Definition, Prompt: prompt, Session: st.Session, Files: files}, sink)
+	// The definition says which model to ask for; a human who sent the
+	// agent "/model …" has said otherwise, and that choice would be lost
+	// on this resume (the CLI keeps it only for its own process).
+	def := st.Definition
+	if st.ModelPin != "" {
+		def.Model = st.ModelPin
+	}
+	err := c.Executor.Run(ctx, executor.Task{ID: st.ID, Definition: def, Prompt: prompt, Session: st.Session, Files: files}, sink)
 	stopBeat()
 	c.mu.Lock()
 	delete(c.sinks, st.ID)
@@ -1248,6 +1263,12 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	if ev.Type == agent.EventInit && ev.Model != "" {
 		s.state.Model = ev.Model
 	}
+	if ev.Type == agent.EventResult && ev.Model != "" {
+		// The turn switched the session's model (a human sent the agent
+		// its own "/model …"). The agent process would forget it; the
+		// resume after the next idle timeout asks for it again.
+		s.state.ModelPin = ev.Model
+	}
 	switch ev.Type {
 	case agent.EventNeedsPermission, agent.EventQuestion:
 		s.state.Status = store.StatusWaitingPermission
@@ -1273,7 +1294,15 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		return // rendered by AwaitDecision with its prompt id
 	}
 	e := ev
-	s.c.broadcast(ctx, surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e})
+	out := surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e}
+	if ev.Type == agent.EventResult || ev.Type == agent.EventError {
+		// The end of a turn is when a human decides whether to go and
+		// look, so the closing line carries what there is to look at.
+		// A turn that failed ends here too, and the half-finished pull
+		// request it left behind is the thing someone has to deal with.
+		out.Work = s.c.overview(ctx, st.Thread)
+	}
+	s.c.broadcast(ctx, out)
 }
 
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {
