@@ -29,11 +29,13 @@
 // The bytes of a file the agent opened are not, however many numbers they
 // cite — nor is `git log`, nor a grep over a repository that talks about
 // pull requests, nor a result whose command a scan never saw. Commands
-// are recognised where a command begins, so `grep -rn "gh pr create" .`
-// is a grep. And a here-document's body is a file being written rather
-// than commands being run: a fixture full of `git switch -c x` named no
-// branch, though what a command hands GitHub — a pull request's body —
-// is still read for what it links and what it says it closes.
+// are recognised where a command begins — past any indentation, any
+// separator and any wrapper, so `timeout 60 gh pr create` created a pull
+// request while `grep -rn "gh pr create" .` is a grep. And a
+// here-document's body is a file being written rather than commands being
+// run: a fixture full of `git switch -c x` named no branch, though what a
+// command hands GitHub under a body flag — a pull request's body — is
+// still read for what it links and what it says it closes.
 //
 // The agent's own prose is read the same careful way: for a link, and for
 // "Closes #47", but never for a bare "#12". When the agent means a pull
@@ -205,7 +207,11 @@ func (sc *scanner) event(ev event, at time.Time) {
 			return
 		}
 		if ev.ToolID != "" {
-			sc.tools[ev.ToolID] = cmd
+			// Stripped, because this is what the result is graded and
+			// gated by: a file written through a here-document must not
+			// be able to say `gh pr view` and let its own contents back
+			// in as an answer from GitHub.
+			sc.tools[ev.ToolID] = stripHeredocs(cmd)
 		}
 		sc.command(cmd, at)
 	case agent.EventToolResult:
@@ -253,7 +259,10 @@ func (sc *scanner) event(ev event, at time.Time) {
 // repository it is in — believing them renamed a thread's branch to `x`
 // and pointed its numbers at o/r. So everything is read out of the
 // stripped command, and what it carries is read only when it is handed to
-// GitHub — `gh pr create --body-file - <<EOF` — and then as prose.
+// GitHub under a flag that takes prose — `gh pr create --body-file - <<EOF`
+// — and then as prose. A here-document merely standing next to a `gh`
+// call is a file again: `cat > notes.md <<EOF … EOF; gh pr view 51` wrote
+// notes, and the numbers in them are not this thread's work.
 func (sc *scanner) command(cmd string, at time.Time) {
 	carries := clip(cmd)
 	cmd = clip(stripHeredocs(cmd))
@@ -270,7 +279,7 @@ func (sc *scanner) command(cmd string, at time.Time) {
 	// closes, never for a bare number, which in a body is an example or
 	// an aside. "Closes #47" in a body is still the truest sighting a
 	// thread has of the issue behind its work.
-	if carries != cmd && asksGitHubRe.MatchString(cmd) {
+	if carries != cmd && asksGitHubRe.MatchString(cmd) && bodyFlagRe.MatchString(cmd) {
 		sc.prose(carries, at)
 	}
 	// `gh pr view 51`, `gh issue develop 47`: the bare number after the
@@ -554,12 +563,19 @@ const numbered = `view|checkout|edit|diff|merge|ready|comment|close|reopen|devel
 // is worth reading at all.
 const remoteCmds = `git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s+repo`
 
+// wrappers are the commands that run another command, and the variable
+// assignments that prefix one. What follows one is still where a command
+// begins: `timeout 60 gh pr create` created a pull request, and losing it
+// costs the thread the very reference this package exists to find.
+const wrappers = `(?:(?:sudo|nohup|command|time|exec)\s+|env\s+|timeout\s+(?:-\S+\s+)*\S+\s+|\w+=\S*\s+)*`
+
 // cmdStart is where a command begins on a shell line: the start of it, or
-// just past a separator that starts another one. Every command this
-// package recognises is anchored there, so a command that merely *quotes*
-// one — `grep -rn "gh pr create" .`, whose output is a source file, or
-// `rg "git clone"` — is not mistaken for it.
-const cmdStart = `(?:^|[\n;&|(]\s*)`
+// just past a separator that starts another one, in either case past any
+// indentation and any wrapper. Every command this package recognises is
+// anchored there, so a command that merely *quotes* one — `grep -rn "gh pr
+// create" .`, whose output is a source file, or `rg "git clone"` — is not
+// mistaken for it.
+const cmdStart = `(?:^|[\n;&|(])\s*` + wrappers
 
 var (
 	urlRe    = regexp.MustCompile(`https?://github\.com/` + ownerRepo + `/(pull|issues)/(\d+)`)
@@ -587,16 +603,21 @@ var (
 	// naming their own flag. `git branch` is only believed bare: with a
 	// flag it lists (`-a`) or deletes (`-d old`) far more often than it
 	// creates.
-	branchRe = regexp.MustCompile(`\bgit\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
-	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
+	branchRe = regexp.MustCompile(cmdStart + `git\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
+	pushToRe = regexp.MustCompile(cmdStart + `git\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
 	headRe   = regexp.MustCompile(`--head[=\s]+` + branchName)
-	createRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
+	createRe = regexp.MustCompile(cmdStart + `gh\s+(?:pr|issue)\s+create\b`)
 	// workRe: subcommands that act on one pull request or issue. `status`
 	// and `list` are absent on purpose — they return everything open, and
 	// grading a listing as work lets an unrelated pull request win.
-	workRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:` + numbered + `)\b`)
+	workRe = regexp.MustCompile(cmdStart + `gh\s+(?:pr|issue)\s+(?:` + numbered + `)\b`)
+	// bodyFlagRe: the flags that hand a command's here-document to GitHub
+	// as prose — a pull request's body, an issue's, a comment's. Without
+	// one, a here-document next to a `gh` call is a file like any other:
+	// `cat > notes.md <<EOF … EOF; gh pr view 51` writes notes.
+	bodyFlagRe = regexp.MustCompile(`--body(?:-file)?\b|(?:^|\s)-[bF](?:\s|=)`)
 	// ghTargetRe: the number a `gh pr`/`gh issue` subcommand acts on.
-	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
+	ghTargetRe = regexp.MustCompile(cmdStart + `gh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
 )
 
 // githubHost is the one hostname any of this is about. Four places test
@@ -727,7 +748,12 @@ func stripHeredocs(cmd string) string {
 		head, delim, rest := cmd[:m[0]], cmd[m[2]:m[3]], cmd[m[1]:]
 		nl := strings.IndexByte(rest, '\n')
 		if nl < 0 {
-			return head // the operator is the end of it; no body was written
+			// No line after the operator, so no body was written: drop
+			// the operator alone and keep the rest of the command. A
+			// `<<` that was never one — `echo "a << bb" && gh pr create`
+			// — must not take the real command after it.
+			cmd = head + rest
+			continue
 		}
 		// Joined by a newline, not by nothing: what follows the body is
 		// the next command, and it must still begin a line for cmdStart

@@ -728,9 +728,93 @@ func TestStripHeredocs(t *testing.T) {
 		{"no body yet", "cat > f <<EOF", "cat > f "},
 		{"two of them", "a <<ONE\nx\nONE\nb <<TWO\ny\nTWO\nc", "a \nb \nc"},
 		{"a shift is not a here-document", "python3 -c 'print(1 << n)'", "python3 -c 'print(1 << n)'"},
+		{"a false operator drops itself, not the line", `echo "a << bb" && gh pr create`, `echo "a  && gh pr create`},
 	} {
 		if got := stripHeredocs(tc.cmd); got != tc.want {
 			t.Errorf("%s: stripHeredocs(%q) = %q, want %q", tc.name, tc.cmd, got, tc.want)
 		}
+	}
+}
+
+// TestScanHeredocDoesNotReopenTheResultGate: a tool result is gated and
+// graded by the command behind it, looked up by tool id — so what is
+// remembered under that id must be the command *stripped*, the same
+// string `command` reads. Remembering the raw one let a file written
+// through a here-document say `git clone` and hand its own contents back
+// as though GitHub had answered them.
+func TestScanHeredocDoesNotReopenTheResultGate(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
+	l.bash("u2", "cat > setup.sh <<'EOF'\ngit clone https://github.com/o/r\nEOF\ncat setup.sh",
+		"git clone https://github.com/o/r\nsee #12 and https://github.com/o/r/pull/99")
+
+	st := Scan(l.recs)
+	if st.Repo != "cleanunicorn/dispatch" {
+		t.Errorf("Repo = %q, read out of a file being written back to us", st.Repo)
+	}
+	if st.PR != nil || st.Issue != nil || len(st.Also) != 0 {
+		t.Errorf("references mined from the output of `cat`: %+v", st)
+	}
+}
+
+// TestScanQuotedCommandsNameNothing: every command this package
+// recognises is anchored where a command begins, not merely word-bounded.
+// A grep for one is how an agent works on this very package, and its
+// output is a source file.
+func TestScanQuotedCommandsNameNothing(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", `grep -rn "gh pr view 51" internal/`, "work.go:42: // `gh pr view 51` names a reference")
+	l.bash("u2", `grep -rn "git switch -c fixture" internal/`, "")
+	l.bash("u3", `rg "gh pr create" internal/`, "")
+
+	st := Scan(l.recs)
+	if st.Branch != "" {
+		t.Errorf("Branch = %q, read out of a search pattern", st.Branch)
+	}
+	if !st.Empty() {
+		t.Errorf("a grep was read as the command it searched for: %+v", st)
+	}
+}
+
+// TestScanReadsThroughAWrapper: `timeout 60 gh pr create` created a pull
+// request, and so did the one an indented line or a `FOO=1` prefix
+// carries. Anchoring at the start of a command must not mean anchoring at
+// the start of the string.
+func TestScanReadsThroughAWrapper(t *testing.T) {
+	for _, cmd := range []string{
+		`timeout 60 gh pr create --title x --body "Closes #47"`,
+		`  gh pr create --title x --body "Closes #47"`,
+		`GH_TOKEN=$T gh pr create --title x --body "Closes #47"`,
+		`env GH_HOST=github.com gh pr create --title x --body "Closes #47"`,
+	} {
+		l := &log{at: time.Unix(0, 0)}
+		l.bash("u1", cmd, "https://github.com/o/r/pull/51")
+		st := Scan(l.recs)
+		if st.PR == nil || st.PR.Number != 51 || st.PR.Seen != SeenCreated {
+			t.Errorf("%s: PR = %+v, want the one it created", cmd, st.PR)
+		}
+		if st.Issue == nil || st.Issue.Number != 47 {
+			t.Errorf("%s: Issue = %+v, want the one the body closes", cmd, st.Issue)
+		}
+	}
+}
+
+// TestScanHeredocNextToAGhCallIsStillAFile: what a command hands GitHub is
+// read as prose, but only what it hands it. A here-document that merely
+// shares a command line with a `gh` call is a file like any other.
+func TestScanHeredocNextToAGhCallIsStillAFile(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "cat > notes.md <<'EOF'\nCloses #999, see https://github.com/o/r/pull/998\nEOF\ngh pr view 51",
+		"url:\thttps://github.com/o/r/pull/51")
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 51 {
+		t.Fatalf("PR = %+v, want the one viewed", st.PR)
+	}
+	if st.Issue != nil {
+		t.Errorf("Issue = %+v, mined from a file being written", st.Issue)
+	}
+	if len(st.Also) != 0 {
+		t.Errorf("Also = %+v, mined from a file being written", st.Also)
 	}
 }
