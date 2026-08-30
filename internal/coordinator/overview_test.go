@@ -99,6 +99,41 @@ func TestStatusOfAThreadWithoutCode(t *testing.T) {
 	}
 }
 
+// TestClosingLineCarriesTheWork: the closing line of a turn — the line a
+// human reads to decide whether to go and look — carries the pull request
+// the turn opened. This is the path most humans meet; `status` is the one
+// they ask for.
+func TestClosingLineCarriesTheWork(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/3.0")
+	tr.say(th, "run coder ship the fix")
+	done := tr.waitFor(t, th, "✅ done")
+	for _, want := range []string{
+		"🔀 #51 https://github.com/cleanunicorn/dancer/pull/51 · for #47",
+		"🌿 `fix-47`",
+	} {
+		if !strings.Contains(done.Text, want) {
+			t.Errorf("closing line is missing %q:\n%s", want, done.Text)
+		}
+	}
+}
+
 // logAgent records an agent event on a thread the way taskSink does.
 func logAgent(t *testing.T, st store.Store, th transport.ThreadID, ev agent.Event) {
 	t.Helper()
