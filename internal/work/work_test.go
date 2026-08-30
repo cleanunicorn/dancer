@@ -697,6 +697,25 @@ EOF`, "https://github.com/o/r/pull/51")
 	}
 }
 
+// TestScanReadsBothEndsOfABody: a pull request body is prose, and a long
+// one says what it closes at the bottom — under the "Progress" list, the
+// validation, everything the agent had to say. Clipped from the top only,
+// the issue behind the work was cut off exactly when there was most of it.
+func TestScanReadsBothEndsOfABody(t *testing.T) {
+	long := strings.Repeat("Did a great deal of work. ", maxText/13) // > 2*maxText
+
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "gh pr create --title x --body-file - <<'EOF'\n"+long+"\nCloses #47\nEOF", "https://github.com/o/r/pull/51")
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 51 {
+		t.Fatalf("PR = %+v", st.PR)
+	}
+	if st.Issue == nil || st.Issue.Number != 47 {
+		t.Fatalf("Issue = %+v, want the one a long body closes at its end", st.Issue)
+	}
+}
+
 // TestScanCommandsAreNotQuotes: a command that quotes another is not that
 // command. Searching a repository that talks about `gh` and `git clone`
 // is how an agent works on one, and its output is a source file.
@@ -728,7 +747,12 @@ func TestStripHeredocs(t *testing.T) {
 		{"no body yet", "cat > f <<EOF", "cat > f "},
 		{"two of them", "a <<ONE\nx\nONE\nb <<TWO\ny\nTWO\nc", "a \nb \nc"},
 		{"a shift is not a here-document", "python3 -c 'print(1 << n)'", "python3 -c 'print(1 << n)'"},
-		{"a false operator drops itself, not the line", `echo "a << bb" && gh pr create`, `echo "a  && gh pr create`},
+		// A bare delimiter must be capitals, so what is not an operator
+		// is left where it is rather than swallowing the line — and the
+		// real command after it survives.
+		{"a stream is not a here-document", `echo "a << bb" && gh pr create`, `echo "a << bb" && gh pr create`},
+		{"nor is one in a grep pattern", "grep -n \"cout << endl\" src/\ngit switch -c real", "grep -n \"cout << endl\" src/\ngit switch -c real"},
+		{"quoted keeps its case", "cat > f <<'eof'\n#12\neof\ngit push", "cat > f \ngit push"},
 	} {
 		if got := stripHeredocs(tc.cmd); got != tc.want {
 			t.Errorf("%s: stripHeredocs(%q) = %q, want %q", tc.name, tc.cmd, got, tc.want)

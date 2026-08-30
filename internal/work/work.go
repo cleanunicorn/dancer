@@ -264,7 +264,10 @@ func (sc *scanner) event(ev event, at time.Time) {
 // call is a file again: `cat > notes.md <<EOF … EOF; gh pr view 51` wrote
 // notes, and the numbers in them are not this thread's work.
 func (sc *scanner) command(cmd string, at time.Time) {
-	carries := clip(cmd)
+	// From both ends, because it is read as prose: a pull request body
+	// long enough to be cut is exactly the one whose "Closes #47" is the
+	// last line of it.
+	carries := clipEnds(cmd)
 	cmd = clip(stripHeredocs(cmd))
 	if b := branchOf(cmd); b != "" {
 		sc.branch = b
@@ -728,10 +731,13 @@ func path(k Kind) string {
 func trimGit(s string) string { return strings.TrimSuffix(s, ".git") }
 
 // heredocRe matches a here-document operator and captures its delimiter:
-// `<<EOF`, `<<-EOF`, `<<'PY'`, `<< "SQL"`. The delimiter is two characters
-// at least, so a shell shift (`$((1<<n))`) or a stray `<< x` is not read
-// as one.
-var heredocRe = regexp.MustCompile(`<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]+)['"]?`)
+// `<<EOF`, `<<-EOF`, `<<'PY'`, `<< "SQL"`. Quoted, the delimiter is
+// whatever it says; bare, it must be two or more capitals, which is how
+// every here-document anybody writes spells one — and what tells the
+// operator from a `<<` that is not one, a shell shift or a C++ stream
+// gone past in a grep pattern, whose body would be the rest of the
+// command and whose delimiter would never come.
+var heredocRe = regexp.MustCompile(`<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Z_][A-Z0-9_]+))`)
 
 // stripHeredocs removes the bodies of a command's here-documents, leaving
 // what the command runs. An agent writes files through the shell — a test
@@ -745,7 +751,7 @@ func stripHeredocs(cmd string) string {
 		if m == nil {
 			return cmd
 		}
-		head, delim, rest := cmd[:m[0]], cmd[m[2]:m[3]], cmd[m[1]:]
+		head, delim, rest := cmd[:m[0]], submatch(cmd, m), cmd[m[1]:]
 		nl := strings.IndexByte(rest, '\n')
 		if nl < 0 {
 			// No line after the operator, so no body was written: drop
@@ -760,6 +766,17 @@ func stripHeredocs(cmd string) string {
 		// to recognise it as one.
 		cmd = head + "\n" + afterHeredoc(rest[nl+1:], delim)
 	}
+}
+
+// submatch is the delimiter heredocRe captured, whichever of its three
+// spellings — single-quoted, double-quoted, bare — matched.
+func submatch(s string, m []int) string {
+	for i := 2; i+1 < len(m); i += 2 {
+		if m[i] >= 0 {
+			return s[m[i]:m[i+1]]
+		}
+	}
+	return ""
 }
 
 // afterHeredoc returns what follows the line that closes a here-document.
