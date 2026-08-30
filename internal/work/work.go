@@ -20,8 +20,11 @@
 // What it refuses to believe matters as much as what it reads. A
 // repository is the one a remote command named, not every
 // "github.com/owner/name" a go.mod or a README puts in front of it; a
-// branch is never a command's own flag; and a command that came back with
-// a page of pull requests acted on none of them.
+// branch is never a command's own flag; a branch is only linkable
+// (BranchURL) once the log has seen it pushed, because `git switch -c`
+// promises nothing GitHub knows about and a `gh pr list --head x` is a
+// question rather than evidence; and a command that came back with a
+// page of pull requests acted on none of them.
 //
 // When no command named a remote at all — a thread working in a checkout
 // that was already there, which is most of them — the repository falls
@@ -91,9 +94,32 @@ type Ref struct {
 type State struct {
 	Repo   string // "owner/repo", when the thread ever named one
 	Branch string // the branch the agent made or pushed
+	Pushed bool   // the log saw Branch reach the remote, so it has a URL
 	PR     *Ref   // the pull request this thread is about
 	Issue  *Ref   // the issue this thread is about
 	Also   []Ref  // other references, strongest and most recent first
+}
+
+// RepoURL is where Repo can be read on GitHub, and "" when the thread
+// never named one. Building a URL out of what was mined is this
+// package's job, so nothing above it has to know the shape of one.
+func (s State) RepoURL() string {
+	if s.Repo == "" {
+		return ""
+	}
+	return "https://github.com/" + s.Repo
+}
+
+// BranchURL is where Branch can be read on GitHub, and "" when there is
+// nowhere to point: no repository, no branch, or a branch the thread only
+// ever created locally. A `git switch -c` is not a promise that anything
+// was pushed, and a link to a branch that is not there is worse than no
+// link at all — so this insists on having seen the push.
+func (s State) BranchURL() string {
+	if s.Branch == "" || !s.Pushed || s.RepoURL() == "" {
+		return ""
+	}
+	return s.RepoURL() + "/tree/" + s.Branch
 }
 
 // Empty reports whether the scan found nothing worth showing.
@@ -171,6 +197,7 @@ type scanner struct {
 	tools  map[string]string // tool id → the command it ran, for its result
 	repos  map[string]int    // "owner/repo" → times named
 	branch string
+	pushed string // the last branch the log saw reach the remote
 	repo   string // last repository a remote named
 }
 
@@ -216,8 +243,11 @@ func (sc *scanner) event(ev event, at time.Time) {
 // branch it creates or pushes, and the pull request or issue it acts on.
 func (sc *scanner) command(cmd string, at time.Time) {
 	cmd = clip(cmd)
-	if b := branchOf(cmd); b != "" {
+	if b, pushed := branchOf(cmd); b != "" {
 		sc.branch = b
+		if pushed {
+			sc.pushed = b
+		}
 	}
 	if namesRemoteRe.MatchString(cmd) {
 		sc.remotes(cmd) // `git clone https://github.com/o/r`, `git remote add …`
@@ -303,7 +333,7 @@ func (sc *scanner) pushHint(s string) {
 	// From the ends: git's advice comes after however much progress and
 	// `remote:` output the server had to say first.
 	if m := pushRe.FindStringSubmatch(clipEnds(s)); m != nil {
-		sc.branch = m[1]
+		sc.branch, sc.pushed = m[1], m[1]
 	}
 }
 
@@ -375,7 +405,7 @@ func bump(dst *Ref, r Ref) {
 // state resolves the sightings into the answer: the repository, then the
 // one pull request and the one issue the thread is about, then the rest.
 func (sc *scanner) state() State {
-	st := State{Repo: sc.repo, Branch: sc.branch}
+	st := State{Repo: sc.repo, Branch: sc.branch, Pushed: sc.branch != "" && sc.branch == sc.pushed}
 	// No command named a remote, so fall back to the repository most
 	// linked to. See the package doc for what this is willing to trust.
 	if st.Repo == "" {
@@ -500,7 +530,12 @@ var (
 	branchRe = regexp.MustCompile(`\bgit\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
 	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
 	headRe   = regexp.MustCompile(`--head[=\s]+` + branchName)
-	createRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
+	// createHeadRe: the one `--head` that says the branch is on the
+	// remote. `gh pr create --head x` cannot work unless it is; a
+	// `gh pr list --head x` is a question, and asking it proves nothing.
+	// The gap between the two halves may not cross into another command.
+	createHeadRe = regexp.MustCompile(`\bgh\s+pr\s+create\b[^&|;]*--head[=\s]+` + branchName)
+	createRe     = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
 	// workRe: subcommands that act on one pull request or issue. `status`
 	// and `list` are absent on purpose — they return everything open, and
 	// grading a listing as work lets an unrelated pull request win.
@@ -590,14 +625,42 @@ func seenFor(cmd string) Seen {
 	return SeenMentioned
 }
 
-// branchOf is the branch a command creates, pushes or targets.
-func branchOf(cmd string) string {
-	for _, re := range []*regexp.Regexp{branchRe, pushToRe, headRe} {
-		if m := re.FindStringSubmatch(cmd); m != nil && m[1] != "" && m[1] != "HEAD" {
-			return m[1]
+// branchOf is the branch a command creates, pushes or targets, and
+// whether the command is evidence that it reached the remote. `git push
+// origin x` and `gh pr create --head x` are; `git switch -c x` is not,
+// a bare `git branch x` is not, and neither is a `gh pr list --head x`,
+// which names the branch a question was asked about and answers nothing
+// about where it lives.
+//
+// Every pattern is tried, not just the first that matches, because an
+// agent writes `git switch -c x && git push -u origin x` as one command
+// and stopping at the branch it created would lose the push in the
+// second half of it. The push only counts for the branch already named,
+// so a chain that pushes something else says nothing about this one.
+func branchOf(cmd string) (string, bool) {
+	var name string
+	pushed := false
+	for _, p := range []struct {
+		re       *regexp.Regexp
+		onRemote bool // this command could not have run unless it was pushed
+	}{
+		{branchRe, false},
+		{pushToRe, true},
+		{headRe, false},
+		{createHeadRe, true},
+	} {
+		m := p.re.FindStringSubmatch(cmd)
+		if m == nil || m[1] == "" || m[1] == "HEAD" {
+			continue
+		}
+		if name == "" {
+			name = m[1]
+		}
+		if p.onRemote && m[1] == name {
+			pushed = true
 		}
 	}
-	return ""
+	return name, pushed
 }
 
 func repoOf(owner, name string) string {

@@ -20,26 +20,29 @@ func TestOverview(t *testing.T) {
 		{"nothing", nil, ""},
 		{"empty", &work.State{}, ""},
 		{
+			// Both references are clickable and both read as their
+			// number; the branch was only ever created here, so it has
+			// nowhere to point and stays a code span.
 			"pull request with its issue",
 			&work.State{Repo: "o/r", Branch: "fix", PR: pr, Issue: issue},
-			"🔀 #51 https://github.com/o/r/pull/51 · for #47\n🌿 `fix`",
+			"🔀 <https://github.com/o/r/pull/51|#51> · for <https://github.com/o/r/issues/47|#47>\n🌿 `fix`",
 		},
 		{
 			"issue only, so the repository needs saying",
 			&work.State{Repo: "o/r", Issue: issue},
-			"🎯 #47 https://github.com/o/r/issues/47",
+			"🎯 <https://github.com/o/r/issues/47|#47>",
 		},
 		{
 			"branch only",
 			&work.State{Repo: "o/r", Branch: "spike"},
-			"🌿 `spike` · `o/r`",
+			"🌿 `spike` · <https://github.com/o/r|o/r>",
 		},
 		{
 			// A repository with no branch is still somewhere to point at,
 			// so it keeps the leaf; 💬 is for a line that is only talk.
 			"repository only",
 			&work.State{Repo: "o/r"},
-			"🌿 `o/r`",
+			"🌿 <https://github.com/o/r|o/r>",
 		},
 		{
 			"nothing but talk",
@@ -47,12 +50,20 @@ func TestOverview(t *testing.T) {
 			"💬 also #4",
 		},
 		{
+			// A branch the log saw pushed is somewhere to go, so it
+			// becomes the link and loses the backticks a link label
+			// would show as themselves.
+			"a pushed branch is clickable",
+			&work.State{Repo: "o/r", Branch: "spike", Pushed: true},
+			"🌿 <https://github.com/o/r/tree/spike|spike> · <https://github.com/o/r|o/r>",
+		},
+		{
 			"a reference from somewhere else keeps its repository",
 			&work.State{Repo: "o/r", PR: pr, Also: []work.Ref{
-				{Repo: "o/r", Kind: work.KindIssue, Number: 12},
-				{Repo: "other/lib", Kind: work.KindIssue, Number: 9},
+				{Repo: "o/r", Kind: work.KindIssue, Number: 12, URL: "https://github.com/o/r/issues/12"},
+				{Repo: "other/lib", Kind: work.KindIssue, Number: 9, URL: "https://github.com/other/lib/issues/9"},
 			}},
-			"🔀 #51 https://github.com/o/r/pull/51\n💬 also #12, other/lib#9",
+			"🔀 <https://github.com/o/r/pull/51|#51>\n💬 also <https://github.com/o/r/issues/12|#12>, <https://github.com/other/lib/issues/9|other/lib#9>",
 		},
 	} {
 		if got := Overview(tc.w); got != tc.want {
@@ -67,7 +78,7 @@ func TestWithOverview(t *testing.T) {
 	if got := WithOverview("✅ done · 4s", nil); got != "✅ done · 4s" {
 		t.Errorf("got %q", got)
 	}
-	want := "✅ done · 4s\n🌿 `spike` · `o/r`"
+	want := "✅ done · 4s\n🌿 `spike` · <https://github.com/o/r|o/r>"
 	if got := WithOverview("✅ done · 4s", &work.State{Repo: "o/r", Branch: "spike"}); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

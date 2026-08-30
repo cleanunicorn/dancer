@@ -20,6 +20,11 @@ import (
 	"time"
 )
 
+// dispatch's own lines are transport markup, not Markdown, and one piece
+// of it is shared: Link writes "<url|label>" — Slack's own form, which the
+// web UI's mrkdwn renderer reads and the terminal turns into an OSC 8
+// hyperlink (markup.go). Agent text (Outbound.Markdown) is never touched.
+//
 // ThreadID identifies a conversation on a transport. For Slack this is
 // "<channel>/<thread_ts>" ("<channel>/" posts at top level); for the
 // terminal it is a single constant thread.
