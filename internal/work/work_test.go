@@ -179,3 +179,45 @@ func TestScanBranchNames(t *testing.T) {
 		}
 	}
 }
+
+// TestScanTwoRepositories: a visitor from another repository keeps its own
+// name and does not become what the thread is about, while a bare number
+// takes the repository in hand.
+func TestScanTwoRepositories(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dancer.git (fetch)")
+	l.says("run coder same bug as https://github.com/other/lib/issues/9 — see #12 here")
+
+	st := Scan(l.recs)
+	if st.Repo != "cleanunicorn/dancer" {
+		t.Fatalf("Repo = %q", st.Repo)
+	}
+	if st.Issue == nil || st.Issue.Number != 12 || st.Issue.Repo != "cleanunicorn/dancer" {
+		t.Fatalf("Issue = %+v, want #12 in the repository in hand", st.Issue)
+	}
+	if len(st.Also) != 1 || st.Also[0].Repo != "other/lib" || st.Also[0].Number != 9 {
+		t.Fatalf("Also = %+v, want the visitor with its own repository", st.Also)
+	}
+	if st.Also[0].URL != "https://github.com/other/lib/issues/9" {
+		t.Errorf("the visitor's URL was rewritten: %q", st.Also[0].URL)
+	}
+}
+
+// TestScanSameNumberInTwoRepositories: one conversation that worked in two
+// clones can say "#3" in each and mean different things. Neither sighting
+// named a repository, so only the one in hand at the time tells them apart.
+func TestScanSameNumberInTwoRepositories(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git clone https://github.com/org/a && cd a", "Cloning into 'a'...")
+	l.bash("u2", "gh pr view 3", "title:\tthe one in a")
+	l.bash("u3", "git clone https://github.com/org/b && cd b", "Cloning into 'b'...")
+	l.bash("u4", "gh pr view 3", "title:\tthe one in b")
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Repo != "org/b" {
+		t.Fatalf("PR = %+v, want the one most recently worked on", st.PR)
+	}
+	if len(st.Also) != 1 || st.Also[0].Repo != "org/a" || st.Also[0].Number != 3 {
+		t.Fatalf("Also = %+v, want org/a#3 kept apart from org/b#3", st.Also)
+	}
+}
