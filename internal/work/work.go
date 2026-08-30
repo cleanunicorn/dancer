@@ -130,7 +130,7 @@ func Scan(recs []store.Record) State {
 			if json.Unmarshal(r.Payload, &in) != nil {
 				continue
 			}
-			sc.text(in.Text, r.At, SeenMentioned)
+			sc.text(clipEnds(in.Text), r.At, SeenMentioned)
 		case "agent":
 			// Decoded into the four fields that can carry a reference
 			// rather than the whole agent.Event: a logged event also
@@ -182,7 +182,10 @@ func (sc *scanner) event(ev event, at time.Time) {
 		sc.command(cmd, at)
 	case agent.EventToolResult:
 		cmd := sc.tools[ev.ToolID]
-		sc.text(ev.Text, at, seenFor(cmd))
+		// A tool's output is read from the top: what a command has to say
+		// about a reference, it says first, and a listing that runs to a
+		// megabyte says nothing more by its end.
+		sc.text(clip(ev.Text), at, seenFor(cmd))
 		// Only the output of a command that reports a remote is read for
 		// one. Any other output is someone else's repository going past:
 		// `cat go.mod` names three, and believing the last of them would
@@ -192,7 +195,11 @@ func (sc *scanner) event(ev event, at time.Time) {
 			sc.pushHint(ev.Text)
 		}
 	case agent.EventText, agent.EventResult:
-		sc.text(ev.Text, at, SeenMentioned)
+		// The agent's own prose is read from both ends. A closing report
+		// says what it did at the top and links the pull request at the
+		// bottom, and a report long enough to be cut is exactly the one
+		// whose link is furthest from the start.
+		sc.text(clipEnds(ev.Text), at, SeenMentioned)
 	}
 }
 
@@ -219,12 +226,13 @@ func (sc *scanner) command(cmd string, at time.Time) {
 }
 
 // text mines free text — a human's message, the agent's prose, a tool's
-// output — for references at no more than strength max.
+// output — for references at no more than strength max. Callers hand it a
+// string already cut to size, because which end of a long one holds the
+// answer depends on what wrote it: clip for a listing, clipEnds for prose.
 func (sc *scanner) text(s string, at time.Time, max Seen) {
 	if !mayRefer(s) {
 		return
 	}
-	s = clip(s)
 	urls := urlRe.FindAllStringSubmatch(s, -1)
 	// One command that returns a page of pull requests is a listing, not
 	// work on any of them: `gh pr status` and `gh pr list` would otherwise
@@ -283,7 +291,9 @@ func (sc *scanner) pushHint(s string) {
 	if !strings.Contains(s, githubHost) {
 		return
 	}
-	if m := pushRe.FindStringSubmatch(clip(s)); m != nil {
+	// From the ends: git's advice comes after however much progress and
+	// `remote:` output the server had to say first.
+	if m := pushRe.FindStringSubmatch(clipEnds(s)); m != nil {
 		sc.branch = m[1]
 	}
 }
@@ -596,6 +606,17 @@ func path(k Kind) string {
 func trimGit(s string) string { return strings.TrimSuffix(s, ".git") }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+// clipEnds keeps both ends of a long string and drops the middle, for
+// text whose reference could be at either — and which, when it is long,
+// has a middle that is neither the summary nor the link. The two halves
+// are joined by a newline so nothing can match across the seam.
+func clipEnds(s string) string {
+	if len(s) <= 2*maxText {
+		return s
+	}
+	return s[:maxText] + "\n" + s[len(s)-maxText:]
+}
 
 func clip(s string) string {
 	if len(s) > maxText {

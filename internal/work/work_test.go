@@ -507,3 +507,33 @@ func TestScanBelievesPushAdviceOnlyFromAPush(t *testing.T) {
 		t.Errorf("Branch = %q carries markup dancer would render as its own", b)
 	}
 }
+
+// TestScanReadsBothEndsOfProse: an agent's closing report says what it did
+// first and links the pull request last, so a long one had its link cut
+// off. A tool's output is still read from the top only — a listing that
+// runs long says nothing more by its end, and reading it would undo what
+// the clip is for.
+func TestScanReadsBothEndsOfProse(t *testing.T) {
+	long := strings.Repeat("Did a great deal of work. ", maxText/13) // > 2*maxText
+
+	l := &log{at: time.Unix(0, 0)}
+	l.add("agent", agent.Event{Type: agent.EventResult,
+		Text: long + "\nOpened https://github.com/o/r/pull/77 for review."})
+	if st := Scan(l.recs); st.PR == nil || st.PR.Number != 77 {
+		t.Errorf("PR = %+v, want the one the closing report ended on", st.PR)
+	}
+
+	l = &log{at: time.Unix(0, 0)}
+	l.add("agent", agent.Event{Type: agent.EventResult,
+		Text: "Opened https://github.com/o/r/pull/78 for review.\n" + long})
+	if st := Scan(l.recs); st.PR == nil || st.PR.Number != 78 {
+		t.Errorf("PR = %+v, want the one the closing report opened on", st.PR)
+	}
+
+	// A listing is still read from the top, whatever its end holds.
+	l = &log{at: time.Unix(0, 0)}
+	l.bash("u1", "gh pr list --limit 500", long+"\nhttps://github.com/o/r/pull/79")
+	if st := Scan(l.recs); st.PR != nil {
+		t.Errorf("PR = %+v, read past the clip on a listing", st.PR)
+	}
+}
