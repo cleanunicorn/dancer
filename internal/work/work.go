@@ -198,7 +198,7 @@ func (sc *scanner) text(s string, at time.Time, max Seen) {
 	// the weakest sighting there is, whatever said it: a number in prose
 	// is not work, and max cannot lower it further.
 	for _, m := range bareRe.FindAllStringSubmatch(s, -1) {
-		sc.add(Ref{Repo: repoOf(m[2], m[3]), Kind: KindIssue, Number: atoi(m[4]), Seen: SeenMentioned, At: at})
+		sc.add(Ref{Repo: repoOf(m[1], m[2]), Kind: KindIssue, Number: atoi(m[3]), Seen: SeenMentioned, At: at})
 	}
 }
 
@@ -352,7 +352,7 @@ func collapse(all []Ref) []Ref {
 
 var (
 	urlRe    = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(pull|issues)/(\d+)`)
-	bareRe   = regexp.MustCompile(`(^|[^\w/#-])(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#(\d{1,5})\b`)
+	bareRe   = regexp.MustCompile(`(?:^|[^\w/#-])(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#(\d{1,5})\b`)
 	closesRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#(\d{1,5})\b`)
 	remoteRe = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)`)
 	pushRe   = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/(\S+)`)
