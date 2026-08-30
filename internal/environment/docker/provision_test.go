@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
@@ -105,7 +106,15 @@ func TestProvisionScriptContents(t *testing.T) {
 		t.Error("installed an agent without being asked")
 	}
 	// Every kind dispatch knows has an install line, guarded the same way.
-	for _, a := range []string{"claude", "codex", "opencode"} {
+	// The list comes from agent.Kinds so that adding a kind without
+	// teaching provisioning to install it fails here. The maps stay
+	// string-keyed: provisioning takes the kind as text, off the spec.
+	for _, k := range agent.Kinds() {
+		a := string(k)
+		if agentInstall[a] == "" || agentBinary[a] == "" {
+			t.Errorf("%s: no install line — agentInstall/agentBinary do not know every agent.Kind", a)
+			continue
+		}
 		s := provisionScript(environment.Provision{Agents: []string{a}}, 1000, 1000)
 		if !strings.Contains(s, "if command -v "+agentBinary[a]+" >/dev/null 2>&1;") || !strings.Contains(s, agentInstall[a]) {
 			t.Errorf("%s: install line missing or unguarded", a)

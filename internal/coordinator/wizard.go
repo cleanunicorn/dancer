@@ -31,14 +31,17 @@ var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 var errWizardCancelled = errors.New("cancelled")
 
-// toolPresets are the button choices of the tools step.
+// toolPresets are the button choices of the tools step. The tools are
+// written in the canonical vocabulary (agent.Tool*), because that is what
+// allowed_tools is matched against whatever agent ends up running the
+// definition; Glob and Grep have no canonical name and keep the vendor's.
 var toolPresets = []struct {
 	label, desc string
 	tools       []string
 }{
-	{"Read-only", "Read, Glob, Grep", []string{"Read", "Glob", "Grep"}},
-	{"Edit files", "Read, Glob, Grep, Edit, Write", []string{"Read", "Glob", "Grep", "Edit", "Write"}},
-	{"Edit + git", "…plus Bash(git:*)", []string{"Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"}},
+	{"Read-only", "Read, Glob, Grep", []string{agent.ToolRead, "Glob", "Grep"}},
+	{"Edit files", "Read, Glob, Grep, Edit, Write", []string{agent.ToolRead, "Glob", "Grep", agent.ToolEdit, agent.ToolWrite}},
+	{"Edit + git", "…plus Bash(git:*)", []string{agent.ToolRead, "Glob", "Grep", agent.ToolEdit, agent.ToolWrite, agent.ToolBash + "(git:*)"}},
 	{"None", "ask for every tool", nil},
 }
 

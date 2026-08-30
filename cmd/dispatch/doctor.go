@@ -102,13 +102,22 @@ func runDoctor(cfgPath string) error {
 	add(check{name: "config", ok: true, info: cfgPath})
 	add(check{name: "workdir_root", ok: dirWritable(cfg.Server.WorkdirRoot), info: cfg.Server.WorkdirRoot})
 
-	add(checkClaude(cfg.Claude.Binary))
-	for _, k := range kindsUsed(cfg) {
-		if k != agent.KindClaude {
-			add(checkAgent(k, cfg.AgentBinary(k)))
-		}
-	}
+	// Only the CLIs the definitions actually run are probed: an install
+	// that runs nothing but codex should not be told claude is missing,
+	// and checkClaude spends a model turn. A kind with no driver in this
+	// build is reported per definition below, so its CLI is not looked
+	// for either — one failure, one cause.
 	drv := drivers(cfg)
+	for _, k := range kindsUsed(cfg) {
+		if _, ok := drv[k]; !ok {
+			continue
+		}
+		if k == agent.KindClaude {
+			add(checkClaude(cfg.Claude.Binary))
+			continue
+		}
+		add(checkAgent(k, cfg.AgentBinary(k)))
+	}
 	for _, d := range cfg.Definitions {
 		if _, ok := drv[agent.Kind(d.Kind)]; !ok {
 			add(check{name: "definition " + d.Name, ok: false, info: fmt.Sprintf("agent kind %q has no driver in this build (available: %s)", d.Kind, kindList(drv))})
@@ -227,8 +236,13 @@ func checkGitHub() check {
 }
 
 // kindsUsed lists the agent kinds the definitions run, in agent.Kinds
-// order, each once.
+// order, each once. A config with no definitions yet — someone running
+// doctor to find out why setup will not work — is answered with the
+// default kind, so there is always one CLI to report on.
 func kindsUsed(cfg *config.Config) []agent.Kind {
+	if len(cfg.Definitions) == 0 {
+		return []agent.Kind{agent.KindClaude}
+	}
 	used := map[agent.Kind]bool{}
 	for _, d := range cfg.Definitions {
 		used[agent.Kind(d.Kind)] = true

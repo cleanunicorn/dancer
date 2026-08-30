@@ -231,9 +231,6 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 	return err
 }
 
-// reapContainers retires reused containers nobody has touched for a while.
-// It runs once at startup — containers outlive the process, so a restart is
-// the first chance to notice one has gone cold — and hourly after that.
 // drivers is the agent registry: every kind this build can run, keyed by
 // the definition kind that selects it. Config accepts every kind in
 // agent.Kinds; a definition whose kind is missing here is refused at
@@ -265,6 +262,9 @@ func kindList(agents map[agent.Kind]agent.Agent) string {
 	return strings.Join(names, ", ")
 }
 
+// reapContainers retires reused containers nobody has touched for a while.
+// It runs once at startup — containers outlive the process, so a restart is
+// the first chance to notice one has gone cold — and hourly after that.
 func reapContainers(ctx context.Context, f envdocker.Factory, ttl time.Duration, log *slog.Logger) {
 	if ttl <= 0 {
 		ttl = envdocker.DefaultReuseTTL
