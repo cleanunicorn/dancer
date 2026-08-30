@@ -139,6 +139,42 @@ func TestClosingLineCarriesTheWork(t *testing.T) {
 	}
 }
 
+// TestFailedTurnCarriesTheWork: a turn that opened a pull request and then
+// failed still says where the work is. That is the case where someone most
+// has to go and look: there is half-finished work out there with their
+// name on it, and the error alone does not say where.
+func TestFailedTurnCarriesTheWork(t *testing.T) {
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	th := transport.ThreadID("C-dev/4.0")
+	tr.say(th, "run coder botch it")
+	failed := tr.waitFor(t, th, "❌")
+	for _, want := range []string{
+		"the build fell over",
+		"🔀 #60 https://github.com/cleanunicorn/dancer/pull/60",
+		"🌿 `half-done`",
+	} {
+		if !strings.Contains(failed.Text, want) {
+			t.Errorf("the failure line is missing %q:\n%s", want, failed.Text)
+		}
+	}
+}
+
 // logAgent records an agent event on a thread the way taskSink does.
 func logAgent(t *testing.T, st store.Store, th transport.ThreadID, ev agent.Event) {
 	t.Helper()

@@ -212,6 +212,19 @@ func (fakeAgent) Start(ctx context.Context, env environment.Environment, def age
 		}()
 		return r, nil
 	}
+	// "botch": a turn that opened a pull request and then failed. The
+	// half-finished work it left behind is what a human has to deal with.
+	if strings.HasPrefix(prompt, "botch") {
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: "sess-b"})
+			r.emit(agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "b-1", ToolInput: map[string]any{"command": "git switch -c half-done"}})
+			r.emit(agent.Event{Type: agent.EventToolResult, ToolID: "b-1", Text: "Switched to a new branch 'half-done'"})
+			r.emit(agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "b-2", ToolInput: map[string]any{"command": "gh pr create --title wip"}})
+			r.emit(agent.Event{Type: agent.EventToolResult, ToolID: "b-2", Text: "https://github.com/cleanunicorn/dancer/pull/60"})
+			r.emit(agent.Event{Type: agent.EventError, Text: "the build fell over", Session: "sess-b"})
+		}()
+		return r, nil
+	}
 	// "ship": a turn that does what the work overview is mined from —
 	// a branch, a pull request, and the issue its body closes.
 	if strings.HasPrefix(prompt, "ship") {
