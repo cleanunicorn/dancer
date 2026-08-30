@@ -35,6 +35,18 @@ func TestOverview(t *testing.T) {
 			"🌿 `spike` · `o/r`",
 		},
 		{
+			// A repository with no branch is still somewhere to point at,
+			// so it keeps the leaf; 💬 is for a line that is only talk.
+			"repository only",
+			&work.State{Repo: "o/r"},
+			"🌿 `o/r`",
+		},
+		{
+			"nothing but talk",
+			&work.State{Also: []work.Ref{{Kind: work.KindIssue, Number: 4}}},
+			"💬 also #4",
+		},
+		{
 			"a reference from somewhere else keeps its repository",
 			&work.State{Repo: "o/r", PR: pr, Also: []work.Ref{
 				{Repo: "o/r", Kind: work.KindIssue, Number: 12},
