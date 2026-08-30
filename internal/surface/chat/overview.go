@@ -7,7 +7,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/work"
 )
 
-// overview is dancer's word on what a thread is working on, in at most two
+// Overview is dancer's word on what a thread is working on, in at most two
 // lines: the pull request to go and look at with the issue behind it, then
 // where the work lives and what else went by.
 //
@@ -15,7 +15,7 @@ import (
 // to open a browser — the closing line of a turn and the answer to
 // `status` — and is empty when the thread has touched no repository, so a
 // thread that is not about code reads exactly as it did before.
-func overview(w *work.State) string {
+func Overview(w *work.State) string {
 	if w == nil || w.Empty() {
 		return ""
 	}
@@ -97,9 +97,12 @@ func ref(r *work.Ref, repo string) string {
 	return n
 }
 
-// withOverview appends the overview to a line, when there is one.
-func withOverview(line string, w *work.State) string {
-	if o := overview(w); o != "" {
+// WithOverview appends the overview to a line, when there is one. It is
+// exported because the feed surface renders the same event into the ops
+// channel and must not fall behind what chat shows (as it does for the
+// cost and usage lines).
+func WithOverview(line string, w *work.State) string {
+	if o := Overview(w); o != "" {
 		return line + "\n" + o
 	}
 	return line

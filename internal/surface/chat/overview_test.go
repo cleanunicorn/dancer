@@ -43,7 +43,7 @@ func TestOverview(t *testing.T) {
 			"🔀 #51 https://github.com/o/r/pull/51\n💬 also #12, other/lib#9",
 		},
 	} {
-		if got := overview(tc.w); got != tc.want {
+		if got := Overview(tc.w); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
 		}
 	}
@@ -52,11 +52,11 @@ func TestOverview(t *testing.T) {
 // TestWithOverview: a thread that never touched a repository reads exactly
 // as it did before the overview existed.
 func TestWithOverview(t *testing.T) {
-	if got := withOverview("✅ done · 4s", nil); got != "✅ done · 4s" {
+	if got := WithOverview("✅ done · 4s", nil); got != "✅ done · 4s" {
 		t.Errorf("got %q", got)
 	}
 	want := "✅ done · 4s\n🌿 `spike` · `o/r`"
-	if got := withOverview("✅ done · 4s", &work.State{Repo: "o/r", Branch: "spike"}); got != want {
+	if got := WithOverview("✅ done · 4s", &work.State{Repo: "o/r", Branch: "spike"}); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
