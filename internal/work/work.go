@@ -194,9 +194,11 @@ func (sc *scanner) text(s string, at time.Time, max Seen) {
 	// A bare "#12" says a number but not what it is; GitHub numbers pull
 	// requests and issues from one series, and the log rarely says which.
 	// It is recorded as an issue, which is what a human writing "#12" in
-	// the message that starts a task nearly always means.
+	// the message that starts a task nearly always means. It is always
+	// the weakest sighting there is, whatever said it: a number in prose
+	// is not work, and max cannot lower it further.
 	for _, m := range bareRe.FindAllStringSubmatch(s, -1) {
-		sc.add(Ref{Repo: repoOf(m[2], m[3]), Kind: KindIssue, Number: atoi(m[4]), Seen: min(max, SeenMentioned), At: at})
+		sc.add(Ref{Repo: repoOf(m[2], m[3]), Kind: KindIssue, Number: atoi(m[4]), Seen: SeenMentioned, At: at})
 	}
 }
 
