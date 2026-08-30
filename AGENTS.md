@@ -165,14 +165,6 @@ files first — they carry the contract, the concrete packages under them are im
   plain base image into an agent-ready one (git, the GitHub CLI, Node, the agent CLI, a user with
   the host uid and a writable `$HOME`) and `docker commit`s it as `dancer-env:<hash>`, built once per hash;
   `Spec.Reuse`/`ReuseKey` keep one container per thread or definition with `$HOME` on a volume.
-- **`work`** — reads a thread's records back for what it is working on: repository, branch, pull
-  request, issue. It asks GitHub nothing — a thread that opened a PR already said so in the log
-  (`gh pr create`, the URL in the tool result, "fix #47" in the human's message) — so the overview
-  survives a restart and still works after a per-task container is gone. Every reference is graded
-  by how strongly the thread is about it (created here > acted on > mentioned in passing), which is
-  what picks *the* PR out of a thread that named many numbers. The coordinator attaches the result
-  to `surface.Event.Work` at the two moments a human decides whether to open a browser — the end of
-  a turn and an answered `status` — and the chat surface renders it under those lines.
 - **`store`** (sqlite) — append-only `Record` log; `TaskState`/`Definition`/`FlowState` are
   projections over it. Crash recovery is a replay: live tasks become `interrupted`/`idle`, and the
   next message resumes the agent session.
@@ -238,6 +230,19 @@ files first — they carry the contract, the concrete packages under them are im
   already in the container (`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` in the definition's env opts
   out). Nothing here can fail a task: without a login the agent meets `gh`'s own "please run gh
   auth login", and `dancer doctor` says what would be lent and who a container would commit as.
+- **What a thread is working on is mined from its own log** (`internal/work`). The closing line of
+  a turn and an answered `status` carry the repository, branch, pull request and issue — and
+  nothing asks GitHub for them. A thread that opened a PR already said so in the log: the agent
+  ran `gh pr create` and the URL came back in the tool result, the human wrote "fix #47" in the
+  message that started the task, the branch was born in a `git switch -c`. So the overview
+  survives a restart and still works after a per-task container is gone; what changes without the
+  thread saying so (the diff stat, the checks, a merge by someone else) is deliberately not here.
+  Every sighting is graded — created here > acted on > mentioned in passing — which is what picks
+  *the* PR out of a thread that named a dozen numbers, and sightings of one number in one
+  repository collapse into one reference however they were spelled. Outbound records are never
+  scanned: dancer's own overview lines carry the references they were mined from and would keep
+  re-confirming themselves. The coordinator attaches the answer to `surface.Event.Work`; `chat`
+  and `feed` both render it, so the ops channel never falls behind the thread.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.
