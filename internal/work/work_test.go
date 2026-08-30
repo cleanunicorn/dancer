@@ -537,3 +537,44 @@ func TestScanReadsBothEndsOfProse(t *testing.T) {
 		t.Errorf("PR = %+v, read past the clip on a listing", st.PR)
 	}
 }
+
+// TestScanRemoteFromEveryCommandThatNamesOne: the repository may be named
+// by any command that talks to a remote, not just `git remote`. Narrowing
+// that list to `remote|clone` left the suite green.
+func TestScanRemoteFromEveryCommandThatNamesOne(t *testing.T) {
+	for _, tc := range []struct{ name, cmd, out string }{
+		{"remote", "git remote -v", "origin\tgit@github.com:o/r.git (fetch)"},
+		{"clone", "git clone https://github.com/o/r", "Cloning into 'r'..."},
+		{"ls-remote", "git ls-remote --get-url", "https://github.com/o/r.git"},
+		{"config", "git config --get remote.origin.url", "https://github.com/o/r.git"},
+		{"fetch", "git fetch origin", "From https://github.com/o/r\n * branch  main -> FETCH_HEAD"},
+		{"gh repo", "gh repo view --json url", `{"url":"https://github.com/o/r"}`},
+	} {
+		l := &log{at: time.Unix(0, 0)}
+		l.bash("u1", tc.cmd, tc.out)
+		if got := Scan(l.recs).Repo; got != "o/r" {
+			t.Errorf("%s: Repo = %q, want o/r", tc.name, got)
+		}
+	}
+	// And still not from a command that only happened to print one.
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "cat go.mod", "require github.com/slack-go/slack v0.12.0")
+	if got := Scan(l.recs).Repo; got != "" {
+		t.Errorf("Repo = %q, read out of a file that only mentioned one", got)
+	}
+}
+
+// TestScanTellsAnIssueFromAPullRequest: `gh issue view 47` names an issue
+// and `gh pr view 47` a pull request, and the bare number says neither.
+// Forcing both to KindPR left the suite green.
+func TestScanTellsAnIssueFromAPullRequest(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "gh issue develop 47", "created branch")
+	st := Scan(l.recs)
+	if st.Issue == nil || st.Issue.Number != 47 || st.Issue.Seen != SeenWorked {
+		t.Fatalf("Issue = %+v", st.Issue)
+	}
+	if st.PR != nil {
+		t.Errorf("PR = %+v, want an issue command to name no pull request", st.PR)
+	}
+}
