@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // fakeHistory is the coordinator's read side, canned.
@@ -295,7 +295,7 @@ func TestStateAndHistory(t *testing.T) {
 
 // TestOpenPrompt: a prompt the transport saw is on the thread in the
 // sidebar — what it asks, as one plain line, its choices and who it is
-// for — until a decision or a line from dancer settles it.
+// for — until a decision or a line from dispatch settles it.
 func TestOpenPrompt(t *testing.T) {
 	tr, srv, _ := newTest(t)
 	ck := login(t, srv)

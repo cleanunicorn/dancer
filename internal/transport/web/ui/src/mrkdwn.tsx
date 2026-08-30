@@ -1,4 +1,4 @@
-// Renders dancer's own lines: Slack-style mrkdwn (*bold*, _italic_,
+// Renders dispatch's own lines: Slack-style mrkdwn (*bold*, _italic_,
 // `code`, ```fences```), links, and a leading @mention. Agent text is
 // Markdown and goes through react-markdown instead (see Message.tsx).
 import type { ReactNode } from "react";

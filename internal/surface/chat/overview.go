@@ -4,10 +4,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/work"
+	"github.com/cleanunicorn/dispatch/internal/work"
 )
 
-// Overview is dancer's word on what a thread is working on, in at most two
+// Overview is dispatch's word on what a thread is working on, in at most two
 // lines: the pull request to go and look at with the issue behind it, then
 // where the work lives and what else went by.
 //

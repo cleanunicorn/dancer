@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Factory builds ssh environments.

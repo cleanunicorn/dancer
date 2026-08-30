@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/agent"
 )
 
 // scanFixture translates every line of a captured session under testdata
@@ -172,7 +172,7 @@ func TestArgs(t *testing.T) {
 }
 
 // usageLine is a get_usage answer as claude 2.1.240 writes it (trimmed to
-// the fields around the ones dancer reads; the real one is far larger).
+// the fields around the ones dispatch reads; the real one is far larger).
 const usageLine = `{"type":"control_response","response":{"subtype":"success","request_id":"usage-1","response":{"session":{"total_cost_usd":0.0187},"subscription_type":"max","rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":3,"resets_at":"2026-08-23T07:20:00.228639+00:00","limit_dollars":null},"seven_day":{"utilization":26,"resets_at":"2026-08-28T12:00:00.228656+00:00"},"seven_day_opus":null,"seven_day_sonnet":null,"nimbus_quill":{"utilization":0,"resets_at":null},"extra_usage":{"is_enabled":false},"limits":[{"kind":"session","percent":3}],"model_scoped":[{"display_name":"Fable","utilization":37,"resets_at":"2026-08-28T12:00:00.228845+00:00"}]}}}}`
 
 func TestTranslateUsageResponse(t *testing.T) {
@@ -213,7 +213,7 @@ func TestTranslateUsageResponse(t *testing.T) {
 }
 
 // The CLI names every command the session accepts on its init line —
-// built in, plugin and project alike. dancer implements none of them
+// built in, plugin and project alike. dispatch implements none of them
 // (a message that is one is sent through verbatim), so this list is the
 // only way it can say which exist.
 func TestTranslateInitSlashCommands(t *testing.T) {
@@ -239,7 +239,7 @@ func TestTranslateInitSlashCommands(t *testing.T) {
 }
 
 // An older CLI sends no such list; that is not an error, it just means
-// dancer cannot enumerate what still works when sent.
+// dispatch cannot enumerate what still works when sent.
 func TestTranslateInitWithoutSlashCommands(t *testing.T) {
 	p, err := translate([]byte(`{"type":"system","subtype":"init","session_id":"s1","model":"m"}`), time.Now())
 	if err != nil {

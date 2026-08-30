@@ -3,7 +3,7 @@ package chat
 import (
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/work"
+	"github.com/cleanunicorn/dispatch/internal/work"
 )
 
 // TestOverview: what a thread is working on, rendered for a human who is

@@ -12,7 +12,7 @@ import (
 
 // Run executes one short command in env, writes stdin to it and returns
 // what it printed on stdout. It is for the small housekeeping scripts
-// dancer runs inside an environment before an agent starts — lending a
+// dispatch runs inside an environment before an agent starts — lending a
 // login, probing for a binary — not for anything long-lived: it reads to
 // EOF and waits for the exit.
 //

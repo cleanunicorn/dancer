@@ -14,10 +14,10 @@ import (
 // Claude answers with one `claude -p` call: a small model, no tools, no
 // session (and none written to disk), and an empty scratch directory to
 // run in. It always runs on the
-// dancer host — a policy question is about dancer, not about the task's
+// dispatch host — a policy question is about dispatch, not about the task's
 // environment.
 //
-// The scratch directory matters more than it looks. dancer is normally
+// The scratch directory matters more than it looks. dispatch is normally
 // started from a repository checkout, and a CLI started there would read
 // that project's CLAUDE.md, .claude/settings.json (hooks included) and MCP
 // config — reaching the decider as instructions, ahead of its own policy.
@@ -51,7 +51,7 @@ func (c Claude) Decide(ctx context.Context, q Question) (Verdict, error) {
 	if model == "" {
 		model = "haiku"
 	}
-	dir, err := os.MkdirTemp("", "dancer-decider-")
+	dir, err := os.MkdirTemp("", "dispatch-decider-")
 	if err != nil {
 		return Verdict{}, fmt.Errorf("decider: scratch dir: %w", err)
 	}

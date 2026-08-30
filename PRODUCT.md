@@ -17,7 +17,7 @@ supports it; not the primary scene).
 
 ## Product Purpose
 
-dancer orchestrates coding agents (Claude Code today) from chat. The web UI is one
+dispatch orchestrates coding agents (Claude Code today) from chat. The web UI is one
 transport onto the same conversations: every thread of every transport, Slack's included,
 is listed, readable, and answerable here. It exists so the operator does not have to keep
 Slack open to supervise agents, and so prompts can be answered from wherever the operator
@@ -26,7 +26,7 @@ answers a prompt in under two seconds; and reads an agent's transcript without f
 
 ## Positioning
 
-A conversation belongs to dancer, not to a transport. The web UI has no memory of its own;
+A conversation belongs to dispatch, not to a transport. The web UI has no memory of its own;
 it renders the event log the coordinator keeps, so what Slack shows and what the browser
 shows are one record. Permission prompts are first-class and cross-surface: a prompt
 rendered in Slack can be answered in the browser and the Slack buttons settle.
@@ -40,7 +40,7 @@ rendered in Slack can be answered in the browser and the Slack buttons settle.
   (`🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls`); the thread list marks it ⏳
   (working) / ✋ (waiting for a human). The tab title repeats the count.
 - Message kinds, each a fact of the log: human text (plain, with links), agent text
-  (Markdown), dancer's own lines (Slack mrkdwn: `*bold*`, `_italic_`, backticks, fences,
+  (Markdown), dispatch's own lines (Slack mrkdwn: `*bold*`, `_italic_`, backticks, fences,
   leading @mention), prompts (permission: allow/deny; question: options, optional free text),
   decisions (who chose what, via which transport), file attachments (images inline, other
   files by name and size; bytes are not kept in the log).
@@ -48,11 +48,11 @@ rendered in Slack can be answered in the browser and the Slack buttons settle.
   with the channel's default agent, `run <agent> <prompt>`, `default <agent>`, `status`,
   `cancel`, `close`, `agent list/add/edit/delete`. Guided wizards answer with prompts.
   A message that is one of the *agent's* own commands (`/model opus`, `/clear`, `/compact`,
-  a plugin's) is not dancer's to read: it goes to the agent as typed, which is how all of
+  a plugin's) is not dispatch's to read: it goes to the agent as typed, which is how all of
   them work without any being implemented. `commands` lists what the session accepts.
   Only Slack needs care — it keeps a message starting with `/` for itself, so there it is
-  written `@dancer /clear`.
-- Accounts are local (`dancer user add`); the session's name signs what the user writes.
+  written `@dispatch /clear`.
+- Accounts are local (`dispatch user add`); the session's name signs what the user writes.
 
 ## Capabilities and Constraints
 
@@ -73,12 +73,12 @@ rendered in Slack can be answered in the browser and the Slack buttons settle.
 
 ## Brand Commitments
 
-- Name: `dancer`, lowercase. The 🕺 glyph is the favicon and the only mark today; not
+- Name: `dispatch`, lowercase. The 🕺 glyph is the favicon and the only mark today; not
   pinned, may be replaced by a drawn mark.
 - Voice (from the README and Slack lines): terse, lowercase-ish, operator-to-operator
   ("task started with agent *coder* (local)", "✅ done · 2m13s · 7 tool calls").
 - Confirmed pain with the current UI: "generic / looks like a template". The result must
-  be recognizable as dancer with the content removed.
+  be recognizable as dispatch with the content removed.
 
 ## Evidence on Hand
 

@@ -12,11 +12,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // The "agent add", "agent edit" and "agent delete" flows ask for one
@@ -193,7 +193,7 @@ func (c *Coordinator) resumeFlows(ctx context.Context) {
 			continue
 		}
 		c.Log.Info("resuming flow", "thread", f.Thread, "answers", len(f.Answers))
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: f.Thread, Text: "▶️ dancer is back — continuing with the agent questions"}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: f.Thread, Text: "▶️ dispatch is back — continuing with the agent questions"}, s)
 		c.startWizard(ctx, s, f.Thread, f.Answers)
 	}
 }
@@ -249,9 +249,9 @@ func (c *Coordinator) startFlow(ctx context.Context, s surface.Surface, th trans
 		if ctx.Err() != nil {
 			if kind == flowAddAgent {
 				// Shutdown: keep the saved answers; resumeFlows continues after restart.
-				w.say(rctx, "⏸️ dancer is restarting — the agent questions continue when it is back")
+				w.say(rctx, "⏸️ dispatch is restarting — the agent questions continue when it is back")
 			} else {
-				w.say(rctx, fmt.Sprintf("⏸️ dancer is restarting — say `%s` again when it is back", label))
+				w.say(rctx, fmt.Sprintf("⏸️ dispatch is restarting — say `%s` again when it is back", label))
 			}
 			return
 		}
@@ -567,7 +567,7 @@ func (w *wizard) askModel(ctx context.Context, def *agent.Definition) error {
 
 func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) error {
 	kind, err := w.askUntil(ctx, agent.Question{Header: "Environment", Text: "Where does it run?",
-		Options: options("local", "on the dancer host", "docker", "a container per task", "ssh", "on a remote host")}, func(a string) (string, error) {
+		Options: options("local", "on the dispatch host", "docker", "a container per task", "ssh", "on a remote host")}, func(a string) (string, error) {
 		switch k := strings.ToLower(a); environment.Kind(k) {
 		case environment.KindLocal, environment.KindDocker, environment.KindSSH:
 			return k, nil
@@ -587,13 +587,13 @@ func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) erro
 	}
 	switch env.Kind {
 	case environment.KindLocal:
-		env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dancer host? `none` = a fresh directory per task." + pathHint,
+		env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Absolute path of the working directory on the dispatch host? `none` = a fresh directory per task." + pathHint,
 			Options: options("none", "fresh directory per task")}, validateLocalDir)
 	case environment.KindDocker:
-		env.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? A plain base image is fine — dancer installs git, node and the agent CLI into it the first time.",
+		env.Image, err = w.askUntil(ctx, agent.Question{Header: "Image", Text: "Docker image? A plain base image is fine — dispatch installs git, node and the agent CLI into it the first time.",
 			Options: options("ubuntu:24.04", "plain ubuntu", "debian:bookworm", "plain debian", "alpine:3.20", "small")}, nonEmpty("image"))
 		if !sameKind {
-			// A container dancer creates is provisioned by default: the
+			// A container dispatch creates is provisioned by default: the
 			// wizard offers plain base images, so something has to put
 			// the agent CLI in them.
 			env.Provision = &environment.Provision{Agents: []string{agentKind(def.Kind)}}
@@ -602,8 +602,8 @@ func (w *wizard) askEnvironment(ctx context.Context, def *agent.Definition) erro
 			env.Reuse, err = w.askReuse(ctx)
 		}
 		if err == nil {
-			env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a directory dancer manages." + pathHint,
-				Options: options("none", "dancer manages it")}, validateLocalDir)
+			env.Workdir, err = w.askUntil(ctx, agent.Question{Header: "Working directory", Text: "Host directory to mount at `/work`? `none` = a directory dispatch manages." + pathHint,
+				Options: options("none", "dispatch manages it")}, validateLocalDir)
 		}
 	case environment.KindSSH:
 		env.Host, err = w.askUntil(ctx, agent.Question{Header: "Host", Text: "SSH host? `user@host` or an alias from `~/.ssh/config`."}, nonEmpty("host"))
@@ -760,7 +760,7 @@ func describeEnvironment(d agent.Definition) string {
 	switch {
 	case d.Environment.Workdir != "":
 	case d.Environment.ReuseKey != "" || d.Environment.Reuse == environment.ReuseThread || d.Environment.Reuse == environment.ReuseDefinition:
-		b.WriteString(" · directory dancer manages")
+		b.WriteString(" · directory dispatch manages")
 	default:
 		b.WriteString(" · fresh directory per task")
 	}

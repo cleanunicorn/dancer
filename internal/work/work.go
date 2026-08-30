@@ -49,9 +49,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Kind tells a pull request from an issue.
@@ -127,7 +127,7 @@ const maxAlso = 4
 
 // Scan projects the state of the work out of a thread's records, oldest
 // first — what Store.ThreadRecords returns. Records it cannot parse are
-// skipped; outbound records are ignored on purpose, because dancer's own
+// skipped; outbound records are ignored on purpose, because dispatch's own
 // overview lines carry the very references they were mined from and would
 // otherwise keep re-confirming themselves.
 func Scan(recs []store.Record) State {
@@ -293,7 +293,7 @@ func (sc *scanner) remotes(s string) {
 // branch that was just pushed. Like remotes, callers gate it on the command
 // having been one that talks to a remote: that URL shape can appear in a
 // file the agent read or a page it fetched, and the branch it names is
-// rendered into a line dancer signs its own name to. `branchName` finishes
+// rendered into a line dispatch signs its own name to. `branchName` finishes
 // the job — what git itself forbids in a branch cannot reach the line
 // either, so no backtick can close the code span the branch is rendered in.
 func (sc *scanner) pushHint(s string) {
@@ -486,11 +486,11 @@ var (
 	remoteRe = regexp.MustCompile(`(?:git@|(?:ssh|git|https?)://(?:git@)?)github\.com[:/]` + ownerRepo)
 	// namesRemoteRe: the commands whose output is allowed to name the
 	// repository being worked in. Everything else — `cat go.mod`, a README,
-	// the agent's own prose — may mention a repository without dancer
+	// the agent's own prose — may mention a repository without dispatch
 	// concluding the thread is working in it.
 	namesRemoteRe = regexp.MustCompile(`\b(?:git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s+repo)\b`)
 	pushRe        = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/` + branchName)
-	// branchRe: the commands that name a branch dancer should believe.
+	// branchRe: the commands that name a branch dispatch should believe.
 	// Every capture uses branchName, which cannot start with "-" — git
 	// forbids such a branch, so `git branch --show-current` and
 	// `git push origin --delete stale` name no branch at all rather than

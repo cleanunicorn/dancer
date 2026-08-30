@@ -7,7 +7,7 @@
 //
 // Two things make a plain base image usable:
 //
-//   - Provisioning (Spec.Provision). Given `ubuntu:24.04`, dancer installs
+//   - Provisioning (Spec.Provision). Given `ubuntu:24.04`, dispatch installs
 //     git, curl, the GitHub CLI, Node and the agent CLIs, creates a user
 //     matching the host uid/gid with a writable $HOME, and commits the
 //     result as a derived image tagged by a hash of the request. The build
@@ -34,19 +34,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // ContainerWorkdir is the mount point of Spec.Workdir inside the container.
 const ContainerWorkdir = "/work"
 
-// Labels dancer puts on everything it creates, so containers and volumes it
+// Labels dispatch puts on everything it creates, so containers and volumes it
 // owns can be found again after a restart.
 const (
-	labelManaged     = "dancer.managed"
-	labelProvisioned = "dancer.provisioned"
-	labelHome        = "dancer.home"
-	labelKey         = "dancer.key"
+	labelManaged     = "dispatch.managed"
+	labelProvisioned = "dispatch.provisioned"
+	labelHome        = "dispatch.home"
+	labelKey         = "dispatch.key"
 )
 
 // DefaultReuseTTL is how long a reused container may sit unused before Reap
@@ -90,7 +90,7 @@ type Env struct {
 	volume string
 	// home is $HOME inside the image ("" = unknown, HOME=/tmp is injected).
 	home string
-	// derived is true when image was built by dancer, which means its
+	// derived is true when image was built by dispatch, which means its
 	// entrypoint is the base image's and must be overridden.
 	derived bool
 	image   string
@@ -157,7 +157,7 @@ func (f Factory) New(spec environment.Spec) (environment.Environment, error) {
 	}
 	spec.Workdir = abs
 	// Docker would create a missing bind-mount source as root; make it
-	// here instead so it belongs to the user dancer runs as.
+	// here instead so it belongs to the user dispatch runs as.
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return nil, fmt.Errorf("docker: workdir: %w", err)
 	}
@@ -183,7 +183,7 @@ func (f Factory) New(spec environment.Spec) (environment.Environment, error) {
 		e.key = key
 		// The home volume deliberately leaves the image out of its name:
 		// upgrading the image must not throw away the agent's login.
-		e.volume = "dancer-home-" + slug(key) + "-" + hash(key)
+		e.volume = "dispatch-home-" + slug(key) + "-" + hash(key)
 	}
 	return e, nil
 }
@@ -298,13 +298,13 @@ func (e *Env) Start(ctx context.Context) error {
 // nameFor is the container name this environment shares under, given the
 // image it ended up with. The resolved image is part of the name on purpose:
 // when provisioning rebuilds — a new agent CLI, changed packages, a newer
-// dancer — the next task must get a container built from the new image
+// dispatch — the next task must get a container built from the new image
 // instead of adopting the one still running the old one.
 func (e *Env) nameFor(image string) string {
 	if e.key == "" {
 		return ""
 	}
-	return "dancer-" + slug(e.key) + "-" + hash(image, e.key, e.spec.Workdir, e.user, strings.Join(e.extra, " "), envFingerprint(e.spec.Env))
+	return "dispatch-" + slug(e.key) + "-" + hash(image, e.key, e.spec.Workdir, e.user, strings.Join(e.extra, " "), envFingerprint(e.spec.Env))
 }
 
 // adopt returns the id of an existing reusable container, starting it again
@@ -484,7 +484,7 @@ func (f Factory) Reap(ctx context.Context, ttl time.Duration) error {
 		marker := filepath.Join(dir, name)
 		fi, err := os.Stat(marker)
 		if err != nil {
-			// Unknown to us — a leftover from an older dancer. Stamp it
+			// Unknown to us — a leftover from an older dispatch. Stamp it
 			// now so it is reaped ttl from here rather than immediately.
 			if mkErr := os.MkdirAll(dir, 0o755); mkErr == nil {
 				if fh, cErr := os.Create(marker); cErr == nil {

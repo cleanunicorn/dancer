@@ -1,5 +1,5 @@
 // One line of the log. Humans write on paper slips; the agent speaks on the
-// desk in Markdown; dancer's own lines are the rack's voice; a prompt is a
+// desk in Markdown; dispatch's own lines are the rack's voice; a prompt is a
 // lit strip laid across the log, answered in place and stamped once settled.
 import { useMemo, useState, type ReactNode } from "react";
 import { Button, Input, TextField } from "@heroui/react";
@@ -213,7 +213,7 @@ export function MessageRow({ m, list, open, me }: { m: Message; list: Message[];
       <>
         {time}
         <div className="prompt" data-open={!!open && !answer} data-mention={forMe ? "me" : undefined}>
-          <Who name={m.mention ? "@" + m.mention : "dancer"} at={m.at} lamp={<Lamp state={answer || !open ? "done" : "wait"} />} />
+          <Who name={m.mention ? "@" + m.mention : "dispatch"} at={m.at} lamp={<Lamp state={answer || !open ? "done" : "wait"} />} />
           <div className="text">
             <Mrkdwn text={m.text} />
           </div>

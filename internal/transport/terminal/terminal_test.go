@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // TestKeyedStatus: on a terminal the status line is redrawn in place and

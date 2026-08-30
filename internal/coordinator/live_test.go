@@ -9,18 +9,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // TestLiveResumeVerdicts asks the real decider about three interrupted
 // tasks of different shapes, with the facts read out of a real event log.
-// Run with DANCER_LIVE=1; three haiku calls, a few cents.
+// Run with DISPATCH_LIVE=1; three haiku calls, a few cents.
 //
 // Only the decisive shapes are pinned: a verdict is always one of the
 // offered actions, work plainly under way continues, and work that has
@@ -30,8 +30,8 @@ import (
 // readings of it, and the model has given each on different runs. The test
 // logs what it chose.
 func TestLiveResumeVerdicts(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {

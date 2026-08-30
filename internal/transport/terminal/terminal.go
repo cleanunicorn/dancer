@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Thread is the single thread id used by the terminal.
@@ -48,7 +48,7 @@ func New() *Transport {
 func (c *Transport) Name() string { return "terminal" }
 
 func (c *Transport) Run(ctx context.Context, inbox chan<- transport.Inbound) error {
-	fmt.Fprintln(c.Out, "dancer terminal — type `help` for commands")
+	fmt.Fprintln(c.Out, "dispatch terminal — type `help` for commands")
 	lines := make(chan string)
 	go func() {
 		sc := bufio.NewScanner(c.In)

@@ -1,9 +1,9 @@
-// Command dancer is the agent orchestration server.
+// Command dispatch is the agent orchestration server.
 //
-//	dancer run    [-config path] [-terminal] [-web]   start the coordinator (default)
-//	dancer setup  [-config path]               interactive first-time setup
-//	dancer doctor [-config path]               check config, claude, docker, ssh, slack
-//	dancer user   add|passwd|rm|list [name]    accounts of the web UI
+//	dispatch run    [-config path] [-terminal] [-web]   start the coordinator (default)
+//	dispatch setup  [-config path]               interactive first-time setup
+//	dispatch doctor [-config path]               check config, claude, docker, ssh, slack
+//	dispatch user   add|passwd|rm|list [name]    accounts of the web UI
 package main
 
 import (
@@ -18,24 +18,24 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	agentclaude "github.com/cleanunicorn/dancer/internal/agent/claude"
-	"github.com/cleanunicorn/dancer/internal/config"
-	"github.com/cleanunicorn/dancer/internal/coordinator"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envdocker "github.com/cleanunicorn/dancer/internal/environment/docker"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	envssh "github.com/cleanunicorn/dancer/internal/environment/ssh"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/surface/feed"
-	"github.com/cleanunicorn/dancer/internal/transport"
-	trslack "github.com/cleanunicorn/dancer/internal/transport/slack"
-	"github.com/cleanunicorn/dancer/internal/transport/terminal"
-	trweb "github.com/cleanunicorn/dancer/internal/transport/web"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	agentclaude "github.com/cleanunicorn/dispatch/internal/agent/claude"
+	"github.com/cleanunicorn/dispatch/internal/config"
+	"github.com/cleanunicorn/dispatch/internal/coordinator"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envdocker "github.com/cleanunicorn/dispatch/internal/environment/docker"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	envssh "github.com/cleanunicorn/dispatch/internal/environment/ssh"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/surface/feed"
+	"github.com/cleanunicorn/dispatch/internal/transport"
+	trslack "github.com/cleanunicorn/dispatch/internal/transport/slack"
+	"github.com/cleanunicorn/dispatch/internal/transport/terminal"
+	trweb "github.com/cleanunicorn/dispatch/internal/transport/web"
 )
 
 func main() {
@@ -44,8 +44,8 @@ func main() {
 	if len(args) > 0 && args[0][0] != '-' {
 		sub, args = args[0], args[1:]
 	}
-	fs := flag.NewFlagSet("dancer "+sub, flag.ExitOnError)
-	cfgPath := fs.String("config", config.DefaultPath(), "config file (or $DANCER_CONFIG)")
+	fs := flag.NewFlagSet("dispatch "+sub, flag.ExitOnError)
+	cfgPath := fs.String("config", config.DefaultPath(), "config file (or $DISPATCH_CONFIG)")
 	termFlag := fs.Bool("terminal", false, "run: use the terminal transport with a chat surface instead of the configured ones")
 	webFlag := fs.Bool("web", false, "run: use the web transport (the browser UI) instead of the configured ones")
 	fs.Parse(args)
@@ -61,12 +61,12 @@ func main() {
 	case "user":
 		err = runUser(*cfgPath, fs.Args())
 	case "help", "-h", "--help":
-		fmt.Println("usage: dancer [run|setup|doctor|user] [-config path] [-terminal|-web]")
+		fmt.Println("usage: dispatch [run|setup|doctor|user] [-config path] [-terminal|-web]")
 	default:
 		err = fmt.Errorf("unknown command %q (run|setup|doctor|user)", sub)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "dancer:", err)
+		fmt.Fprintln(os.Stderr, "dispatch:", err)
 		os.Exit(1)
 	}
 }
@@ -214,10 +214,10 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 	}
 	go reapContainers(ctx, dockerFactory, cfg.Docker.ReuseTTL.Duration, log)
 
-	log.Info("dancer starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions), "auto_resume", c.AutoResume, "decider", cfg.Decider.Kind)
+	log.Info("dispatch starting", "config", cfgPath, "db", cfg.Server.DB, "transports", transportNames, "surfaces", len(surfaces), "definitions", len(cfg.Definitions), "auto_resume", c.AutoResume, "decider", cfg.Decider.Kind)
 	err = c.Run(ctx)
 	if errors.Is(err, context.Canceled) {
-		log.Info("dancer stopped")
+		log.Info("dispatch stopped")
 		return nil
 	}
 	return err

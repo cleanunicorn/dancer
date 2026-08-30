@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // TestContainerRoundTrip needs a working docker daemon; skipped otherwise.
@@ -22,7 +22,7 @@ func TestContainerRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	dir := t.TempDir()
-	env, err := Factory{}.New(environment.Spec{Kind: environment.KindDocker, Image: "alpine:3.20", Workdir: dir, Env: map[string]string{"DANCER_TEST": "yes"}})
+	env, err := Factory{}.New(environment.Spec{Kind: environment.KindDocker, Image: "alpine:3.20", Workdir: dir, Env: map[string]string{"DISPATCH_TEST": "yes"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestContainerRoundTrip(t *testing.T) {
 	if err := env.CopyIn(ctx, strings.NewReader("hello\n"), "sub/in.txt"); err != nil {
 		t.Fatal(err)
 	}
-	p, err := env.Exec(ctx, "sh", "-c", "cat sub/in.txt; echo $DANCER_TEST; pwd; echo $HOME; id -u; cat > out.txt")
+	p, err := env.Exec(ctx, "sh", "-c", "cat sub/in.txt; echo $DISPATCH_TEST; pwd; echo $HOME; id -u; cat > out.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestContainerNaming(t *testing.T) {
 
 	// Provisioning rebuilding the image must not adopt the container still
 	// running the old build.
-	if a.nameFor("dancer-env:aaaa") == a.nameFor("dancer-env:bbbb") {
+	if a.nameFor("dispatch-env:aaaa") == a.nameFor("dispatch-env:bbbb") {
 		t.Error("a rebuilt image reused the container name")
 	}
 
@@ -305,8 +305,8 @@ func TestReapRemovesIdleContainers(t *testing.T) {
 // TestProvisionRealImage builds a real derived image from a plain base. It
 // downloads packages, so it only runs when asked for.
 func TestProvisionRealImage(t *testing.T) {
-	if os.Getenv("DANCER_DOCKER_PROVISION") == "" {
-		t.Skip("set DANCER_DOCKER_PROVISION=1 to build a provisioned image")
+	if os.Getenv("DISPATCH_DOCKER_PROVISION") == "" {
+		t.Skip("set DISPATCH_DOCKER_PROVISION=1 to build a provisioned image")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()

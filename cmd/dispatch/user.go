@@ -7,25 +7,25 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/config"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	trweb "github.com/cleanunicorn/dancer/internal/transport/web"
+	"github.com/cleanunicorn/dispatch/internal/config"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	trweb "github.com/cleanunicorn/dispatch/internal/transport/web"
 )
 
 // runUser manages the web UI's accounts, which live in the store:
 //
-//	dancer user add <name> [password]     make an account; without a password one is generated and printed
-//	dancer user passwd <name> [password]  set a new password (and end the user's sessions)
-//	dancer user rm <name>                 remove the account
-//	dancer user list
+//	dispatch user add <name> [password]     make an account; without a password one is generated and printed
+//	dispatch user passwd <name> [password]  set a new password (and end the user's sessions)
+//	dispatch user rm <name>                 remove the account
+//	dispatch user list
 //
 // A password given on the command line lands in the shell history; leave
 // it out and use the generated one, which the user changes in the UI.
-// The running dancer sees the change at once — the store is shared.
+// The running dispatch sees the change at once — the store is shared.
 func runUser(cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: dancer user add|passwd|rm|list [name] [password]")
+		return errors.New("usage: dispatch user add|passwd|rm|list [name] [password]")
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -43,7 +43,7 @@ func runUser(cfgPath string, args []string) error {
 	}
 	needName := func() error {
 		if name == "" {
-			return fmt.Errorf("usage: dancer user %s <name>", args[0])
+			return fmt.Errorf("usage: dispatch user %s <name>", args[0])
 		}
 		if !trweb.ValidName.MatchString(name) {
 			return fmt.Errorf("user name %q: lowercase letters, digits, . _ -, up to 32 characters", name)
@@ -58,7 +58,7 @@ func runUser(cfgPath string, args []string) error {
 		_, err := st.GetUser(ctx, name)
 		exists := err == nil
 		if args[0] == "add" && exists {
-			return fmt.Errorf("user %q exists — `dancer user passwd %s` changes the password", name, name)
+			return fmt.Errorf("user %q exists — `dispatch user passwd %s` changes the password", name, name)
 		}
 		if args[0] == "passwd" && !exists {
 			return fmt.Errorf("no user %q", name)
@@ -107,7 +107,7 @@ func runUser(cfgPath string, args []string) error {
 			return err
 		}
 		if len(users) == 0 {
-			fmt.Println("no users — `dancer user add <name>` makes one")
+			fmt.Println("no users — `dispatch user add <name>` makes one")
 			return nil
 		}
 		for _, u := range users {

@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 func TestMatchesTool(t *testing.T) {
@@ -228,10 +228,10 @@ func appendInbound(t *testing.T, st store.Store, th transport.ThreadID, text str
 
 // TestLivePermissionVerdicts asks the real decider about two Bash calls
 // inside a wide-open ceiling: one the human asked for, one nobody did.
-// Run with DANCER_LIVE=1.
+// Run with DISPATCH_LIVE=1.
 func TestLivePermissionVerdicts(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {

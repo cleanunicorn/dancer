@@ -8,11 +8,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 func TestFormatCost(t *testing.T) {
@@ -90,7 +90,7 @@ func TestHandleCommands(t *testing.T) {
 		{"agent", surface.ListAgents{Thread: th}},
 		{"commands", surface.ListCommands{Thread: th}},
 		{"cmds", surface.ListCommands{Thread: th}},
-		// The agent's own commands are not dancer's: they pass through.
+		// The agent's own commands are not dispatch's: they pass through.
 		{"/clear", surface.FollowUp{Thread: th, Text: "/clear"}},
 		{"/model opus", surface.FollowUp{Thread: th, Text: "/model opus"}},
 		{"/compact keep the plan", surface.FollowUp{Thread: th, Text: "/compact keep the plan"}},
@@ -151,7 +151,7 @@ func TestRenderMentionsRequester(t *testing.T) {
 		{"result", ev(surface.EventAgent, &agent.Event{Type: agent.EventResult, Cost: 0.1}), "U42"},
 		{"agent error", ev(surface.EventAgent, &agent.Event{Type: agent.EventError, Text: "boom"}), "U42"},
 		{"error", surface.Event{Kind: surface.EventError, Thread: th, TaskID: task.ID, Task: task, Text: "executor: start environment: no docker"}, "U42"},
-		{"notice", surface.Event{Kind: surface.EventNotice, Thread: th, TaskID: task.ID, Task: task, Text: "▶️ dancer is back — reply to continue"}, "U42"},
+		{"notice", surface.Event{Kind: surface.EventNotice, Thread: th, TaskID: task.ID, Task: task, Text: "▶️ dispatch is back — reply to continue"}, "U42"},
 		{"reply", surface.Event{Kind: surface.EventReply, Thread: th, TaskID: task.ID, Task: task, Text: "task `t1` — status *idle*"}, ""},
 		{"failed", surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Requester: "U42", Status: store.StatusFailed}}, "U42"},
 		{"cancelled", surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Requester: "U42", Status: store.StatusCancelled}}, ""},
@@ -184,10 +184,10 @@ func TestPermissionPromptIsCutWithItsFenceClosed(t *testing.T) {
 }
 
 func TestRenderInit(t *testing.T) {
-	task := &store.TaskState{Definition: agent.Definition{Name: "coder", Kind: agent.KindClaude, Environment: environment.Spec{Kind: environment.KindDocker, Image: "dancer/dev", Workdir: "/cfg"}}}
+	task := &store.TaskState{Definition: agent.Definition{Name: "coder", Kind: agent.KindClaude, Environment: environment.Spec{Kind: environment.KindDocker, Image: "dispatch/dev", Workdir: "/cfg"}}}
 	full := &agent.Event{Type: agent.EventInit, Model: "claude-haiku-4-5-20251001", Mode: agent.PermissionAcceptEdits,
 		Version: "2.1.239", Billing: agent.BillingSubscription, Workdir: "/work"}
-	const fullLine = "🤖 `claude-haiku-4-5-20251001` · acceptEdits · claude 2.1.239 · subscription · docker dancer/dev /work"
+	const fullLine = "🤖 `claude-haiku-4-5-20251001` · acceptEdits · claude 2.1.239 · subscription · docker dispatch/dev /work"
 	cases := []struct {
 		name    string
 		verbose bool
@@ -198,7 +198,7 @@ func TestRenderInit(t *testing.T) {
 		// A quiet surface posts it too: it is the answer to "what am I talking to".
 		{"quiet", false, full, fullLine},
 		// Older CLIs report less; the configured workdir stands in.
-		{"sparse", true, &agent.Event{Type: agent.EventInit, Model: "m", Mode: agent.PermissionManual}, "🤖 `m` · manual · docker dancer/dev /cfg"},
+		{"sparse", true, &agent.Event{Type: agent.EventInit, Model: "m", Mode: agent.PermissionManual}, "🤖 `m` · manual · docker dispatch/dev /cfg"},
 		// An agent that reports nothing beyond a session id has nothing to say.
 		{"bare", true, &agent.Event{Type: agent.EventInit, Session: "s"}, ""},
 		// A sub-agent's init is not the session the human talks to.

@@ -10,8 +10,8 @@ import (
 	"strings"
 )
 
-// The bot scopes dancer uses, in one place so deploy/slack-manifest.yaml,
-// the table in docs/slack.md and `dancer doctor` cannot drift
+// The bot scopes dispatch uses, in one place so deploy/slack-manifest.yaml,
+// the table in docs/slack.md and `dispatch doctor` cannot drift
 // (TestScopesMatchManifest pins all three together). Required scopes are
 // the ones a feature is lost without; optional ones only make something
 // nicer (channel names in the web UI, the composer status line) and doctor

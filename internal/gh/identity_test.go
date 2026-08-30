@@ -33,7 +33,7 @@ func TestLendIdentityGivesTheHostsCommitter(t *testing.T) {
 }
 
 // An identity already in the container was chosen by the operator or the
-// agent; dancer does not get to overrule it.
+// agent; dispatch does not get to overrule it.
 func TestLendIdentityKeepsTheOneAlreadyThere(t *testing.T) {
 	requireGit(t)
 	hostConfig(t)
@@ -53,7 +53,7 @@ func TestLendIdentityKeepsTheOneAlreadyThere(t *testing.T) {
 
 // A definition's setup commands run as root, so an identity they left
 // behind lives in the system config rather than the agent user's. git can
-// answer with it, so dancer leaves it be.
+// answer with it, so dispatch leaves it be.
 func TestLendIdentityKeepsASystemWideOne(t *testing.T) {
 	requireGit(t)
 	hostConfig(t)

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Lending the host's login.
@@ -31,7 +31,7 @@ import (
 //     operator choosing how the container authenticates;
 //   - the environment is local: it is the same home already;
 //   - the environment is ssh: that is someone's machine with its own
-//     login, and the host's credentials are not dancer's to put there.
+//     login, and the host's credentials are not dispatch's to put there.
 //
 // When the host has no login to lend the turn still runs, and the CLI's
 // "Not logged in" result is annotated with what to do about it.
@@ -49,7 +49,7 @@ var keyEnv = []string{
 // noLoginHint is appended to the CLI's "Not logged in" result when the
 // driver had nothing to lend.
 const noLoginHint = " — the container has no login and the host has none to lend: " +
-	"log in with `claude` on the host that runs dancer, or set CLAUDE_CODE_OAUTH_TOKEN " +
+	"log in with `claude` on the host that runs dispatch, or set CLAUDE_CODE_OAUTH_TOKEN " +
 	"(from `claude setup-token`) or ANTHROPIC_API_KEY in the definition's environment env"
 
 // lendScript installs the credentials read from stdin as
@@ -64,7 +64,7 @@ const noLoginHint = " — the container has no login and the host has none to le
 const lendScript = `set -e
 d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 f="$d/.credentials.json"
-ref="$d/.dancer-lend-ref.$$"
+ref="$d/.dispatch-lend-ref.$$"
 tmp="$f.tmp.$$"
 umask 077
 mkdir -p "$d"

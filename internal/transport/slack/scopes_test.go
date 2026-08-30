@@ -91,9 +91,9 @@ func TestAuthScopes(t *testing.T) {
 		switch gotAuth {
 		case "Bearer xoxb-good":
 			w.Header().Set("X-OAuth-Scopes", "chat:write, files:read,im:read")
-			w.Write([]byte(`{"ok":true,"user":"dancer","user_id":"U1","team":"acme"}`))
+			w.Write([]byte(`{"ok":true,"user":"dispatch","user_id":"U1","team":"acme"}`))
 		case "Bearer xoxb-noheader":
-			w.Write([]byte(`{"ok":true,"user":"dancer","user_id":"U1","team":"acme"}`))
+			w.Write([]byte(`{"ok":true,"user":"dispatch","user_id":"U1","team":"acme"}`))
 		default:
 			w.Write([]byte(`{"ok":false,"error":"invalid_auth"}`))
 		}
@@ -107,7 +107,7 @@ func TestAuthScopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.User != "dancer" || a.Team != "acme" || a.UserID != "U1" {
+	if a.User != "dispatch" || a.Team != "acme" || a.UserID != "U1" {
 		t.Errorf("identity: %+v", a)
 	}
 	if want := []string{"chat:write", "files:read", "im:read"}; !slices.Equal(a.Scopes, want) {

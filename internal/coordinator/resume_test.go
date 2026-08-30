@@ -6,19 +6,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // TestAutoResumeAfterRestart: a task cut short by a restart continues on
-// its own once dancer is back, with nobody typing in the thread.
+// its own once dispatch is back, with nobody typing in the thread.
 func TestAutoResumeAfterRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "c.db")
 	st, err := sqlite.Open(dbPath)
@@ -85,7 +85,7 @@ func TestAutoResumeAfterRestart(t *testing.T) {
 	t.Fatalf("task after auto-resume = %+v", ts)
 }
 
-// TestFinishedTurnIsNotResumed: stopping dancer while a process is only
+// TestFinishedTurnIsNotResumed: stopping dispatch while a process is only
 // being kept alive for a follow-up cuts nothing short, so that task stays
 // idle and waits for a human instead of being continued.
 func TestFinishedTurnIsNotResumed(t *testing.T) {

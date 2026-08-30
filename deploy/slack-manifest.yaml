@@ -1,17 +1,17 @@
-# Slack app manifest for dancer. Create the app at
+# Slack app manifest for dispatch. Create the app at
 # https://api.slack.com/apps → "Create New App" → "From a manifest" → paste this.
 display_information:
-  name: dancer
+  name: dispatch
   description: Orchestrates coding agents from Slack
   background_color: "#1f2937"
 features:
   bot_user:
-    display_name: dancer
+    display_name: dispatch
     always_online: true
   app_home:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
-  # Agents & AI Apps: lets dancer show "dancer ⏳ thinking · 4s" above the
+  # Agents & AI Apps: lets dispatch show "dispatch ⏳ thinking · 4s" above the
   # composer while a task runs (assistant.threads.setStatus). Optional —
   # remove this block, the assistant:write scope and the two
   # assistant_thread_* events to do without it; the status line posted in

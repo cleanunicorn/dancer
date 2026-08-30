@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/agent"
 )
 
 // parsed is the result of translating one stdout line.
@@ -12,7 +12,7 @@ type parsed struct {
 	Events     []agent.Event
 	Permission *permissionReq   // non-nil for control_request/can_use_tool
 	Control    *line            // any other control_request (answered with {})
-	Response   *controlResponse // control_response: the answer to a request dancer sent
+	Response   *controlResponse // control_response: the answer to a request dispatch sent
 	Task       *taskLine        // system/task_*: a background task of this session changed state
 }
 

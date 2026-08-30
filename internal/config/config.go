@@ -1,4 +1,4 @@
-// Package config loads the dancer TOML configuration.
+// Package config loads the dispatch TOML configuration.
 package config
 
 import (
@@ -15,10 +15,10 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/cleanunicorn/dancer/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/decider"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Config is the on-disk configuration.
@@ -45,7 +45,7 @@ type Channel struct {
 }
 
 // CheckWeb validates the [web] section for a run that starts the web
-// transport. validate calls it when "web" is configured; `dancer run
+// transport. validate calls it when "web" is configured; `dispatch run
 // -web` calls it itself, since it forces the transport in after Load.
 func (c *Config) CheckWeb() error {
 	if _, _, err := net.SplitHostPort(c.Web.Listen); err != nil {
@@ -88,7 +88,7 @@ type Server struct {
 	// Transports to start: "slack", "terminal", "web". Defaults to slack
 	// when tokens are set, else terminal.
 	Transports []string `toml:"transports"`
-	// AutoResume continues tasks that a restart cut short as soon as dancer
+	// AutoResume continues tasks that a restart cut short as soon as dispatch
 	// is back, instead of waiting for a message on their thread. Defaults
 	// to true; set `auto_resume = false` to go back to waiting.
 	AutoResume *bool `toml:"auto_resume,omitempty"`
@@ -99,7 +99,7 @@ type Server struct {
 	// restart after a long stop does not relaunch stale work (default 12h).
 	AutoResumeWithin Duration `toml:"auto_resume_within,omitempty"`
 	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
-	// task that keeps taking dancer down cannot restart-loop (default 3).
+	// task that keeps taking dispatch down cannot restart-loop (default 3).
 	MaxAutoResumes int `toml:"max_auto_resumes,omitempty"`
 }
 
@@ -107,8 +107,8 @@ type Claude struct {
 	Binary string `toml:"binary"`
 }
 
-// Decider configures the small model that answers dancer's policy
-// questions (see DECIDER.md). It is off by default: dancer's own rules
+// Decider configures the small model that answers dispatch's policy
+// questions (see DECIDER.md). It is off by default: dispatch's own rules
 // answer everything, which is also the fallback whenever the decider
 // fails, times out or answers something unacceptable.
 type Decider struct {
@@ -149,7 +149,7 @@ type Docker struct {
 	Binary string `toml:"binary,omitempty"`
 	// RunArgs are appended to every `docker run` (e.g. "--network=host").
 	RunArgs []string `toml:"run_args,omitempty"`
-	// ReuseTTL is how long a reused container may sit unused before dancer
+	// ReuseTTL is how long a reused container may sit unused before dispatch
 	// removes it (default 24h).
 	ReuseTTL Duration `toml:"reuse_ttl,omitempty"`
 }
@@ -162,7 +162,7 @@ type Slack struct {
 }
 
 // Web is the browser transport (internal/transport/web). Accounts are
-// not config: `dancer user add <name>` keeps them in the store.
+// not config: `dispatch user add <name>` keeps them in the store.
 type Web struct {
 	// Listen is the address to serve on (default "127.0.0.1:8788"). It is
 	// plain HTTP: keep it on the loopback interface or put TLS in front.
@@ -192,7 +192,7 @@ type EnvironmentConfig struct {
 	KeyPath string            `toml:"key_path,omitempty"`
 	Env     map[string]string `toml:"env,omitempty"`
 
-	// Provision (docker) is "auto" (default) or "none". With "auto" dancer
+	// Provision (docker) is "auto" (default) or "none". With "auto" dispatch
 	// makes the image agent-ready before first use: a plain `ubuntu:24.04`
 	// gets git, node and the agent CLI. An image that already has the CLI
 	// is used unchanged.
@@ -239,14 +239,14 @@ func (d *Duration) UnmarshalText(b []byte) error {
 
 func (d Duration) MarshalText() ([]byte, error) { return []byte(d.Duration.String()), nil }
 
-// DefaultPath returns the config path: $DANCER_CONFIG, else
-// ~/.config/dancer/config.toml.
+// DefaultPath returns the config path: $DISPATCH_CONFIG, else
+// ~/.config/dispatch/config.toml.
 func DefaultPath() string {
-	if p := os.Getenv("DANCER_CONFIG"); p != "" {
+	if p := os.Getenv("DISPATCH_CONFIG"); p != "" {
 		return p
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "dancer", "config.toml")
+	return filepath.Join(home, ".config", "dispatch", "config.toml")
 }
 
 // Load reads and validates the config at path.
@@ -262,7 +262,7 @@ func Load(path string) (*Config, error) {
 func (c *Config) applyDefaults(path string) {
 	base := filepath.Dir(path)
 	if c.Server.DB == "" {
-		c.Server.DB = filepath.Join(base, "dancer.db")
+		c.Server.DB = filepath.Join(base, "dispatch.db")
 	}
 	if c.Server.WorkdirRoot == "" {
 		c.Server.WorkdirRoot = filepath.Join(base, "work")

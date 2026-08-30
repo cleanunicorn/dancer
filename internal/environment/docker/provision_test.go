@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 func TestImageTagIsStableAndSpecific(t *testing.T) {
@@ -38,8 +38,8 @@ func TestImageTagIsStableAndSpecific(t *testing.T) {
 		}
 	}
 
-	if !strings.HasPrefix(want, "dancer-env:") {
-		t.Fatalf("tag %q is not in dancer's namespace", want)
+	if !strings.HasPrefix(want, "dispatch-env:") {
+		t.Fatalf("tag %q is not in dispatch's namespace", want)
 	}
 }
 
@@ -81,14 +81,14 @@ func TestProvisionScriptContents(t *testing.T) {
 	}, 1000, 1001)
 
 	for _, want := range []string{
-		"DANCER_UID=1000",
-		"DANCER_GID=1001",
-		"DANCER_HOME=" + ProvisionedHome,
+		"DISPATCH_UID=1000",
+		"DISPATCH_GID=1001",
+		"DISPATCH_HOME=" + ProvisionedHome,
 		"npm install -g @anthropic-ai/claude-code",
 		"'postgresql-client'",
 		"pip install ruff",
 		"safe.directory",
-		"/etc/sudoers.d/dancer",
+		"/etc/sudoers.d/dispatch",
 		homeSkeleton,
 	} {
 		if !strings.Contains(s, want) {
@@ -105,13 +105,13 @@ func TestProvisionScriptContents(t *testing.T) {
 	}
 	// The sudoers rule must name the uid, not a user name: on an image that
 	// already had a user at that uid we keep its name, whatever it is.
-	if !strings.Contains(s, `printf '#%s ALL=(ALL) NOPASSWD:ALL\n' "$DANCER_UID"`) {
+	if !strings.Contains(s, `printf '#%s ALL=(ALL) NOPASSWD:ALL\n' "$DISPATCH_UID"`) {
 		t.Errorf("sudoers rule is not keyed to the uid:\n%s", s)
 	}
 }
 
 // TestProvisionScriptInstallsGitHubCLI: `gh` is part of every provisioned
-// image, whatever was asked for, because dancer lends it a login at run
+// image, whatever was asked for, because dispatch lends it a login at run
 // time (internal/gh) and an agent working on a repo needs it.
 func TestProvisionScriptInstallsGitHubCLI(t *testing.T) {
 	for name, p := range map[string]environment.Provision{

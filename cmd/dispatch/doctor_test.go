@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestCheckGitHub: a host missing either half of what dancer lends is a
+// TestCheckGitHub: a host missing either half of what dispatch lends is a
 // note, not a failure — plenty of agents never touch GitHub — and a host
 // with both says where each came from.
 func TestCheckGitHub(t *testing.T) {

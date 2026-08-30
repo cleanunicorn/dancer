@@ -7,7 +7,7 @@ package executor
 import (
 	"context"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/agent"
 )
 
 // TaskID identifies a unit of work the coordinator asked for.

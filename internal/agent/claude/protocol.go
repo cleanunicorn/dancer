@@ -3,7 +3,7 @@ package claude
 import "encoding/json"
 
 // Wire types for the Claude Code stream-json protocol (claude 2.1.x).
-// Only the fields dancer reads are declared; everything else is ignored.
+// Only the fields dispatch reads are declared; everything else is ignored.
 
 // line is the envelope of every NDJSON line on stdout.
 type line struct {
@@ -90,7 +90,7 @@ type controlRequest struct {
 }
 
 // controlResponse is the payload of a type=control_response line: the
-// CLI's answer to a control request dancer sent (initialize, get_usage).
+// CLI's answer to a control request dispatch sent (initialize, get_usage).
 type controlResponse struct {
 	Subtype   string          `json:"subtype"` // "success" or "error"
 	RequestID string          `json:"request_id"`
@@ -98,7 +98,7 @@ type controlResponse struct {
 	Error     string          `json:"error,omitempty"`
 }
 
-// usageResponse is the part of a get_usage answer dancer reads: the
+// usageResponse is the part of a get_usage answer dispatch reads: the
 // plan's rate-limit windows. The CLI calls the request experimental
 // (claude 2.1.240); every field is optional here so a changed shape
 // degrades to "no usage", never to a parse error.

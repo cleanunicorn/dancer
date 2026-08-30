@@ -2,12 +2,12 @@
 @import "@heroui/styles";
 
 /*
- * dancer's web UI is a flight-progress strip board.
+ * dispatch's web UI is a flight-progress strip board.
  *
  * Every thread is a paper strip racked in a bay; the open thread is the strip
  * pulled onto the desk. Paper is for what humans write and answer (strips,
  * human lines, prompts); the desk is for what the machine says (agent text,
- * dancer's own lines). State is a lamp plus a printed flag, never colour
+ * dispatch's own lines). State is a lamp plus a printed flag, never colour
  * alone, and a strip that needs a human is cocked out of the rack and lit.
  *
  * HeroUI's theme variables are overridden below so its components (buttons,
@@ -607,7 +607,7 @@ body {
   margin-right: 2px;
 }
 
-/* dancer's own lines sit on the desk in the rack's voice */
+/* dispatch's own lines sit on the desk in the rack's voice */
 .sys {
   font-size: 13px;
   line-height: 1.45;

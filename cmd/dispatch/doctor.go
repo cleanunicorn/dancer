@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/config"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/gh"
-	slackt "github.com/cleanunicorn/dancer/internal/transport/slack"
+	"github.com/cleanunicorn/dispatch/internal/config"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/gh"
+	slackt "github.com/cleanunicorn/dispatch/internal/transport/slack"
 )
 
 type check struct {
@@ -36,14 +36,14 @@ func (c check) String() string {
 	return fmt.Sprintf("  %s %-22s %s", mark, c.name, c.info)
 }
 
-// checkDecider reports the policy decider: off (dancer's own rules decide)
+// checkDecider reports the policy decider: off (dispatch's own rules decide)
 // or the model and the question kinds it is allowed to answer. For openai
 // it also proves the endpoint answers with the configured key — the same
 // standard checkClaude holds the CLI to — since a decider that 401s on
 // every question falls back to the rules with nothing but a warn log.
 func checkDecider(cfg *config.Config) check {
 	if !cfg.Decider.Enabled() {
-		return check{name: "decider", ok: true, info: "off — dancer's rules decide"}
+		return check{name: "decider", ok: true, info: "off — dispatch's rules decide"}
 	}
 	if len(cfg.Decider.Uses) == 0 {
 		return check{name: "decider", ok: false, info: fmt.Sprintf("kind %q but uses = [] — it is never asked anything", cfg.Decider.Kind)}
@@ -80,7 +80,7 @@ func checkDecider(cfg *config.Config) check {
 }
 
 func runDoctor(cfgPath string) error {
-	fmt.Println("dancer doctor")
+	fmt.Println("dispatch doctor")
 	var checks []check
 	failed := false
 	add := func(c check) {
@@ -94,7 +94,7 @@ func runDoctor(cfgPath string) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		add(check{name: "config", ok: false, info: err.Error()})
-		fmt.Println("\nrun `dancer setup` to create a config")
+		fmt.Println("\nrun `dispatch setup` to create a config")
 		return fmt.Errorf("doctor: config")
 	}
 	add(check{name: "config", ok: true, info: cfgPath})
@@ -191,7 +191,7 @@ func checkDocker() check {
 	return check{name: "docker", ok: true, info: "server " + strings.TrimSpace(string(out))}
 }
 
-// checkGitHub reports what dancer would lend a container to work on GitHub
+// checkGitHub reports what dispatch would lend a container to work on GitHub
 // (internal/gh): the login, and the identity its commits would carry.
 // Nothing here is fatal — an agent that never touches GitHub needs neither
 // — so a gap is a note rather than a failed check.
@@ -231,7 +231,7 @@ func checkSSH(host, key, claudeBin string) check {
 
 // checkSlack proves both tokens with auth.test and then compares the scopes
 // each one carries (the X-OAuth-Scopes header, see slack.AuthScopes) with
-// the ones dancer uses. An app created before a scope was added to the
+// the ones dispatch uses. An app created before a scope was added to the
 // manifest is accepted by auth.test and fails one feature at a time later,
 // with a log line per call; listing the missing scopes here turns that into
 // one line with the fix in it.

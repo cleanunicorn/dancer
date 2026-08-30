@@ -1,8 +1,8 @@
 # Web UI
 
-A browser transport: dancer serves a single-page chat UI and streams it every message.
-It is an *observer* — it shows every conversation dancer has, whichever transport hosts
-it — so one dancer serves the browser and [Slack](slack.md) at the same time.
+A browser transport: dispatch serves a single-page chat UI and streams it every message.
+It is an *observer* — it shows every conversation dispatch has, whichever transport hosts
+it — so one dispatch serves the browser and [Slack](slack.md) at the same time.
 
 Other transports: [Slack](slack.md), [Terminal](terminal.md).
 
@@ -10,7 +10,7 @@ Other transports: [Slack](slack.md), [Terminal](terminal.md).
 
 ```toml
 [server]
-transports = ["slack", "web"]   # or just ["web"] for a dancer without Slack
+transports = ["slack", "web"]   # or just ["web"] for a dispatch without Slack
 
 [web]
 listen = "127.0.0.1:8788"       # plain HTTP — keep it on localhost or put TLS in front
@@ -27,22 +27,22 @@ agent = "coder"
   `0.0.0.0`.
 - `channels` are one word each, no slash. They exist only in the web UI; a thread started
   in one is `"<channel>/<id>"`. Leave the list empty if every thread should live in Slack.
-- `bin/dancer run -web` starts the web transport alone, whatever `transports` says
+- `bin/dispatch run -web` starts the web transport alone, whatever `transports` says
   (`make run-web` does the same from the repo).
 
 Already running Slack? Add `"web"` to `transports`, add the `[web]` block, create an
-account (below), restart dancer (`sudo systemctl restart dancer`). Existing Slack threads
-appear in the sidebar at once — their history is read from dancer's log.
+account (below), restart dispatch (`sudo systemctl restart dispatch`). Existing Slack threads
+appear in the sidebar at once — their history is read from dispatch's log.
 
 ## Accounts
 
-Accounts live in dancer's database, not in the config:
+Accounts live in dispatch's database, not in the config:
 
 ```sh
-bin/dancer user add daniel          # prints a generated password; or: user add daniel <password>
-bin/dancer user passwd daniel       # new password, ends the user's sessions
-bin/dancer user rm daniel
-bin/dancer user list
+bin/dispatch user add daniel          # prints a generated password; or: user add daniel <password>
+bin/dispatch user passwd daniel       # new password, ends the user's sessions
+bin/dispatch user rm daniel
+bin/dispatch user list
 ```
 
 There is no anonymous mode. Passwords are stored as PBKDF2 hashes and sessions by token
@@ -73,7 +73,7 @@ human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE
   prompt is also answered straight from the *needs you* bay, under its strip; a question
   needs the strip pulled.
 - **The log** reads down a time gutter: humans write on paper slips (buff for the web, blue
-  for Slack), the agent speaks on the desk in Markdown, dancer's own lines are the rack's
+  for Slack), the agent speaks on the desk in Markdown, dispatch's own lines are the rack's
   voice, and a settled prompt keeps its stamped decision.
 - Between the log's lines, a folded line sums up the tools the agent ran (`Bash ×4 · Edit
   ×2 · 38s · 1 failed`); open it for each call, its input, how it ended and how long it
@@ -87,7 +87,7 @@ human, `RUN` green while it works, `FAIL` red when it failed, then `IDLE`, `DONE
   each flag means; the table is in the [README](../README.md#commands)). The agent's own
   commands work as typed — `/model opus`, `/clear`, `/compact` — with none of Slack's
   reservation of the leading `/`; `commands` lists what the session accepts.
-- Attachments: a thread's past attachments are shown by name only (dancer never logs file
+- Attachments: a thread's past attachments are shown by name only (dispatch never logs file
   bytes). Sending files from the browser is not supported yet; use Slack for that.
 
 ### What the web UI remembers
@@ -96,12 +96,12 @@ Nothing a reload could lose. Channel and thread lists and every message come fro
 coordinator's event log whenever a page asks; what arrives live is pushed to open pages
 over server-sent events. The only in-memory state is the moment: the status line of a
 running turn, the prompt that is open, and threads opened here that have no task yet.
-The page re-reads the thread list whenever dancer or the agent posts a line, so the
+The page re-reads the thread list whenever dispatch or the agent posts a line, so the
 header's status, the closed mark and the session facts follow the task without a reload.
 
 ## One conversation, every transport
 
-A conversation belongs to dancer, not to the transport that started it. What you write
+A conversation belongs to dispatch, not to the transport that started it. What you write
 here about a Slack thread is relayed into Slack as `💬 *name* via web: …`; a decision you
 make here settles the prompt's buttons there; and a decision made in Slack closes the
 prompt here. The log keeps one record per message — the inbound — never the relays, so
@@ -112,13 +112,13 @@ each transport renders the whole exchange its own way. Details from the Slack si
 
 The UI is a React + [HeroUI](https://heroui.com) app under `internal/transport/web/ui`
 (Vite, TypeScript, Tailwind; react-markdown renders the agent's Markdown) — the one place
-in dancer with a JavaScript toolchain. Its build is committed under
+in dispatch with a JavaScript toolchain. Its build is committed under
 `internal/transport/web/static` and embedded, so `go build` needs no Node.
 
 ```sh
-make ui-dev     # live dev server against a running dancer
+make ui-dev     # live dev server against a running dispatch
 make ui         # rebuild static/ after changing ui/ — commit the result
-make run-web    # dancer with the web transport only
+make run-web    # dispatch with the web transport only
 ```
 
 [DESIGN.md](../DESIGN.md) records the board's design system — the console and paper
@@ -131,8 +131,8 @@ carries the look: HeroUI's theme variables are overridden in `ui/src/styles.css`
   both work.
 - **"config: web channel … one word, no slash"** — channel names cannot contain `/`,
   spaces or tabs.
-- **Login fails** — `bin/dancer user list` shows the accounts; `user passwd` resets one.
-  Make sure dancer and the `user` command use the same database (`$DANCER_CONFIG`).
+- **Login fails** — `bin/dispatch user list` shows the accounts; `user passwd` resets one.
+  Make sure dispatch and the `user` command use the same database (`$DISPATCH_CONFIG`).
 - **Slack channels show as ids** — add `channels:read`, `groups:read` and `im:read` to the Slack app
   and reinstall it.
 - **No browser notifications** — the page asks once; check the site's notification

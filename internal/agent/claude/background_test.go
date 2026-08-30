@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/agent"
 )
 
 // A captured session (claude 2.1.240, --input-format stream-json): the

@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
-	"github.com/cleanunicorn/dancer/internal/work"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/work"
 )
 
 const feedThread = transport.ThreadID("C-ops/1.0")

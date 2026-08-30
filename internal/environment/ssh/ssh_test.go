@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 func TestShellQuote(t *testing.T) {
@@ -86,7 +86,7 @@ func TestRoundTripAgainstLocalSSHD(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "remote")
 	f := Factory{ExtraArgs: []string{"-p", fmt.Sprint(port), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
 		"-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR"}}
-	env, err := f.New(environment.Spec{Kind: environment.KindSSH, Host: host, KeyPath: key, Workdir: dir, Env: map[string]string{"DANCER_TEST": "yes"}})
+	env, err := f.New(environment.Spec{Kind: environment.KindSSH, Host: host, KeyPath: key, Workdir: dir, Env: map[string]string{"DISPATCH_TEST": "yes"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestRoundTripAgainstLocalSSHD(t *testing.T) {
 	if err := env.CopyIn(ctx, strings.NewReader("hello\n"), "sub/in.txt"); err != nil {
 		t.Fatal(err)
 	}
-	p, err := env.Exec(ctx, "sh", "-c", "cat sub/in.txt; echo $DANCER_TEST; pwd; cat > out.txt")
+	p, err := env.Exec(ctx, "sh", "-c", "cat sub/in.txt; echo $DISPATCH_TEST; pwd; cat > out.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Drive the dancer binary end to end through the terminal transport.
+"""Drive the dispatch binary end to end through the terminal transport.
 
-    scripts/e2e.py bin/dancer [model]
+    scripts/e2e.py bin/dispatch [model]
 
-Starts dancer with a throwaway config, runs a task that needs a permission,
+Starts dispatch with a throwaway config, runs a task that needs a permission,
 allows it, checks the result, status, a follow-up turn, and closing and
 reopening the thread. Costs a few cents (haiku by default). Requires a
 logged-in `claude`.
@@ -12,11 +12,11 @@ import os, select, subprocess, sys, tempfile, time
 
 bin_ = os.path.abspath(sys.argv[1])
 model = sys.argv[2] if len(sys.argv) > 2 else "haiku"
-tmp = tempfile.mkdtemp(prefix="dancer-e2e-")
+tmp = tempfile.mkdtemp(prefix="dispatch-e2e-")
 cfg = os.path.join(tmp, "config.toml")
 with open(cfg, "w") as f:
     f.write(f'''[server]
-db = "{tmp}/dancer.db"
+db = "{tmp}/dispatch.db"
 workdir_root = "{tmp}/work"
 idle_timeout = "20s"
 transports = ["terminal"]
@@ -32,7 +32,7 @@ p = subprocess.Popen([bin_, "run", "-config", cfg, "-terminal"], stdin=subproces
                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
 os.set_blocking(p.stdout.fileno(), False)
 buf = ""   # output not yet matched
-seen = ""  # everything dancer printed
+seen = ""  # everything dispatch printed
 
 def wait_for(pat, timeout=180):
     global buf, seen

@@ -1,5 +1,5 @@
 /bin/
-/dancer
+/dispatch
 *.db
 *.db-journal
 *.db-wal

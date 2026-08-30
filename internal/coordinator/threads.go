@@ -7,13 +7,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
-// A conversation belongs to dancer, not to a transport. The transport
+// A conversation belongs to dispatch, not to a transport. The transport
 // that minted its ThreadID hosts it — its task records that name
 // (store.TaskState.Transport) — and renders it natively; every other
 // transport that follows it (transport.Observer) is shown the same
@@ -335,7 +335,7 @@ func (c *Coordinator) Channels() map[string][]transport.Channel {
 }
 
 // listCommands answers "commands": which of its own commands the agent
-// running this thread accepts. dancer implements none of them — a
+// running this thread accepts. dispatch implements none of them — a
 // message that is one is passed to the agent verbatim (agent.Run.Send)
 // — so the list is the agent's own, taken from the last init it
 // reported on the thread (agent.Event.Commands) and therefore current

@@ -1,11 +1,11 @@
-# systemd unit for dancer. Install with `make service-install` or:
-#   sudo cp deploy/dancer.service /etc/systemd/system/dancer.service
-#   sudo systemctl daemon-reload && sudo systemctl enable --now dancer
+# systemd unit for dispatch. Install with `make service-install` or:
+#   sudo cp deploy/dispatch.service /etc/systemd/system/dispatch.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dispatch
 #
 # Runs as the user that owns the Claude Code login (~/.claude). Edit User=,
 # Group= and the paths below to match.
 [Unit]
-Description=dancer — agent orchestration over Slack
+Description=dispatch — agent orchestration over Slack
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -14,12 +14,12 @@ Type=simple
 User=__USER__
 Group=__GROUP__
 Environment=HOME=__HOME__
-Environment=DANCER_CONFIG=__HOME__/.config/dancer/config.toml
+Environment=DISPATCH_CONFIG=__HOME__/.config/dispatch/config.toml
 # claude is usually installed under ~/.local/bin
 Environment=PATH=__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=__BIN__ run
-# always, not on-failure: dancer exits 0 on SIGTERM (it drains and shuts down
-# cleanly), so a stray `pkill -f "dancer run"` from an agent working on this repo
+# always, not on-failure: dispatch exits 0 on SIGTERM (it drains and shuts down
+# cleanly), so a stray `pkill -f "dispatch run"` from an agent working on this repo
 # looks like a successful exit and on-failure would leave the box down. An
 # explicit `systemctl stop` is still honoured — systemd never restarts after one.
 Restart=always

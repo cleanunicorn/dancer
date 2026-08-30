@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // log builds a thread's records the way the coordinator writes them.
@@ -41,15 +41,15 @@ func (l *log) bash(id, cmd, out string) {
 func TestScanTypicalThread(t *testing.T) {
 	l := &log{at: time.Unix(0, 0)}
 	l.says("run coder please fix #47, it's the status line one")
-	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dancer.git (fetch)")
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
 	l.bash("u2", "git switch -c status-overview", "Switched to a new branch 'status-overview'")
 	l.add("agent", agent.Event{Type: agent.EventText, Text: "Looking at #12 and #38 for prior art."})
-	l.bash("u3", "git push -u origin status-overview", "remote: Create a pull request for 'status-overview' on GitHub by visiting:\nremote:      https://github.com/cleanunicorn/dancer/pull/new/status-overview")
+	l.bash("u3", "git push -u origin status-overview", "remote: Create a pull request for 'status-overview' on GitHub by visiting:\nremote:      https://github.com/cleanunicorn/dispatch/pull/new/status-overview")
 	l.bash("u4", `gh pr create --title "status overview" --body "Closes #47"`,
-		"https://github.com/cleanunicorn/dancer/pull/51")
+		"https://github.com/cleanunicorn/dispatch/pull/51")
 
 	st := Scan(l.recs)
-	if st.Repo != "cleanunicorn/dancer" {
+	if st.Repo != "cleanunicorn/dispatch" {
 		t.Errorf("Repo = %q", st.Repo)
 	}
 	if st.Branch != "status-overview" {
@@ -58,7 +58,7 @@ func TestScanTypicalThread(t *testing.T) {
 	if st.PR == nil || st.PR.Number != 51 || st.PR.Seen != SeenCreated {
 		t.Fatalf("PR = %+v", st.PR)
 	}
-	if st.PR.URL != "https://github.com/cleanunicorn/dancer/pull/51" {
+	if st.PR.URL != "https://github.com/cleanunicorn/dispatch/pull/51" {
 		t.Errorf("PR.URL = %q", st.PR.URL)
 	}
 	if st.Issue == nil || st.Issue.Number != 47 || st.Issue.Seen != SeenWorked {
@@ -66,7 +66,7 @@ func TestScanTypicalThread(t *testing.T) {
 	}
 	// A bare "#12" never said which repository it was in; it inherits the
 	// one in hand, and gets a URL from it.
-	if st.Issue.URL != "https://github.com/cleanunicorn/dancer/issues/47" {
+	if st.Issue.URL != "https://github.com/cleanunicorn/dispatch/issues/47" {
 		t.Errorf("Issue.URL = %q", st.Issue.URL)
 	}
 	if len(st.Also) != 2 {
@@ -102,7 +102,7 @@ func TestScanWorkedBeatsMentioned(t *testing.T) {
 	}
 }
 
-// TestScanIgnoresOwnOutput: dancer's own overview lines carry the very
+// TestScanIgnoresOwnOutput: dispatch's own overview lines carry the very
 // references they were mined from. Reading them back would keep
 // confirming them, so outbound records are not scanned at all.
 func TestScanIgnoresOwnOutput(t *testing.T) {
@@ -143,14 +143,14 @@ func TestScanSurvivesJunk(t *testing.T) {
 func TestScanOneNumberOneReference(t *testing.T) {
 	l := &log{at: time.Unix(0, 0)}
 	l.says("run coder have a look at #49")
-	l.bash("u1", "git remote -v", "origin\thttps://github.com/cleanunicorn/dancer.git (fetch)")
-	l.bash("u2", "gh pr view 49", "title:\tGitHub CLI\nurl:\thttps://github.com/cleanunicorn/dancer/pull/49")
+	l.bash("u1", "git remote -v", "origin\thttps://github.com/cleanunicorn/dispatch.git (fetch)")
+	l.bash("u2", "gh pr view 49", "title:\tGitHub CLI\nurl:\thttps://github.com/cleanunicorn/dispatch/pull/49")
 
 	st := Scan(l.recs)
 	if st.PR == nil || st.PR.Number != 49 {
 		t.Fatalf("PR = %+v", st.PR)
 	}
-	if st.PR.URL != "https://github.com/cleanunicorn/dancer/pull/49" {
+	if st.PR.URL != "https://github.com/cleanunicorn/dispatch/pull/49" {
 		t.Errorf("PR.URL = %q", st.PR.URL)
 	}
 	if st.Issue != nil {
@@ -186,14 +186,14 @@ func TestScanBranchNames(t *testing.T) {
 // takes the repository in hand.
 func TestScanTwoRepositories(t *testing.T) {
 	l := &log{at: time.Unix(0, 0)}
-	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dancer.git (fetch)")
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
 	l.says("run coder same bug as https://github.com/other/lib/issues/9 — see #12 here")
 
 	st := Scan(l.recs)
-	if st.Repo != "cleanunicorn/dancer" {
+	if st.Repo != "cleanunicorn/dispatch" {
 		t.Fatalf("Repo = %q", st.Repo)
 	}
-	if st.Issue == nil || st.Issue.Number != 12 || st.Issue.Repo != "cleanunicorn/dancer" {
+	if st.Issue == nil || st.Issue.Number != 12 || st.Issue.Repo != "cleanunicorn/dispatch" {
 		t.Fatalf("Issue = %+v, want #12 in the repository in hand", st.Issue)
 	}
 	if len(st.Also) != 1 || st.Also[0].Repo != "other/lib" || st.Also[0].Number != 9 {
@@ -272,18 +272,18 @@ func TestScanStopsReading(t *testing.T) {
 func TestScanIgnoresRepositoriesGoingPast(t *testing.T) {
 	l := &log{at: time.Unix(0, 0)}
 	l.says("run coder please fix #47")
-	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dancer.git (fetch)")
-	l.bash("u2", "cat go.mod", "module github.com/cleanunicorn/dancer\n\nrequire (\n\tgithub.com/BurntSushi/toml v1.4.0\n\tgithub.com/slack-go/slack v0.15.0\n)")
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
+	l.bash("u2", "cat go.mod", "module github.com/cleanunicorn/dispatch\n\nrequire (\n\tgithub.com/BurntSushi/toml v1.4.0\n\tgithub.com/slack-go/slack v0.15.0\n)")
 	l.bash("u3", "cat README.md", "See https://github.com/anthropics/claude-code/issues/999 for the CLI.")
 
 	st := Scan(l.recs)
-	if st.Repo != "cleanunicorn/dancer" {
+	if st.Repo != "cleanunicorn/dispatch" {
 		t.Fatalf("Repo = %q, want the one the remote named", st.Repo)
 	}
 	if st.Issue == nil || st.Issue.Number != 47 {
 		t.Fatalf("Issue = %+v", st.Issue)
 	}
-	if st.Issue.URL != "https://github.com/cleanunicorn/dancer/issues/47" {
+	if st.Issue.URL != "https://github.com/cleanunicorn/dispatch/issues/47" {
 		t.Errorf("Issue.URL = %q — a bare #47 was pointed at another repository", st.Issue.URL)
 	}
 }
@@ -484,7 +484,7 @@ func TestScanSurvivesOneEnormousRecord(t *testing.T) {
 
 // TestScanBelievesPushAdviceOnlyFromAPush: git's "create a pull request"
 // advice names a branch, and that branch is rendered inside a code span in
-// a line dancer signs its own name to. The URL shape can appear in a file
+// a line dispatch signs its own name to. The URL shape can appear in a file
 // the agent read or a page it fetched, so it is read out of a command that
 // spoke to a remote — and only as far as a branch name may go.
 func TestScanBelievesPushAdviceOnlyFromAPush(t *testing.T) {
@@ -504,7 +504,7 @@ func TestScanBelievesPushAdviceOnlyFromAPush(t *testing.T) {
 		t.Errorf("Branch = %q, want the name git advised and nothing after it", b)
 	}
 	if strings.ContainsAny(b, "`<>|*_&") {
-		t.Errorf("Branch = %q carries markup dancer would render as its own", b)
+		t.Errorf("Branch = %q carries markup dispatch would render as its own", b)
 	}
 }
 

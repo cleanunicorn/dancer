@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/store/sqlite"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/surface/chat"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/surface/chat"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // TestStatusCarriesTheWork: `status` answers with the pull request the
@@ -45,7 +45,7 @@ func TestStatusCarriesTheWork(t *testing.T) {
 	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "u2",
 		ToolInput: map[string]any{"command": `gh pr create --body "Closes #47"`}})
 	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "u2",
-		Text: "https://github.com/cleanunicorn/dancer/pull/51"})
+		Text: "https://github.com/cleanunicorn/dispatch/pull/51"})
 
 	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
 	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
@@ -58,7 +58,7 @@ func TestStatusCarriesTheWork(t *testing.T) {
 	reply := tr.waitFor(t, th, "task `t-1`")
 	for _, want := range []string{
 		"status *idle*",
-		"🔀 #51 https://github.com/cleanunicorn/dancer/pull/51 · for #47",
+		"🔀 #51 https://github.com/cleanunicorn/dispatch/pull/51 · for #47",
 		"🌿 `fix-47`",
 	} {
 		if !strings.Contains(reply.Text, want) {
@@ -130,7 +130,7 @@ func TestClosingLineCarriesTheWork(t *testing.T) {
 	tr.say(th, "run coder ship the fix")
 	done := tr.waitFor(t, th, "✅ done")
 	for _, want := range []string{
-		"🔀 #51 https://github.com/cleanunicorn/dancer/pull/51 · for #47",
+		"🔀 #51 https://github.com/cleanunicorn/dispatch/pull/51 · for #47",
 		"🌿 `fix-47`",
 	} {
 		if !strings.Contains(done.Text, want) {
@@ -166,7 +166,7 @@ func TestFailedTurnCarriesTheWork(t *testing.T) {
 	failed := tr.waitFor(t, th, "❌")
 	for _, want := range []string{
 		"the build fell over",
-		"🔀 #60 https://github.com/cleanunicorn/dancer/pull/60",
+		"🔀 #60 https://github.com/cleanunicorn/dispatch/pull/60",
 		"🌿 `half-done`",
 	} {
 		if !strings.Contains(failed.Text, want) {

@@ -10,7 +10,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Kind names an agent implementation.
@@ -166,10 +166,10 @@ type Run interface {
 	// verbatim. An agent CLI reads its own commands out of that text —
 	// "/model opus", "/clear", "/compact", anything the vendor or a
 	// plugin defines — and runs them itself instead of prompting the
-	// model, so dancer supports all of them by passing the text through
+	// model, so dispatch supports all of them by passing the text through
 	// and none of them by name. What they change is the CLI process's own
 	// state, which usually lasts only as long as the process: see
-	// store.TaskState.ModelPin for the one dancer carries across a
+	// store.TaskState.ModelPin for the one dispatch carries across a
 	// resume. EventInit.Commands lists what the session accepts.
 	Send(ctx context.Context, text string) error
 	// Decide answers a pending permission request.

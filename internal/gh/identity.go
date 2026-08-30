@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 // Lending the host's git identity.
@@ -17,15 +17,15 @@ import (
 // The login is only half of committing as yourself: a fresh container has
 // no user.name or user.email either, so `git commit` in it stops with
 // "Please tell me who you are" before the token is ever used. The identity
-// that goes with a lent login is the host's own, so dancer lends that too —
+// that goes with a lent login is the host's own, so dispatch lends that too —
 // whatever `git config user.name` / `user.email` says on the machine
-// running dancer, or the GIT_AUTHOR_*/GIT_COMMITTER_* variables in its
+// running dispatch, or the GIT_AUTHOR_*/GIT_COMMITTER_* variables in its
 // environment.
 //
 // It is written once, as the container's global git config, and never
 // overwritten: an identity git can already answer with in there — in any
 // scope — was chosen by the operator (a definition's setup command) or by
-// the agent, and dancer's guess does not get to win. That also makes it stable across a reused container,
+// the agent, and dispatch's guess does not get to win. That also makes it stable across a reused container,
 // whose $HOME is a volume.
 //
 // Nothing is lent when the definition's env sets an identity of its own
@@ -41,7 +41,7 @@ var identityEnv = []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"}
 //
 // The check reads every scope, not just --global: a definition's setup
 // commands run as root, so an identity they left behind is as likely to be
-// in /etc/gitconfig as in the agent user's own config, and dancer's guess
+// in /etc/gitconfig as in the agent user's own config, and dispatch's guess
 // does not get to overrule either.
 const identityScript = `set -e
 command -v git >/dev/null 2>&1 || { echo no-git; exit 0; }
@@ -61,7 +61,7 @@ echo set
 `
 
 // Identity is who commits: the name and email git signs with, and where
-// dancer read them.
+// dispatch read them.
 type Identity struct {
 	Name   string
 	Email  string
@@ -80,7 +80,7 @@ func (i Identity) String() string {
 	}
 }
 
-// HostIdentity is the identity of the human running dancer: git's own
+// HostIdentity is the identity of the human running dispatch: git's own
 // answer first (the global config, then whatever config applies here), and
 // the GIT_AUTHOR_*/GIT_COMMITTER_* variables when git has no answer or is
 // not installed. An identity without an email is not one git can commit
@@ -99,7 +99,7 @@ func HostIdentity(ctx context.Context) (Identity, error) {
 	return Identity{Name: name, Email: email, Source: source}, nil
 }
 
-// gitConfigIdentity asks the host's git. --global first: dancer's working
+// gitConfigIdentity asks the host's git. --global first: dispatch's working
 // directory may be inside a repository whose local config answers for that
 // repository only, which is not the host's identity.
 func gitConfigIdentity(ctx context.Context) (name, email, source string) {

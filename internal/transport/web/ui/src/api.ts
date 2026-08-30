@@ -96,13 +96,13 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
 export const storage = {
   get<T>(k: string, d: T): T {
     try {
-      const v = localStorage.getItem("dancer." + k);
+      const v = localStorage.getItem("dispatch." + k);
       return v == null ? d : (JSON.parse(v) as T);
     } catch {
       return d;
     }
   },
   set(k: string, v: unknown) {
-    localStorage.setItem("dancer." + k, JSON.stringify(v));
+    localStorage.setItem("dispatch." + k, JSON.stringify(v));
   },
 };

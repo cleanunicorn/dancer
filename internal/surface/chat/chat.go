@@ -18,11 +18,11 @@
 // A turn that ended — well or badly — and an answered `status` also carry
 // what the thread is working on, when it is working on code: the pull
 // request to open, the issue behind it, the branch it lives on
-// (overview.go, over internal/work). The lines are dancer's own, so they
+// (overview.go, over internal/work). The lines are dispatch's own, so they
 // are transport markup and not the agent's Markdown, and there are none
 // at all for a thread that never went near a repository.
 //
-// dancer's own commands are bare words (status, cancel, close, agent
+// dispatch's own commands are bare words (status, cancel, close, agent
 // …); anything else is text for the agent, and that is deliberately how
 // the agent's own commands work. "/model opus", "/clear", "/compact", a
 // plugin's or the project's — none of them are implemented here. They
@@ -34,7 +34,7 @@
 //
 // Two consequences worth knowing. Slack never delivers a message that
 // starts with "/" — it looks for a Slack command of that name and stops
-// — so on Slack such a message is written "@dancer /clear", which the
+// — so on Slack such a message is written "@dispatch /clear", which the
 // transport strips down to "/clear". And what a command changes usually
 // lives only in the agent process: a "/model" choice is re-applied on
 // every resume (store.TaskState.ModelPin), the rest lasts until the
@@ -59,10 +59,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Surface implements surface.Surface.
@@ -99,7 +99,7 @@ const help = "Commands:\n" +
 	"• `cancel` — stop the task on this thread\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
 	"• `/model opus`, `/clear`, `/compact`, … — the agent's own commands, passed to it as they are (`commands` lists them)\n" +
-	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dancer /clear`\n" +
+	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dispatch /clear`\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
 	"• `agent add` — define a new agent, question by question\n" +
 	"• `agent edit <name>` — change an agent's model, environment, permissions, tools or prompt\n" +
@@ -152,7 +152,7 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 			return []surface.Intent{surface.Say{Thread: in.Thread, Text: fmt.Sprintf("`%s agent` is now `agent %s` — %s", strings.ToLower(cmd), strings.ToLower(cmd), agentUsage)}}, true
 		}
 	}
-	// Not one of dancer's words: text for the agent — a prompt, an answer,
+	// Not one of dispatch's words: text for the agent — a prompt, an answer,
 	// or one of the agent's own commands, which it reads out of the
 	// message itself (see the package doc).
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text, User: in.UserID, Files: in.Files}}, true
@@ -506,9 +506,9 @@ func plural(n int, noun string) string {
 }
 
 // initLine is the session-details line for an init event, or "" when the
-// thread already saw the same one from this dancer process. A follow-up
+// thread already saw the same one from this dispatch process. A follow-up
 // after idle_timeout resumes the CLI and reports the same details again;
-// a restart clears the memory, so the line comes back when dancer does.
+// a restart clears the memory, so the line comes back when dispatch does.
 // Called with s.mu held.
 func (s *Surface) initLine(ev surface.Event) string {
 	text := describeInit(ev)

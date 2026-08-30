@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/environment/docker"
-	"github.com/cleanunicorn/dancer/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment/docker"
+	"github.com/cleanunicorn/dispatch/internal/environment/local"
 )
 
 // TestLivePermissionRoundTrip drives the real claude CLI. Run with
-// DANCER_LIVE=1; it costs a few cents (haiku) and needs `claude` logged in.
+// DISPATCH_LIVE=1; it costs a few cents (haiku) and needs `claude` logged in.
 func TestLivePermissionRoundTrip(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	dir := t.TempDir()
 	env, err := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: dir})
@@ -112,10 +112,10 @@ func TestLivePermissionRoundTrip(t *testing.T) {
 }
 
 // TestLiveQuestion checks AskUserQuestion answers travel back through
-// updatedInput.answers. Run with DANCER_LIVE=1.
+// updatedInput.answers. Run with DISPATCH_LIVE=1.
 func TestLiveQuestion(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	env, _ := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -151,10 +151,10 @@ func TestLiveQuestion(t *testing.T) {
 }
 
 // TestLiveUsage checks a subscription login's result is followed by the
-// plan's usage. Run with DANCER_LIVE=1; skips on an API key.
+// plan's usage. Run with DISPATCH_LIVE=1; skips on an API key.
 func TestLiveUsage(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	env, _ := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -194,10 +194,10 @@ func TestLiveUsage(t *testing.T) {
 
 // TestLiveSubAgentOneResult spawns a real sub-agent. The CLI ends the
 // model's turn while the sub-agent runs and starts another when it is
-// done; dancer must report one result, after the sub-agent's answer.
+// done; dispatch must report one result, after the sub-agent's answer.
 func TestLiveSubAgentOneResult(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	env, err := local.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()})
 	if err != nil {
@@ -252,10 +252,10 @@ loop:
 // TestLiveDockerLogin runs a turn inside a container provisioned from
 // ubuntu:24.04 with nothing but the host's lent login, once as a throwaway
 // container and once as a reused one whose $HOME is a volume. Run with
-// DANCER_LIVE=1 and a docker daemon; the first run builds the image (~60s).
+// DISPATCH_LIVE=1 and a docker daemon; the first run builds the image (~60s).
 func TestLiveDockerLogin(t *testing.T) {
-	if os.Getenv("DANCER_LIVE") == "" {
-		t.Skip("set DANCER_LIVE=1 to run against the real claude CLI")
+	if os.Getenv("DISPATCH_LIVE") == "" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real claude CLI")
 	}
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skip("docker not available")
@@ -282,7 +282,7 @@ func TestLiveDockerLogin(t *testing.T) {
 			if name := env.(*docker.Env).ContainerName(); name != "" {
 				defer func() {
 					_ = exec.Command("docker", "rm", "-f", name).Run()
-					out, _ := exec.Command("docker", "volume", "ls", "-q", "--filter", "name=dancer-home-livelogin").Output()
+					out, _ := exec.Command("docker", "volume", "ls", "-q", "--filter", "name=dispatch-home-livelogin").Output()
 					for _, v := range strings.Fields(string(out)) {
 						_ = exec.Command("docker", "volume", "rm", v).Run()
 					}

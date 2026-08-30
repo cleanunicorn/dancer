@@ -1,11 +1,11 @@
-# Oneshot updater for dancer: fetch origin/main, rebuild, restart the service.
-# Fired by dancer-update.timer. Install both with `make update-install`.
+# Oneshot updater for dispatch: fetch origin/main, rebuild, restart the service.
+# Fired by dispatch-update.timer. Install both with `make update-install`.
 #
-# Runs as root: it writes /usr/local/bin/dancer and restarts dancer.service.
-# The deploy checkout (DANCER_SRC) is root-owned and separate from any dev
+# Runs as root: it writes /usr/local/bin/dispatch and restarts dispatch.service.
+# The deploy checkout (DISPATCH_SRC) is root-owned and separate from any dev
 # checkout — the script hard-resets it on every run.
 [Unit]
-Description=dancer — pull origin/main, rebuild, restart
+Description=dispatch — pull origin/main, rebuild, restart
 After=network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,7 @@ Wants=network-online.target
 Type=oneshot
 # Written by `make update-install`; also read by the script when run by hand, and
 # what lets the updater re-render the unit files from the checkout.
-EnvironmentFile=/etc/dancer/deploy.env
+EnvironmentFile=/etc/dispatch/deploy.env
 Environment=HOME=/root
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=__UPDATER__

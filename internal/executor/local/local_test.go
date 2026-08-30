@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	envlocal "github.com/cleanunicorn/dancer/internal/environment/local"
-	"github.com/cleanunicorn/dancer/internal/executor"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/executor"
 )
 
 // fakeAgent emits a scripted sequence: init, needs_permission, then echoes

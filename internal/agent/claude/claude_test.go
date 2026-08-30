@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/agent"
 )
 
 // fakeProc stands in for the claude process: the test writes its stdout
-// and reads what dancer sent to its stdin.
+// and reads what dispatch sent to its stdin.
 type fakeProc struct {
 	stdinR  *io.PipeReader
 	stdinW  *io.PipeWriter
@@ -20,7 +20,7 @@ type fakeProc struct {
 	stdoutW *io.PipeWriter
 	exited  chan struct{}
 	code    int         // what Wait reports once exited
-	got     chan string // every line dancer wrote to stdin
+	got     chan string // every line dispatch wrote to stdin
 }
 
 func newFakeProc() *fakeProc {

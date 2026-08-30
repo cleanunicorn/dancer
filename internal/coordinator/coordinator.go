@@ -41,14 +41,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cleanunicorn/dancer/internal/agent"
-	"github.com/cleanunicorn/dancer/internal/decider"
-	"github.com/cleanunicorn/dancer/internal/environment"
-	"github.com/cleanunicorn/dancer/internal/executor"
-	execlocal "github.com/cleanunicorn/dancer/internal/executor/local"
-	"github.com/cleanunicorn/dancer/internal/store"
-	"github.com/cleanunicorn/dancer/internal/surface"
-	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/decider"
+	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/executor"
+	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
+	"github.com/cleanunicorn/dispatch/internal/store"
+	"github.com/cleanunicorn/dispatch/internal/surface"
+	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
 // Coordinator wires transports, surfaces, executor and store together.
@@ -85,7 +85,7 @@ type Coordinator struct {
 	// DeleteDefinition removes a definition deleted from chat outside the
 	// store (the config file). Nil removes it from the store only.
 	DeleteDefinition func(ctx context.Context, name string) error
-	// AutoResume continues tasks that a restart cut short as soon as dancer
+	// AutoResume continues tasks that a restart cut short as soon as dispatch
 	// is back, instead of waiting for a message on their thread.
 	AutoResume bool
 	// ResumePrompt is what an auto-resumed session is told; empty uses
@@ -95,13 +95,13 @@ type Coordinator struct {
 	// restart after a long stop does not relaunch stale work (default 12h).
 	AutoResumeWithin time.Duration
 	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
-	// task that keeps taking dancer down cannot restart-loop (default 3).
+	// task that keeps taking dispatch down cannot restart-loop (default 3).
 	MaxAutoResumes int
 	// Heartbeat is how often surfaces hear that a running turn is still
 	// going (default 10s). Negative turns heartbeats off.
 	Heartbeat time.Duration
 	// Decider answers policy questions the rules alone answer bluntly (see
-	// internal/decider). Nil is decider.Static: dancer's own rules, which
+	// internal/decider). Nil is decider.Static: dispatch's own rules, which
 	// is also what every failure falls back to.
 	Decider decider.Decider
 	// DeciderUses lists the question kinds Decider may answer; other kinds
@@ -109,7 +109,7 @@ type Coordinator struct {
 	// is always a deliberate, per-kind step.
 	DeciderUses []string
 	// DeciderTimeout bounds one question (default 15s). A decision never
-	// blocks dancer: on timeout the static answer wins.
+	// blocks dispatch: on timeout the static answer wins.
 	DeciderTimeout time.Duration
 	// MaxDecisionsPerTask caps how many questions one task may cost before
 	// it falls back to the rules for good (default 20).
@@ -207,7 +207,7 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	}
 }
 
-// shutdown tells every live thread that dancer is restarting, then waits
+// shutdown tells every live thread that dispatch is restarting, then waits
 // (bounded) for executors to drain and persist their final state.
 func (c *Coordinator) shutdown(ctx context.Context) {
 	timeout := c.DrainTimeout
@@ -232,11 +232,11 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 		// follow-up; stopping it cuts nothing short.
 		tail := "reply in this thread to resume"
 		if c.AutoResume && st.Status != store.StatusIdle {
-			tail = "it continues on its own when dancer is back"
+			tail = "it continues on its own when dispatch is back"
 		}
 		c.Log.Info("shutdown: notifying live task", "task", id, "thread", th, "status", st.Status)
 		c.emitTo(sctx, st.Transport, surface.Event{Kind: surface.EventReply, Thread: th, TaskID: id, Task: &st,
-			Text: "⏸️ dancer is restarting — the agent finishes its current step and stops; " + tail})
+			Text: "⏸️ dispatch is restarting — the agent finishes its current step and stops; " + tail})
 	}
 
 	done := make(chan struct{})
@@ -277,13 +277,13 @@ func (c *Coordinator) seedThreads(ctx context.Context) {
 // defaultResumePrompt is the turn given to a session that a restart cut
 // short. It has to stand on its own: the agent sees it as the next user
 // message of the resumed session.
-const defaultResumePrompt = "dancer restarted and cut your last turn short. Continue the work in progress from where it stopped, without waiting for further instructions. If the task was already finished, say so in one line instead of redoing it."
+const defaultResumePrompt = "dispatch restarted and cut your last turn short. Continue the work in progress from where it stopped, without waiting for further instructions. If the task was already finished, say so in one line instead of redoing it."
 
-// recover picks up the tasks that were mid-execution when dancer stopped:
+// recover picks up the tasks that were mid-execution when dispatch stopped:
 // interrupted (the stop cut the turn short), running or waiting_permission
-// (dancer died before it could write anything else), and queued (never
+// (dispatch died before it could write anything else), and queued (never
 // started). A task that had finished its turn is idle and is left alone —
-// it was waiting for a human, not for dancer. With AutoResume the picked-up
+// it was waiting for a human, not for dispatch. With AutoResume the picked-up
 // tasks continue on their own — resumed from their session, or started
 // again when they never got one — so nobody has to type in the thread; the
 // rest are marked idle and resume with the next message.
@@ -313,7 +313,7 @@ func (c *Coordinator) recover(ctx context.Context) error {
 				continue
 			}
 			if _, running := c.transports[t.Transport]; t.Transport != "" && !running {
-				// Nobody could see or answer it: leave it for a dancer that
+				// Nobody could see or answer it: leave it for a dispatch that
 				// runs its transport, marked idle so it is not reported live.
 				t.Status = store.StatusIdle
 				if err := c.Store.PutTask(ctx, t); err != nil {
@@ -365,16 +365,16 @@ func (c *Coordinator) recover(ctx context.Context) error {
 			case v.Action == actionAsk:
 				c.askAboutResume(ctx, t, v)
 			case v.Action == actionAbandon:
-				c.notice(ctx, t, "⏹️ dancer is back — leaving this task: "+reasonOr(v.Reason, "it is no longer worth continuing")+
+				c.notice(ctx, t, "⏹️ dispatch is back — leaving this task: "+reasonOr(v.Reason, "it is no longer worth continuing")+
 					". "+capitalize(pickUpHint(t)))
 			case t.Status == store.StatusIdle:
-				text := "▶️ dancer is back — reply in this thread to continue where the agent left off"
+				text := "▶️ dispatch is back — reply in this thread to continue where the agent left off"
 				if v.Reason != "" {
-					text = "▶️ dancer is back — " + v.Reason + "; reply in this thread to continue"
+					text = "▶️ dispatch is back — " + v.Reason + "; reply in this thread to continue"
 				}
 				c.notice(ctx, t, text)
 			case t.Status == store.StatusFailed:
-				c.notice(ctx, t, "⏹️ dancer is back — this task never got going and cannot be resumed; "+pickUpHint(t))
+				c.notice(ctx, t, "⏹️ dispatch is back — this task never got going and cannot be resumed; "+pickUpHint(t))
 			}
 		}
 	}
@@ -441,13 +441,13 @@ func (c *Coordinator) autoResumable(t store.TaskState) bool {
 
 // autoResume drives one recovered task without waiting for a message.
 func (c *Coordinator) autoResume(ctx context.Context, t store.TaskState, decided string) {
-	prompt, note := c.resumePrompt(), "▶️ dancer is back — picking up this task where the agent left off"
+	prompt, note := c.resumePrompt(), "▶️ dispatch is back — picking up this task where the agent left off"
 	if decided != "" {
 		prompt = decided
 	}
 	if t.Session == "" {
 		// The task never reached a session: run the original request again.
-		prompt, note = t.Prompt, "▶️ dancer is back — this task never started, running it again"
+		prompt, note = t.Prompt, "▶️ dispatch is back — this task never started, running it again"
 	}
 	if t.Definition.Environment.Workdir == "" && c.WorkdirRoot != "" {
 		t.Definition.Environment.Workdir = filepath.Join(c.WorkdirRoot, string(t.ID))

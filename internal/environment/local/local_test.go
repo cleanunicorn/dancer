@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cleanunicorn/dancer/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
 func TestExecCopyRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	env, err := Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: dir, Env: map[string]string{"DANCER_TEST": "yes"}})
+	env, err := Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: dir, Env: map[string]string{"DISPATCH_TEST": "yes"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +23,7 @@ func TestExecCopyRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := env.Exec(ctx, "sh", "-c", "cat sub/in.txt; echo $DANCER_TEST; cat > out.txt")
+	p, err := env.Exec(ctx, "sh", "-c", "cat sub/in.txt; echo $DISPATCH_TEST; cat > out.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
