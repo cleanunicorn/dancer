@@ -221,3 +221,16 @@ func TestScanSameNumberInTwoRepositories(t *testing.T) {
 		t.Fatalf("Also = %+v, want org/a#3 kept apart from org/b#3", st.Also)
 	}
 }
+
+// TestScanMinesAPermissionRequest: a command waiting for a human's yes is
+// still a command, and says what the thread is about before anyone has
+// answered.
+func TestScanMinesAPermissionRequest(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.add("agent", agent.Event{Type: agent.EventNeedsPermission, Tool: "Bash", ToolID: "p1",
+		ToolInput: map[string]any{"command": "gh pr checkout 51"}})
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 51 || st.PR.Seen != SeenWorked {
+		t.Fatalf("PR = %+v", st.PR)
+	}
+}
