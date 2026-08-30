@@ -221,9 +221,21 @@ func (sc *scanner) pushHint(s string) {
 }
 
 // add records a sighting, keeping the strongest one and the latest time.
+//
+// A sighting that named no repository — a bare "#12", a `gh pr view 49`
+// whose output echoed no URL — is stamped with the repository in hand at
+// the time, when one is known by then. Two threads' worth of work in one
+// conversation (a clone of org/A, then one of org/B) can each mention
+// "#3" and mean different pull requests; without the stamp they would key
+// alike and merge into one, and the loser would be rendered with the
+// other's link. A sighting from before any repository was named keeps an
+// empty one and is resolved in state, where the thread's repository is.
 func (sc *scanner) add(r Ref) {
 	if r.Number <= 0 {
 		return
+	}
+	if r.Repo == "" {
+		r.Repo = sc.repo
 	}
 	key := string(r.Kind) + "#" + strconv.Itoa(r.Number)
 	if r.Repo != "" {
