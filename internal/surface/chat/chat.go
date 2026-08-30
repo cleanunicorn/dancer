@@ -15,6 +15,13 @@
 // becomes a meter instead: one line per plan window, bar first, so a
 // phone's narrow screen never wraps a label away from its bar.
 //
+// A turn that ended — well or badly — and an answered `status` also carry
+// what the thread is working on, when it is working on code: the pull
+// request to open, the issue behind it, the branch it lives on
+// (overview.go, over internal/work). The lines are dancer's own, so they
+// are transport markup and not the agent's Markdown, and there are none
+// at all for a thread that never went near a repository.
+//
 // dancer's own commands are bare words (status, cancel, close, agent
 // …); anything else is text for the agent, and that is deliberately how
 // the agent's own commands work. "/model opus", "/clear", "/compact", a
@@ -215,7 +222,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	case surface.EventClosed:
 		return s.endWith(ev.Thread, say("✅ thread closed — mention me here to pick it up again"))
 	case surface.EventReply, surface.EventAllowed:
-		msgs = say(ev.Text)
+		msgs = say(WithOverview(ev.Text, ev.Work))
 	case surface.EventNotice:
 		msgs = tell(ev.Text)
 	case surface.EventError:
@@ -276,7 +283,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		t.activity = ""
 		text = fmt.Sprintf("🚫 *%s* refused by the agent's own policy: %s", a.Tool, truncate(a.Text, 300))
 	case agent.EventResult:
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: doneLine(t, a, now), Mention: requester(ev), Files: files(a)}})
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview(doneLine(t, a, now), ev.Work), Mention: requester(ev), Files: files(a)}})
 	case agent.EventUsage:
 		// Lands after the closing line — or, if the human was quick,
 		// inside the next turn, where it slots in above the status line.
@@ -285,7 +292,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		if t != nil {
 			t.errored = true
 		}
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: "❌ " + a.Text, Mention: requester(ev), Files: files(a)}})
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview("❌ "+a.Text, ev.Work), Mention: requester(ev), Files: files(a)}})
 	default:
 		return nil
 	}

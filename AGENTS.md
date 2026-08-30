@@ -247,6 +247,26 @@ files first — they carry the contract, the concrete packages under them are im
   can read it — an English "Set model to Sonnet 5 for this session only" is the whole of
   it, and the resolved name only appears on the *next* turn's init, which a thread left
   idle never has. Nothing else a command changes is carried.
+- **What a thread is working on is mined from its own log** (`internal/work`). The closing line of
+  a turn — well or badly ended — and an answered `status` carry the repository, branch, pull
+  request and issue, and nothing asks GitHub for them. A thread that opened a PR already said so
+  in the log: the agent ran `gh pr create` and the URL came back in the tool result, the human
+  wrote "fix #47" in the message that started the task, the branch was born in a `git switch -c`.
+  So the overview survives a restart and still works after a per-task container is gone; what
+  changes without the thread saying so (the diff stat, the checks, a merge by someone else) is
+  deliberately not here. Every sighting is graded — created here > acted on > mentioned in
+  passing — which is what picks *the* PR out of a thread that named a dozen numbers, and sightings
+  of one number in one repository collapse into one reference however they were spelled. What it
+  *refuses* to believe carries as much: the repository is the one a remote command named rather
+  than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
+  remote at all, to the repository most linked to by a pull request or issue URL), a branch is
+  never a command's own flag, and a command that came back with a page of pull requests acted on
+  none of them. A scan runs while a human waits for the closing line, so most records are ruled
+  out on their bytes and never decoded (`maxScan`, `mayMatter`), and one record too dear to read
+  is stepped over rather than ending the walk. Outbound records are never scanned: dancer's own
+  overview lines carry the references they were mined from and would keep re-confirming
+  themselves. The coordinator attaches the answer to `surface.Event.Work`; `chat` and `feed` both
+  render it, so the ops channel never falls behind the thread.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

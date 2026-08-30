@@ -62,6 +62,14 @@ const (
 )
 
 // Event is one normalized message from an agent.
+//
+// An Event is written to the log as JSON with no field tags, so its field
+// names are the wire format. internal/work decodes logged events into a
+// narrow struct of its own — Type, Text, ToolInput, ToolID — to avoid
+// paying for Raw on every record of a thread, and renaming or tagging one
+// of those four here would compile everywhere and quietly stop the work
+// overview finding anything. TestNarrowEventMatchesAgentEvent pins the
+// two together.
 type Event struct {
 	Type      EventType
 	At        time.Time

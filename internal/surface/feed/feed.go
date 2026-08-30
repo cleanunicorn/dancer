@@ -2,6 +2,11 @@
 // prompts and results from every task into one fixed thread (e.g. an #ops
 // channel), and accepts decisions on the prompts it posted. It never
 // starts tasks, so it can share a transport with a chat surface.
+//
+// What it mirrors it mirrors whole: the cost, the plan usage and the work
+// overview on a finished turn are rendered with the chat surface's own
+// helpers, because someone watching the ops channel is deciding whether to
+// go and look at exactly the same evidence.
 package feed
 
 import (
@@ -88,13 +93,13 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 			if cost := chat.FormatCost(ev.Agent); cost != "" {
 				line += " · " + cost
 			}
-			return out(line + " — " + truncate(ev.Agent.Text, 300))
+			return out(chat.WithOverview(line+" — "+truncate(ev.Agent.Text, 300), ev.Work))
 		case agent.EventUsage:
 			if u := chat.FormatUsage(ev.Agent); u != "" {
 				return out(fmt.Sprintf("📊 `%s` · %s", ev.TaskID, u))
 			}
 		case agent.EventError:
-			return out(fmt.Sprintf("❌ `%s` — %s", ev.TaskID, truncate(ev.Agent.Text, 300)))
+			return out(chat.WithOverview(fmt.Sprintf("❌ `%s` — %s", ev.TaskID, truncate(ev.Agent.Text, 300)), ev.Work))
 		}
 	case surface.EventFinished:
 		if ev.Task.Status == store.StatusFailed || ev.Task.Status == store.StatusCancelled {

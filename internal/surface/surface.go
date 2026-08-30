@@ -16,6 +16,7 @@ import (
 	"github.com/cleanunicorn/dancer/internal/executor"
 	"github.com/cleanunicorn/dancer/internal/store"
 	"github.com/cleanunicorn/dancer/internal/transport"
+	"github.com/cleanunicorn/dancer/internal/work"
 )
 
 // Surface interprets inbound traffic and renders coordinator events.
@@ -163,4 +164,10 @@ type Event struct {
 	PromptID string          // EventPermission/EventQuestion: id the Decide intent must echo
 	Question *agent.Question // EventQuestion: the single question this event carries
 	Text     string          // EventReply, EventNotice, EventAllowed, EventError
+	// Work is what the thread is working on — the repository, branch,
+	// pull request and issue read back out of the log (internal/work).
+	// The coordinator fills it in on the moments a human decides whether
+	// to go and look: the end of a turn, and an answered `status`. Nil
+	// when the thread has touched no repository, which is most of them.
+	Work *work.State
 }

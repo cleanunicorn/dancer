@@ -20,6 +20,12 @@
 // waits for its next message, ❌ when the task failed, ✅ once the thread
 // is closed. A task thread is never bare: it is being worked on, waiting
 // on a human, or closed (see mark).
+//
+// Where a thread stands includes where its code went. At the end of a
+// turn and on an answered `status` it reads the thread's own records back
+// for the repository, branch, pull request and issue being worked on
+// (overview.go, over internal/work) and hands the answer to the surfaces
+// on surface.Event.Work, so each renders it its own way.
 package coordinator
 
 import (
@@ -533,7 +539,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 				text += " — " + v.Reason
 			}
 		}
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text, Work: c.overview(ctx, it.Thread)}, s)
 	case surface.Cancel:
 		if c.cancelWizard(it.Thread) {
 			return
@@ -1288,7 +1294,15 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		return // rendered by AwaitDecision with its prompt id
 	}
 	e := ev
-	s.c.broadcast(ctx, surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e})
+	out := surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e}
+	if ev.Type == agent.EventResult || ev.Type == agent.EventError {
+		// The end of a turn is when a human decides whether to go and
+		// look, so the closing line carries what there is to look at.
+		// A turn that failed ends here too, and the half-finished pull
+		// request it left behind is the thing someone has to deal with.
+		out.Work = s.c.overview(ctx, st.Thread)
+	}
+	s.c.broadcast(ctx, out)
 }
 
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {
