@@ -81,10 +81,11 @@ func whereLine(w *work.State, withRepo bool) string {
 // link is a reference as something to click: the number, then the URL when
 // one is known.
 func link(r *work.Ref, repo string) string {
-	if r.URL == "" {
-		return ref(r, repo)
+	s := ref(r, repo)
+	if r.URL != "" {
+		s += " " + r.URL
 	}
-	return ref(r, repo) + " " + r.URL
+	return s
 }
 
 // ref is a reference at its shortest: "#51", or "owner/repo#51" when it
