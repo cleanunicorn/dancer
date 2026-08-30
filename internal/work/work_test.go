@@ -159,3 +159,23 @@ func TestScanOneNumberOneReference(t *testing.T) {
 		t.Errorf("Also = %+v, want the one reference not repeated", st.Also)
 	}
 }
+
+// TestScanBranchNames: each of the three ways the log names a branch, on
+// its own — a thread that only pushed, one that only said --head, and one
+// where git's own "create a pull request" advice is all there is. Together
+// in one thread they mask each other, and a broken one would not show.
+func TestScanBranchNames(t *testing.T) {
+	for _, tc := range []struct{ name, cmd, out, want string }{
+		{"created", "git switch -c only-switched", "Switched to a new branch 'only-switched'", "only-switched"},
+		{"pushed", "git push -u origin only-pushed", "", "only-pushed"},
+		{"named to gh", `gh pr create --head only-headed --title x`, "", "only-headed"},
+		{"git's own advice", "git push", "remote: Create a pull request for 'only-advised' on GitHub by visiting:\nremote:      https://github.com/o/r/pull/new/only-advised", "only-advised"},
+		{"nothing to name", "go test ./...", "ok", ""},
+	} {
+		l := &log{at: time.Unix(0, 0)}
+		l.bash("u1", tc.cmd, tc.out)
+		if got := Scan(l.recs).Branch; got != tc.want {
+			t.Errorf("%s: Branch = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
