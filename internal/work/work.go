@@ -238,7 +238,7 @@ func (sc *scanner) text(s string, at time.Time, max Seen) {
 			k = KindIssue
 		}
 		repo := m[1] + "/" + trimGit(m[2])
-		sc.repos[repo]++
+		sc.noteRepo(repo, repoFromProse)
 		sc.add(Ref{Repo: repo, Kind: k, Number: atoi(m[4]), URL: m[0], Seen: max, At: at})
 	}
 	// "Closes #47" links an issue to the work however casually it was
@@ -268,7 +268,7 @@ func (sc *scanner) remotes(s string) {
 	for _, m := range remoteRe.FindAllStringSubmatch(clip(s), -1) {
 		repo := m[1] + "/" + trimGit(m[2])
 		sc.repo = repo
-		sc.repos[repo] += 2 // a remote names the repo more surely than prose
+		sc.noteRepo(repo, repoFromRemote)
 	}
 }
 
@@ -286,6 +286,22 @@ func (sc *scanner) pushHint(s string) {
 	if m := pushRe.FindStringSubmatch(clip(s)); m != nil {
 		sc.branch = m[1]
 	}
+}
+
+// How evidence for "which repository is this thread in" is weighed by the
+// fallback in state, for a thread where no command ever named a remote
+// outright. A remote is worth more than prose because it is the machine
+// saying where it is rather than someone saying what they read.
+const (
+	repoFromProse  = 1
+	repoFromRemote = 2
+)
+
+// noteRepo records evidence that the thread is working in repo. Both
+// places that find one come through here, so the scoring is one rule in
+// one place rather than two bare numbers in two functions.
+func (sc *scanner) noteRepo(repo string, weight int) {
+	sc.repos[repo] += weight
 }
 
 // add records a sighting, keeping the strongest one and the latest time.
