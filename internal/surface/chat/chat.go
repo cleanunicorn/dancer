@@ -15,6 +15,13 @@
 // becomes a meter instead: one line per plan window, bar first, so a
 // phone's narrow screen never wraps a label away from its bar.
 //
+// A turn that ended — well or badly — and an answered `status` also carry
+// what the thread is working on, when it is working on code: the pull
+// request to open, the issue behind it, the branch it lives on
+// (overview.go, over internal/work). The lines are dancer's own, so they
+// are transport markup and not the agent's Markdown, and there are none
+// at all for a thread that never went near a repository.
+//
 // The lines that need the human — a turn's closing line, an error, a
 // permission or question prompt, a notice that a restart left the task
 // for them to pick up — address the task's requester
