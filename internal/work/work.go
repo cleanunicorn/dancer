@@ -235,17 +235,25 @@ func (sc *scanner) add(r Ref) {
 		sc.refs[key] = &c
 		return
 	}
-	if r.Seen > cur.Seen {
-		cur.Seen = r.Seen
-	}
-	if r.At.After(cur.At) {
-		cur.At = r.At
-	}
+	bump(cur, r)
 	if cur.URL == "" {
 		cur.URL = r.URL
 	}
 	if cur.Repo == "" {
 		cur.Repo = r.Repo
+	}
+}
+
+// bump folds a new sighting of a reference into the one already held: the
+// strongest way it was seen, and the last time it was seen. Both places
+// that merge sightings — one keyed by what was written, one by what it
+// turned out to mean — agree on that rule through here.
+func bump(dst *Ref, r Ref) {
+	if r.Seen > dst.Seen {
+		dst.Seen = r.Seen
+	}
+	if r.At.After(dst.At) {
+		dst.At = r.At
 	}
 }
 
@@ -319,12 +327,7 @@ func collapse(all []Ref) []Ref {
 			continue
 		}
 		c := &out[i]
-		if r.Seen > c.Seen {
-			c.Seen = r.Seen
-		}
-		if r.At.After(c.At) {
-			c.At = r.At
-		}
+		bump(c, r)
 		if r.Kind == KindPR {
 			c.Kind = KindPR
 		}
