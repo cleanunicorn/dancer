@@ -613,13 +613,28 @@ func seenFor(cmd string) Seen {
 // whether the command is evidence that it reached the remote. `git push
 // origin x` and `gh pr create --head x` are; `git switch -c x` is not,
 // and neither is a bare `git branch x`.
+//
+// Every pattern is tried, not just the first that matches, because an
+// agent writes `git switch -c x && git push -u origin x` as one command
+// and stopping at the branch it created would lose the push in the
+// second half of it. The push only counts for the branch already named,
+// so a chain that pushes something else says nothing about this one.
 func branchOf(cmd string) (string, bool) {
+	var name string
+	pushed := false
 	for _, re := range []*regexp.Regexp{branchRe, pushToRe, headRe} {
-		if m := re.FindStringSubmatch(cmd); m != nil && m[1] != "" && m[1] != "HEAD" {
-			return m[1], re != branchRe
+		m := re.FindStringSubmatch(cmd)
+		if m == nil || m[1] == "" || m[1] == "HEAD" {
+			continue
+		}
+		if name == "" {
+			name = m[1]
+		}
+		if re != branchRe && m[1] == name {
+			pushed = true
 		}
 	}
-	return "", false
+	return name, pushed
 }
 
 func repoOf(owner, name string) string {

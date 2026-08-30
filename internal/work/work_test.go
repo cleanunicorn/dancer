@@ -314,6 +314,12 @@ func TestScanBranchIsNeverAFlag(t *testing.T) {
 		{cmd: "git push -u origin status-overview", want: "status-overview", pushed: true},
 		{cmd: "git push origin HEAD:release", want: "release", pushed: true},
 		{cmd: "gh pr create --head fix-47 --fill", want: "fix-47", pushed: true},
+		// One command line, both halves read: the branch is the one it
+		// created, and the push in the second half still counts.
+		{cmd: "git switch -c fix-47 && git push -u origin fix-47", want: "fix-47", pushed: true},
+		// A chain that pushes something else says nothing about the
+		// branch it just created.
+		{cmd: "git switch -c fix-47 && git push -u origin other", want: "fix-47"},
 		{cmd: "git branch --show-current"},
 		{cmd: "git branch -a"},
 		{cmd: "git branch --list"},

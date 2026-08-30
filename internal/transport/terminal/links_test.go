@@ -24,6 +24,25 @@ func TestLinksOnAPipe(t *testing.T) {
 	}
 }
 
+// TestRelayedTextIsNotMarkup: what a human wrote is theirs, not
+// dispatch's markup, so no link is read out of it — otherwise a typed
+// "<https://evil|the docs>" would render as a hyperlink nobody wrote.
+func TestRelayedTextIsNotMarkup(t *testing.T) {
+	var out bytes.Buffer
+	c := &Transport{In: strings.NewReader(""), Out: &out, Redraw: true}
+	raw := "read <https://evil.example/x|the docs>"
+	err := c.Send(context.Background(), transport.Outbound{
+		Thread: Thread, Text: raw,
+		From: &transport.Author{Name: "dana", Via: "slack"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "💬 dana via slack: "+raw+"\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // TestLinksOnATerminal: Redraw means Out is a terminal, so the URL goes
 // into an OSC 8 hyperlink and only the label is on the line.
 func TestLinksOnATerminal(t *testing.T) {

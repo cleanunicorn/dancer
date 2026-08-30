@@ -389,7 +389,7 @@ func toolLabel(tool string) string {
 		return "tool"
 	}
 	if strings.HasPrefix(tool, agent.ToolMCPPrefix) {
-		if i := strings.LastIndex(tool, "__"); i > 0 {
+		if i := strings.LastIndex(tool, "__"); i > 0 && i+2 < len(tool) {
 			return tool[i+2:]
 		}
 	}

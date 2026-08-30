@@ -103,7 +103,11 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	case msg.From != nil && msg.Decision != nil:
 		fmt.Fprintf(c.Out, "→ %s by %s via %s\n", msg.Decision.Choice, msg.From.Display(), msg.From.Via)
 	case msg.From != nil:
-		fmt.Fprintf(c.Out, "💬 %s via %s: %s\n", msg.From.Display(), msg.From.Via, c.links(msg.Text))
+		// What a human wrote is not dispatch's markup, so no link is read
+		// out of it — the web UI draws the same line the same way. A
+		// "<https://evil|the docs>" someone typed is theirs, shown as
+		// they typed it.
+		fmt.Fprintf(c.Out, "💬 %s via %s: %s\n", msg.From.Display(), msg.From.Via, msg.Text)
 	case msg.Text != "":
 		fmt.Fprintln(c.Out, c.links(msg.Text))
 	}
