@@ -262,7 +262,7 @@ func (sc *scanner) text(s string, at time.Time, max Seen) {
 // Callers gate this on the command having asked about a remote; remoteRe
 // only tightens that, by insisting on a URL shape a remote actually has.
 func (sc *scanner) remotes(s string) {
-	if !strings.Contains(s, "github.com") {
+	if !strings.Contains(s, githubHost) {
 		return
 	}
 	for _, m := range remoteRe.FindAllStringSubmatch(clip(s), -1) {
@@ -280,7 +280,7 @@ func (sc *scanner) remotes(s string) {
 // the job — what git itself forbids in a branch cannot reach the line
 // either, so no backtick can close the code span the branch is rendered in.
 func (sc *scanner) pushHint(s string) {
-	if !strings.Contains(s, "github.com") {
+	if !strings.Contains(s, githubHost) {
 		return
 	}
 	if m := pushRe.FindStringSubmatch(clip(s)); m != nil {
@@ -488,6 +488,12 @@ var (
 	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
 )
 
+// githubHost is the one hostname any of this is about. Four places test
+// for it — the two cheap filters that decide whether a record or a string
+// is worth reading at all, and the two miners that read one — and they
+// must not drift apart.
+const githubHost = "github.com"
+
 // branchName is a branch as a command spells it. The first character
 // cannot be "-", so a flag is never mistaken for a branch.
 const branchName = `([A-Za-z0-9._/][A-Za-z0-9._/-]*)`
@@ -497,7 +503,7 @@ const branchName = `([A-Za-z0-9._/][A-Za-z0-9._/-]*)`
 // hostname, and most of what a thread logs — source files, test output,
 // diffs — has neither.
 func mayRefer(s string) bool {
-	return strings.Contains(s, "#") || strings.Contains(s, "github.com")
+	return strings.Contains(s, "#") || strings.Contains(s, githubHost)
 }
 
 // affordable returns the newest records a scan can pay to decode. The
@@ -545,7 +551,7 @@ var toolInput = []byte(`"ToolInput":{`)
 // whole vendor message in Raw, and each cheap to skip and dear to decode.
 func mayMatter(p []byte) bool {
 	return bytes.Contains(p, []byte("#")) ||
-		bytes.Contains(p, []byte("github.com")) ||
+		bytes.Contains(p, []byte(githubHost)) ||
 		bytes.Contains(p, toolInput)
 }
 
