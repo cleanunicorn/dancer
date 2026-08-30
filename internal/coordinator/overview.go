@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"time"
 
 	"github.com/cleanunicorn/dancer/internal/transport"
 	"github.com/cleanunicorn/dancer/internal/work"
@@ -23,7 +24,14 @@ func (c *Coordinator) overview(ctx context.Context, th transport.ThreadID) *work
 	if th == "" {
 		return nil
 	}
-	recs, err := c.Store.ThreadRecords(ctx, th, overviewRecords)
+	// The turn's closing result is delivered with the executor's own
+	// context, which is already cancelled when the turn ended because
+	// dancer is shutting down — and the last thing a human sees before a
+	// restart is exactly when the overview is worth having. Read with a
+	// context that survives the cancellation, the way persist does.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	recs, err := c.Store.ThreadRecords(rctx, th, overviewRecords)
 	if err != nil {
 		c.Log.Debug("overview: reading the thread back failed", "thread", th, "err", err)
 		return nil
