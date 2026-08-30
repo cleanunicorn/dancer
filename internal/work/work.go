@@ -350,6 +350,13 @@ func collapse(all []Ref) []Ref {
 	return out
 }
 
+// numbered are the `gh pr` and `gh issue` subcommands that act on one
+// reference, and so are followed by its number. Two regexes need the
+// list and would drift apart by hand: one asks whether a command worked
+// on something, the other reads which number it worked on. `gh pr
+// status` acts on no particular number and belongs only to the first.
+const numbered = `view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review`
+
 var (
 	urlRe    = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(pull|issues)/(\d+)`)
 	bareRe   = regexp.MustCompile(`(?:^|[^\w/#-])(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#(\d{1,5})\b`)
@@ -361,9 +368,9 @@ var (
 	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+|--\S+\s+)*origin\s+(?:HEAD:)?([A-Za-z0-9._/-]+)`)
 	headRe   = regexp.MustCompile(`--head[=\s]+([A-Za-z0-9._/-]+)`)
 	createRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
-	workRe   = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|status|review)\b`)
+	workRe   = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:` + numbered + `|status)\b`)
 	// ghTargetRe: the number a `gh pr`/`gh issue` subcommand acts on.
-	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review)\s+#?(\d{1,5})\b`)
+	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
 )
 
 // seenFor grades a command: what it creates is the thread's own, what it
