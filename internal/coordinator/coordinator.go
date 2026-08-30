@@ -20,6 +20,12 @@
 // waits for its next message, ❌ when the task failed, ✅ once the thread
 // is closed. A task thread is never bare: it is being worked on, waiting
 // on a human, or closed (see mark).
+//
+// Where a thread stands includes where its code went. At the end of a
+// turn and on an answered `status` it reads the thread's own records back
+// for the repository, branch, pull request and issue being worked on
+// (overview.go, over internal/work) and hands the answer to the surfaces
+// on surface.Event.Work, so each renders it its own way.
 package coordinator
 
 import (
