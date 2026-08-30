@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -183,6 +184,9 @@ type run struct {
 	usageOff bool          // the CLI answered get_usage with an error: stop asking
 	bg       background    // sub-agents and backgrounded commands still owed to the turn
 	held     *agent.Event  // the last result withheld because bg was not settled
+	// switching is the model a "/model <name>" now in flight asked for,
+	// reported on the turn's result and then cleared (see modelArg).
+	switching string
 
 	// loginHint is appended to a "Not logged in" result when the driver
 	// knew in advance the environment had no login (login.go).
@@ -192,7 +196,37 @@ type run struct {
 func (r *run) Events() <-chan agent.Event { return r.events }
 
 func (r *run) Send(ctx context.Context, text string) error {
+	if m := modelArg(text); m != "" {
+		r.mu.Lock()
+		r.switching = m
+		r.mu.Unlock()
+	}
 	return r.writeUser(text)
+}
+
+// modelCmdRE matches the CLI's own "/model <name>", and only that: the
+// bare "/model" is a question, and anything after the name is not a
+// switch the CLI would accept.
+var modelCmdRE = regexp.MustCompile(`^/model[ \t]+(\S+)[ \t]*$`)
+
+// modelArg is the model a message asks the CLI to switch to, or "".
+//
+// dancer does not implement "/model" — the CLI reads it out of the
+// message like every other command of its own, and this driver only
+// reads along. It has to: the switch lives in this process, the CLI
+// says so nowhere a machine can read (an English "Set model to Sonnet 5
+// for this session only" is the whole of it), and the next --resume
+// starts a process that would go back to the definition's model. What
+// the human typed is exactly what --resume needs, so the driver notes
+// it and reports it on the turn's result; the coordinator holds it
+// (store.TaskState.ModelPin). Anything else a command changes still
+// ends with the process.
+func modelArg(text string) string {
+	m := modelCmdRE.FindStringSubmatch(strings.TrimSpace(text))
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 func (r *run) Decide(ctx context.Context, d agent.PermissionDecision) error {
@@ -300,6 +334,15 @@ func (r *run) loop() {
 				}
 				sawResult = true
 				r.held = nil
+				// A failed turn is an EventError, so a switch reported
+				// here is one the CLI carried out; either way the note
+				// is spent.
+				r.mu.Lock()
+				if ev.Type == agent.EventResult {
+					ev.Model = r.switching
+				}
+				r.switching = ""
+				r.mu.Unlock()
 				if r.loginHint != "" && strings.Contains(ev.Text, "Not logged in") {
 					ev.Text += r.loginHint
 				}

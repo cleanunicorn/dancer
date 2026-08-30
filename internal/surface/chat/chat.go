@@ -22,6 +22,24 @@
 // are transport markup and not the agent's Markdown, and there are none
 // at all for a thread that never went near a repository.
 //
+// dancer's own commands are bare words (status, cancel, close, agent
+// …); anything else is text for the agent, and that is deliberately how
+// the agent's own commands work. "/model opus", "/clear", "/compact", a
+// plugin's or the project's — none of them are implemented here. They
+// fall through to FollowUp and reach the agent's stdin unchanged, which
+// is what makes every command the agent has work, including the ones it
+// grows later; "commands" asks the agent which those are. As the first
+// message of a thread a command is a prompt like any other, so
+// "/review-pr" opens a task and runs it.
+//
+// Two consequences worth knowing. Slack never delivers a message that
+// starts with "/" — it looks for a Slack command of that name and stops
+// — so on Slack such a message is written "@dancer /clear", which the
+// transport strips down to "/clear". And what a command changes usually
+// lives only in the agent process: a "/model" choice is re-applied on
+// every resume (store.TaskState.ModelPin), the rest lasts until the
+// idle timeout ends the process (see internal/agent/claude, modelArg).
+//
 // The lines that need the human — a turn's closing line, an error, a
 // permission or question prompt, a notice that a restart left the task
 // for them to pick up — address the task's requester
@@ -80,6 +98,8 @@ const help = "Commands:\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
+	"• `/model opus`, `/clear`, `/compact`, … — the agent's own commands, passed to it as they are (`commands` lists them)\n" +
+	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dancer /clear`\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
 	"• `agent add` — define a new agent, question by question\n" +
 	"• `agent edit <name>` — change an agent's model, environment, permissions, tools or prompt\n" +
@@ -121,6 +141,8 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.CloseThread{Thread: in.Thread}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
+	case "commands", "cmds":
+		return []surface.Intent{surface.ListCommands{Thread: in.Thread}}, true
 	case "agent", "definition":
 		return s.agentCommand(in, rest), true
 	case "add", "edit", "delete", "remove":
@@ -130,6 +152,9 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 			return []surface.Intent{surface.Say{Thread: in.Thread, Text: fmt.Sprintf("`%s agent` is now `agent %s` — %s", strings.ToLower(cmd), strings.ToLower(cmd), agentUsage)}}, true
 		}
 	}
+	// Not one of dancer's words: text for the agent — a prompt, an answer,
+	// or one of the agent's own commands, which it reads out of the
+	// message itself (see the package doc).
 	return []surface.Intent{surface.FollowUp{Thread: in.Thread, Text: text, User: in.UserID, Files: in.Files}}, true
 }
 

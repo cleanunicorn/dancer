@@ -47,6 +47,11 @@ rendered in Slack can be answered in the browser and the Slack buttons settle.
 - Commands typed into the composer are the same as in Slack: a bare prompt starts a task
   with the channel's default agent, `run <agent> <prompt>`, `default <agent>`, `status`,
   `cancel`, `close`, `agent list/add/edit/delete`. Guided wizards answer with prompts.
+  A message that is one of the *agent's* own commands (`/model opus`, `/clear`, `/compact`,
+  a plugin's) is not dancer's to read: it goes to the agent as typed, which is how all of
+  them work without any being implemented. `commands` lists what the session accepts.
+  Only Slack needs care — it keeps a message starting with `/` for itself, so there it is
+  written `@dancer /clear`.
 - Accounts are local (`dancer user add`); the session's name signs what the user writes.
 
 ## Capabilities and Constraints

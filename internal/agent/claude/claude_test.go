@@ -2,6 +2,7 @@ package claude
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -146,6 +147,81 @@ func TestAPIKeyAsksNoUsage(t *testing.T) {
 	}
 	if req := f.wrote(`"get_usage"`, 200*time.Millisecond); req != "" {
 		t.Fatalf("asked for usage on an API key: %s", req)
+	}
+	f.exit()
+}
+
+// The driver reads "/model <name>" as it passes so it can report the
+// switch on the turn's result; everything else is just text.
+func TestModelArg(t *testing.T) {
+	cases := []struct{ text, want string }{
+		{"/model opus", "opus"},
+		{"  /model sonnet  ", "sonnet"},
+		{"/model claude-opus-4-1-20250805", "claude-opus-4-1-20250805"},
+		{"/model\topus", "opus"},
+		{"/model", ""},                             // a question, not a switch
+		{"/model ", ""},                            //
+		{"/model opus and then fix the build", ""}, // not something the CLI switches on
+		{"/clear", ""},
+		{"/compact", ""},
+		{"tell me about /model opus", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := modelArg(c.text); got != c.want {
+			t.Errorf("modelArg(%q) = %q, want %q", c.text, got, c.want)
+		}
+	}
+}
+
+// A "/model …" goes to the CLI untouched — the CLI is what runs it —
+// and the turn's result reports what the session switched to, so the
+// next --resume can ask for it again.
+func TestModelSwitchReportedOnResult(t *testing.T) {
+	f := newFakeProc()
+	r := newTestRun(f)
+	f.say(initLine)
+	next(t, r)
+
+	if err := r.Send(context.Background(), "/model opus"); err != nil {
+		t.Fatal(err)
+	}
+	if sent := f.wrote(`/model opus`, 2*time.Second); sent == "" {
+		t.Fatal("the command did not reach the CLI as written")
+	}
+	f.say(resultLine)
+	if ev := next(t, r); ev.Type != agent.EventResult || ev.Model != "opus" {
+		t.Fatalf("result = %+v, want the switch to opus", ev)
+	}
+	// Spent: the next turn reports no switch.
+	f.say(resultLine)
+	if ev := next(t, r); ev.Type != agent.EventResult || ev.Model != "" {
+		t.Fatalf("second result = %+v, want no model", ev)
+	}
+
+	// A turn that failed switched nothing, and does not leave the note
+	// behind for the next one either.
+	if err := r.Send(context.Background(), "/model sonnet"); err != nil {
+		t.Fatal(err)
+	}
+	f.wrote(`/model sonnet`, 2*time.Second)
+	f.say(errorLine)
+	if ev := next(t, r); ev.Type != agent.EventError || ev.Model != "" {
+		t.Fatalf("error = %+v, want no model", ev)
+	}
+	f.say(resultLine)
+	if ev := next(t, r); ev.Type != agent.EventResult || ev.Model != "" {
+		t.Fatalf("result after a failed switch = %+v, want no model", ev)
+	}
+
+	// Any other command is text like any other: nothing is noted.
+	if err := r.Send(context.Background(), "/clear"); err != nil {
+		t.Fatal(err)
+	}
+	f.wrote(`/clear`, 2*time.Second)
+	f.say(resultLine)
+	if ev := next(t, r); ev.Type != agent.EventResult || ev.Model != "" {
+		t.Fatalf("result after /clear = %+v, want no model", ev)
 	}
 	f.exit()
 }
