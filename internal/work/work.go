@@ -350,6 +350,12 @@ func collapse(all []Ref) []Ref {
 	return out
 }
 
+// ownerRepo matches "owner/repo" and captures the two halves. Four
+// regexes need it — a URL, a bare "owner/repo#12", a "Closes owner/repo#12"
+// and a git remote — and what counts as a repository name is one decision,
+// not four.
+const ownerRepo = `([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)`
+
 // numbered are the `gh pr` and `gh issue` subcommands that act on one
 // reference, and so are followed by its number. Two regexes need the
 // list and would drift apart by hand: one asks whether a command worked
@@ -358,10 +364,10 @@ func collapse(all []Ref) []Ref {
 const numbered = `view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review`
 
 var (
-	urlRe    = regexp.MustCompile(`https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(pull|issues)/(\d+)`)
-	bareRe   = regexp.MustCompile(`(?:^|[^\w/#-])(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#(\d{1,5})\b`)
-	closesRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+))?#(\d{1,5})\b`)
-	remoteRe = regexp.MustCompile(`github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)`)
+	urlRe    = regexp.MustCompile(`https?://github\.com/` + ownerRepo + `/(pull|issues)/(\d+)`)
+	bareRe   = regexp.MustCompile(`(?:^|[^\w/#-])(?:` + ownerRepo + `)?#(\d{1,5})\b`)
+	closesRe = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:` + ownerRepo + `)?#(\d{1,5})\b`)
+	remoteRe = regexp.MustCompile(`github\.com[:/]` + ownerRepo)
 	pushRe   = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/(\S+)`)
 	// branchRe: the commands that name a branch dancer should believe.
 	branchRe = regexp.MustCompile(`\bgit\s+(?:checkout\s+-b|switch\s+-c|branch)\s+(?:-\S+\s+)*([A-Za-z0-9._/-]+)`)
