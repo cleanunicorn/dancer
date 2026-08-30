@@ -2,6 +2,7 @@ package work
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,5 +248,19 @@ func TestScanAlsoIsCapped(t *testing.T) {
 	}
 	if len(st.Also) != maxAlso {
 		t.Errorf("Also holds %d, want the cap of %d: %+v", len(st.Also), maxAlso, st.Also)
+	}
+}
+
+// TestScanStopsReading: a tool can print a megabyte, and the references
+// worth having are near the top of it. What is past the clip is not read.
+func TestScanStopsReading(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	buried := strings.Repeat("noise ", maxText/6+1) + "https://github.com/o/r/pull/9"
+	if len(buried) <= maxText {
+		t.Fatalf("the reference is not past the clip: %d bytes", len(buried))
+	}
+	l.bash("u1", "gh pr list --limit 500", buried)
+	if st := Scan(l.recs); !st.Empty() {
+		t.Errorf("read past the clip: %+v", st)
 	}
 }
