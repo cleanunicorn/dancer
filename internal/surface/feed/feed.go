@@ -99,7 +99,7 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 				return out(fmt.Sprintf("📊 `%s` · %s", ev.TaskID, u))
 			}
 		case agent.EventError:
-			return out(fmt.Sprintf("❌ `%s` — %s", ev.TaskID, truncate(ev.Agent.Text, 300)))
+			return out(chat.WithOverview(fmt.Sprintf("❌ `%s` — %s", ev.TaskID, truncate(ev.Agent.Text, 300)), ev.Work))
 		}
 	case surface.EventFinished:
 		if ev.Task.Status == store.StatusFailed || ev.Task.Status == store.StatusCancelled {

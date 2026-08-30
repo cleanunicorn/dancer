@@ -260,7 +260,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		if t != nil {
 			t.errored = true
 		}
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: "❌ " + a.Text, Mention: requester(ev), Files: files(a)}})
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview("❌ "+a.Text, ev.Work), Mention: requester(ev), Files: files(a)}})
 	default:
 		return nil
 	}

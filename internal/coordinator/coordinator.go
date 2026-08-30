@@ -1274,9 +1274,11 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	}
 	e := ev
 	out := surface.Event{Kind: surface.EventAgent, Thread: st.Thread, TaskID: id, Task: &st, Agent: &e}
-	if ev.Type == agent.EventResult {
+	if ev.Type == agent.EventResult || ev.Type == agent.EventError {
 		// The end of a turn is when a human decides whether to go and
 		// look, so the closing line carries what there is to look at.
+		// A turn that failed ends here too, and the half-finished pull
+		// request it left behind is the thing someone has to deal with.
 		out.Work = s.c.overview(ctx, st.Thread)
 	}
 	s.c.broadcast(ctx, out)
