@@ -1,9 +1,42 @@
 // Package agent defines the coding-agent abstraction.
 //
-// An Agent (Claude Code, Codex, ...) is a process started inside an
+// An Agent (Claude Code, Codex, OpenCode) is a process started inside an
 // Environment that speaks a line-oriented JSON protocol. Each implementation
 // translates its native protocol into the normalized Event type so the
 // executor and coordinator never see vendor-specific messages.
+//
+// # What every driver owes the layers above
+//
+// Tool names. Event.Tool is what allowed_tools, the decider's auto_allow
+// ceiling, the status line and the event log reason about, so every driver
+// spells the tools dispatch knows in one vocabulary — Claude's, because that
+// is what operators already write in config:
+//
+//	dispatch    Claude Code    Codex                 OpenCode
+//	Bash        Bash           command_execution     bash
+//	Read        Read           (file read)           read
+//	Edit        Edit           file_change           edit
+//	Write       Write          file_change (new)     write
+//	WebFetch    WebFetch       (network access)      webfetch
+//	mcp__*      mcp__<s>__<t>  mcp_tool_call         <server>_<tool>
+//
+// A tool with no row keeps its vendor name (Glob, Grep, Task, …); the raw
+// vendor message is always in Event.Raw. The constants below are the names
+// in the first column.
+//
+// Permission modes. PermissionMode is dispatch's vocabulary; each driver maps
+// it onto its own flags:
+//
+//	dispatch            Claude Code            Codex                          OpenCode
+//	manual              default                approval untrusted             every tool: ask
+//	acceptEdits         acceptEdits            on-request + workspace-write   edit/write: allow, rest: ask
+//	auto                auto                   on-failure                     allowed_tools: allow, rest: ask
+//	bypassPermissions   bypassPermissions      never + danger-full-access     every tool: allow
+//
+// Whatever the mode, a tool the driver is asked about reaches dispatch as
+// EventNeedsPermission and is answered through Run.Decide: a driver must
+// never run its vendor's non-interactive mode that auto-approves or
+// auto-rejects, because then no prompt would ever reach a human.
 package agent
 
 import (
@@ -17,8 +50,36 @@ import (
 type Kind string
 
 const (
-	KindClaude Kind = "claude"
-	KindCodex  Kind = "codex"
+	KindClaude   Kind = "claude"
+	KindCodex    Kind = "codex"
+	KindOpenCode Kind = "opencode"
+)
+
+// Kinds lists every agent kind dispatch knows, in display order. A kind
+// being listed does not mean a driver for it is built in; the executor's
+// registry says that.
+func Kinds() []Kind { return []Kind{KindClaude, KindCodex, KindOpenCode} }
+
+// Valid reports whether k names a known agent kind.
+func (k Kind) Valid() bool {
+	for _, known := range Kinds() {
+		if k == known {
+			return true
+		}
+	}
+	return false
+}
+
+// Canonical tool names: what Event.Tool says for the tools dispatch reasons
+// about, whatever the vendor calls them (see the package doc).
+const (
+	ToolBash     = "Bash"
+	ToolRead     = "Read"
+	ToolEdit     = "Edit"
+	ToolWrite    = "Write"
+	ToolWebFetch = "WebFetch"
+	// ToolMCPPrefix starts the name of an MCP tool: mcp__<server>__<tool>.
+	ToolMCPPrefix = "mcp__"
 )
 
 // PermissionMode mirrors the agent's own permission levels.

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/environment"
 )
 
@@ -60,6 +61,7 @@ func TestProvisionScriptIsValidShell(t *testing.T) {
 	for name, p := range map[string]environment.Provision{
 		"agents only": {Agents: []string{"claude"}},
 		"both agents": {Agents: []string{"claude", "codex"}},
+		"all agents":  {Agents: []string{"claude", "codex", "opencode"}},
 		"everything":  {Agents: []string{"claude"}, Packages: []string{"jq", "a-b_c"}, Setup: []string{"echo 'hi there'", "true"}},
 		"nothing":     {},
 	} {
@@ -100,8 +102,23 @@ func TestProvisionScriptContents(t *testing.T) {
 	if !strings.Contains(s, "if command -v claude >/dev/null 2>&1;") {
 		t.Error("claude install is not guarded by a presence check")
 	}
-	if strings.Contains(s, "@openai/codex") {
-		t.Error("installed codex without being asked")
+	if strings.Contains(s, "@openai/codex") || strings.Contains(s, "opencode-ai") {
+		t.Error("installed an agent without being asked")
+	}
+	// Every kind dispatch knows has an install line, guarded the same way.
+	// The list comes from agent.Kinds so that adding a kind without
+	// teaching provisioning to install it fails here. The maps stay
+	// string-keyed: provisioning takes the kind as text, off the spec.
+	for _, k := range agent.Kinds() {
+		a := string(k)
+		if agentInstall[a] == "" || agentBinary[a] == "" {
+			t.Errorf("%s: no install line — agentInstall/agentBinary do not know every agent.Kind", a)
+			continue
+		}
+		s := provisionScript(environment.Provision{Agents: []string{a}}, 1000, 1000)
+		if !strings.Contains(s, "if command -v "+agentBinary[a]+" >/dev/null 2>&1;") || !strings.Contains(s, agentInstall[a]) {
+			t.Errorf("%s: install line missing or unguarded", a)
+		}
 	}
 	// The sudoers rule must name the uid, not a user name: on an image that
 	// already had a user at that uid we keep its name, whatever it is.

@@ -24,7 +24,9 @@ import (
 // Config is the on-disk configuration.
 type Config struct {
 	Server      Server       `toml:"server"`
-	Claude      Claude       `toml:"claude"`
+	Claude      AgentCLI     `toml:"claude"`
+	Codex       AgentCLI     `toml:"codex"`
+	OpenCode    AgentCLI     `toml:"opencode"`
 	Decider     Decider      `toml:"decider"`
 	Slack       Slack        `toml:"slack"`
 	Web         Web          `toml:"web"`
@@ -103,8 +105,30 @@ type Server struct {
 	MaxAutoResumes int `toml:"max_auto_resumes,omitempty"`
 }
 
-type Claude struct {
+// AgentCLI is one agent's section — [claude], [codex], [opencode] — saying
+// where its CLI is. A definition's kind picks the section.
+type AgentCLI struct {
 	Binary string `toml:"binary"`
+}
+
+// AgentBinary is the CLI configured for an agent kind.
+func (c *Config) AgentBinary(k agent.Kind) string {
+	switch k {
+	case agent.KindCodex:
+		return c.Codex.Binary
+	case agent.KindOpenCode:
+		return c.OpenCode.Binary
+	}
+	return c.Claude.Binary
+}
+
+// kindNames is the agent kinds as an error message lists them.
+func kindNames() string {
+	var names []string
+	for _, k := range agent.Kinds() {
+		names = append(names, string(k))
+	}
+	return strings.Join(names, "|")
 }
 
 // Decider configures the small model that answers dispatch's policy
@@ -286,6 +310,12 @@ func (c *Config) applyDefaults(path string) {
 	if c.Claude.Binary == "" {
 		c.Claude.Binary = "claude"
 	}
+	if c.Codex.Binary == "" {
+		c.Codex.Binary = "codex"
+	}
+	if c.OpenCode.Binary == "" {
+		c.OpenCode.Binary = "opencode"
+	}
 	if c.Decider.Kind == "" {
 		c.Decider.Kind = "off"
 	}
@@ -330,6 +360,7 @@ func (c *Config) applyDefaults(path string) {
 	}
 	for i := range c.Definitions {
 		d := &c.Definitions[i]
+		d.Kind = strings.ToLower(strings.TrimSpace(d.Kind))
 		if d.Kind == "" {
 			d.Kind = string(agent.KindClaude)
 		}
@@ -398,6 +429,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: duplicate definition %q", d.Name)
 		}
 		seen[d.Name] = true
+		if !agent.Kind(d.Kind).Valid() {
+			return fmt.Errorf("config: definition %q: unknown agent kind %q (%s)", d.Name, d.Kind, kindNames())
+		}
 		switch environment.Kind(d.Environment.Kind) {
 		case environment.KindLocal:
 		case environment.KindDocker:

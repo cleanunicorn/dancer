@@ -31,14 +31,16 @@ const provisionVersion = "4"
 
 // agentInstall maps an agent kind to the command that installs its CLI.
 var agentInstall = map[string]string{
-	"claude": "npm install -g @anthropic-ai/claude-code",
-	"codex":  "npm install -g @openai/codex",
+	"claude":   "npm install -g @anthropic-ai/claude-code",
+	"codex":    "npm install -g @openai/codex",
+	"opencode": "npm install -g opencode-ai",
 }
 
 // agentBinary maps an agent kind to the binary it must put on PATH.
 var agentBinary = map[string]string{
-	"claude": "claude",
-	"codex":  "codex",
+	"claude":   "claude",
+	"codex":    "codex",
+	"opencode": "opencode",
 }
 
 // build serialises provisioning per derived tag: two tasks starting at once

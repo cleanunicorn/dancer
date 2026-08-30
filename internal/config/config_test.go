@@ -385,6 +385,44 @@ func TestDockerProvisionRoundTrip(t *testing.T) {
 	}
 }
 
+// TestAgentKindValidation: a definition's kind must be one dispatch knows —
+// every kind, not only the ones with a driver built in — and is
+// normalised, so "Codex" in the file is the codex kind in the store.
+func TestAgentKindValidation(t *testing.T) {
+	load := func(t *testing.T, kind string) (*Config, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		src := "[server]\ndb = \"/tmp/x.db\"\n\n[[definitions]]\nname = \"a\"\nkind = \"" + kind + "\"\n[definitions.environment]\nkind = \"local\"\n"
+		if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Load(path)
+	}
+	if _, err := load(t, "gemini"); err == nil || !strings.Contains(err.Error(), "unknown agent kind") || !strings.Contains(err.Error(), "claude|codex|opencode") {
+		t.Fatalf("unknown kind: err = %v", err)
+	}
+	for _, kind := range []string{"claude", "Codex", "opencode", ""} {
+		cfg, err := load(t, kind)
+		if err != nil {
+			t.Fatalf("kind %q rejected: %v", kind, err)
+		}
+		want := strings.ToLower(kind)
+		if want == "" {
+			want = "claude"
+		}
+		if got := cfg.AgentDefinitions()[0].Kind; string(got) != want {
+			t.Fatalf("kind %q loaded as %q", kind, got)
+		}
+	}
+	cfg, err := load(t, "opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AgentBinary(agent.KindOpenCode) != "opencode" || cfg.AgentBinary(agent.KindCodex) != "codex" || cfg.AgentBinary(agent.KindClaude) != "claude" {
+		t.Fatalf("default binaries: %q %q %q", cfg.Claude.Binary, cfg.Codex.Binary, cfg.OpenCode.Binary)
+	}
+}
+
 func TestDockerConfigValidation(t *testing.T) {
 	for name, env := range map[string]string{
 		"bad provision": "kind = \"docker\"\nimage = \"x\"\nprovision = \"yes-please\"\n",

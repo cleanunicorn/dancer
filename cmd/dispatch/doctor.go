@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/config"
 	"github.com/cleanunicorn/dispatch/internal/decider"
 	"github.com/cleanunicorn/dispatch/internal/environment"
@@ -100,7 +102,27 @@ func runDoctor(cfgPath string) error {
 	add(check{name: "config", ok: true, info: cfgPath})
 	add(check{name: "workdir_root", ok: dirWritable(cfg.Server.WorkdirRoot), info: cfg.Server.WorkdirRoot})
 
-	add(checkClaude(cfg.Claude.Binary))
+	// Only the CLIs the definitions actually run are probed: an install
+	// that runs nothing but codex should not be told claude is missing,
+	// and checkClaude spends a model turn. A kind with no driver in this
+	// build is reported per definition below, so its CLI is not looked
+	// for either — one failure, one cause.
+	drv := drivers(cfg)
+	for _, k := range kindsUsed(cfg) {
+		if _, ok := drv[k]; !ok {
+			continue
+		}
+		if k == agent.KindClaude {
+			add(checkClaude(cfg.Claude.Binary))
+			continue
+		}
+		add(checkAgent(k, cfg.AgentBinary(k)))
+	}
+	for _, d := range cfg.Definitions {
+		if _, ok := drv[agent.Kind(d.Kind)]; !ok {
+			add(check{name: "definition " + d.Name, ok: false, info: fmt.Sprintf("agent kind %q has no driver in this build (available: %s)", d.Kind, kindList(drv))})
+		}
+	}
 	add(checkDecider(cfg))
 
 	needDocker, needSSH := false, false
@@ -110,7 +132,7 @@ func runDoctor(cfgPath string) error {
 			needDocker = true
 		case environment.KindSSH:
 			needSSH = true
-			add(checkSSH(d.Environment.Host, d.Environment.KeyPath, cfg.Claude.Binary))
+			add(checkSSH(d.Environment.Host, d.Environment.KeyPath, agent.Kind(d.Kind), cfg.AgentBinary(agent.Kind(d.Kind))))
 		}
 	}
 	if needDocker {
@@ -213,20 +235,99 @@ func checkGitHub() check {
 		info: "lending the login from " + login.Source + " to containers, " + who}
 }
 
-func checkSSH(host, key, claudeBin string) check {
+// kindsUsed lists the agent kinds the definitions run, in agent.Kinds
+// order, each once. A config with no definitions yet — someone running
+// doctor to find out why setup will not work — is answered with the
+// default kind, so there is always one CLI to report on.
+func kindsUsed(cfg *config.Config) []agent.Kind {
+	if len(cfg.Definitions) == 0 {
+		return []agent.Kind{agent.KindClaude}
+	}
+	used := map[agent.Kind]bool{}
+	for _, d := range cfg.Definitions {
+		used[agent.Kind(d.Kind)] = true
+	}
+	var out []agent.Kind
+	for _, k := range agent.Kinds() {
+		if used[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// checkAgent reports a non-claude agent CLI: on PATH, its version, and
+// whether it has a login or a key to run with. It does not spend a model
+// turn the way checkClaude does; a version call proves the install.
+func checkAgent(kind agent.Kind, bin string) check {
+	name := string(kind)
+	path, err := exec.LookPath(bin)
+	if err != nil {
+		return check{name: name, ok: false, info: bin + " not found in PATH"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ver, _ := exec.CommandContext(ctx, path, "--version").Output()
+	info := strings.TrimSpace(string(ver)) + " at " + path
+	switch kind {
+	case agent.KindCodex:
+		for _, k := range []string{"OPENAI_API_KEY", "CODEX_API_KEY"} {
+			if os.Getenv(k) != "" {
+				return check{name: name, ok: true, info: info + ", " + k + " in the environment"}
+			}
+		}
+		if f := codexAuthFile(); fileExists(f) {
+			return check{name: name, ok: true, info: info + ", logged in (" + f + ")"}
+		}
+		return check{name: name, ok: false, info: info + " — not logged in: run `codex login`, or put OPENAI_API_KEY in the definition's environment env"}
+	case agent.KindOpenCode:
+		if f := opencodeAuthFile(); fileExists(f) {
+			return check{name: name, ok: true, info: info + ", logged in (" + f + ")"}
+		}
+		return check{name: name, ok: true, note: true, info: info + " — no auth.json: the definition's environment env must carry the provider's key (e.g. ZHIPU_API_KEY)"}
+	}
+	return check{name: name, ok: true, info: info}
+}
+
+// codexAuthFile is where `codex login` keeps its credentials:
+// $CODEX_HOME/auth.json, default ~/.codex/auth.json.
+func codexAuthFile() string {
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		return filepath.Join(d, "auth.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".codex", "auth.json")
+}
+
+// opencodeAuthFile is where `opencode auth login` keeps its keys:
+// $XDG_DATA_HOME/opencode/auth.json, default ~/.local/share/opencode/auth.json.
+func opencodeAuthFile() string {
+	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		return filepath.Join(d, "opencode", "auth.json")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "opencode", "auth.json")
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir() && fi.Size() > 0
+}
+
+func checkSSH(host, key string, kind agent.Kind, bin string) check {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=10"}
 	if key != "" {
 		args = append(args, "-i", key)
 	}
-	args = append(args, host, "--", "command -v "+claudeBin+" && "+claudeBin+" --version")
+	args = append(args, host, "--", "command -v "+bin+" && "+bin+" --version")
 	out, err := exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
 	if err != nil {
 		return check{name: "ssh " + host, ok: false, info: truncate(strings.TrimSpace(string(out)), 160)}
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	return check{name: "ssh " + host, ok: true, info: "claude " + lines[len(lines)-1]}
+	return check{name: "ssh " + host, ok: true, info: string(kind) + " " + lines[len(lines)-1]}
 }
 
 // checkSlack proves both tokens with auth.test and then compares the scopes

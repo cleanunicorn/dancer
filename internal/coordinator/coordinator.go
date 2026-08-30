@@ -119,6 +119,10 @@ type Coordinator struct {
 	// Empty — the default — means every prompt reaches a person, whatever
 	// the decider thinks.
 	AutoAllow []string
+	// AgentKinds are the agent kinds the executor has a driver for, in
+	// agent.Kinds order. The add-agent wizard asks which one to use when
+	// there is more than one; the first is the default.
+	AgentKinds []agent.Kind
 
 	drives sync.WaitGroup
 

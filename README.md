@@ -38,7 +38,10 @@ showing how much is used after the turn and, past 80%, when the window resets.
   is relayed into Slack, and a thread you start from the web UI in a Slack channel lives in
   Slack. The web UI keeps no history of its own — it reads the event log.
 - **Surfaces**: `chat` (threads, commands, approvals), `feed` (ops channel mirror). Several per transport.
-- **Agents**: Claude Code via `claude -p` stream-json. Codex later.
+- **Agents**: Claude Code via `claude -p` stream-json. A definition's `kind` picks the driver
+  (`claude` today; `codex` and `opencode` are accepted by config and provisioning, their drivers
+  are on the way); every driver speaks one tool vocabulary, so `allowed_tools` and `auto_allow`
+  mean the same whatever runs the task.
 - **Environments**: local directory, Docker container, SSH host.
 - **Definitions**: named agent configs (model, tools, permission mode, environment); many instances run concurrently, one per thread.
 
