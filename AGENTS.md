@@ -266,7 +266,15 @@ files first — they carry the contract, the concrete packages under them are im
   than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
   never a command's own flag, and a command that came back with a page of pull requests acted on
-  none of them. A scan runs while a human waits for the closing line, so most records are ruled
+  none of them. Above all a thread is not working on what it merely *read*: only the output of a
+  command that asked GitHub or a remote is evidence at all, so a file the agent opened, a
+  `git log`, a grep over a repo full of PR numbers and a result whose command was never seen say
+  nothing — and commands are recognised where a command begins, so `grep -rn "gh pr create" .` is
+  a grep. A here-document's body is a file being written, not commands being run (a fixture full
+  of `git switch -c x` named no branch), though what a command hands GitHub is still read for its
+  links and its "Closes #47". The agent's own prose is read for a link and for "Closes #47" but
+  never for a bare "#12", which in a report is a quotation — often of the overview line dispatch
+  wrote under the last turn. A scan runs while a human waits for the closing line, so most records are ruled
   out on their bytes and never decoded (`maxScan`, `mayMatter`), and one record too dear to read
   is stepped over rather than ending the walk. Outbound records are never scanned: dispatch's own
   overview lines carry the references they were mined from and would keep re-confirming
