@@ -578,3 +578,26 @@ func TestScanTellsAnIssueFromAPullRequest(t *testing.T) {
 		t.Errorf("PR = %+v, want an issue command to name no pull request", st.PR)
 	}
 }
+
+// TestScanOrphanedResultIsNotCreated: a tool result is graded by the
+// command that produced it, looked up by tool id. When the budget stepped
+// over that command's own record the lookup finds nothing, and the result
+// must fall back to the weakest grade rather than keep the strongest one
+// it might have earned — an unpaired URL is a URL somebody printed.
+func TestScanOrphanedResultIsNotCreated(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	// The creating command's own record is dearer than the whole budget,
+	// so it is stepped over; its result, small, is not.
+	l.add("agent", agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "u1",
+		ToolInput: map[string]any{"command": `gh pr create --body "` + strings.Repeat("z", maxScan) + `"`}})
+	l.add("agent", agent.Event{Type: agent.EventToolResult, ToolID: "u1",
+		Text: "https://github.com/o/r/pull/13"})
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 13 {
+		t.Fatalf("PR = %+v", st.PR)
+	}
+	if st.PR.Seen != SeenMentioned {
+		t.Errorf("PR.Seen = %v, want the weakest grade for a result with no command behind it", st.PR.Seen)
+	}
+}
