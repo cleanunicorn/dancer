@@ -241,8 +241,10 @@ files first — they carry the contract, the concrete packages under them are im
   *the* PR out of a thread that named a dozen numbers, and sightings of one number in one
   repository collapse into one reference however they were spelled. What it *refuses* to believe
   carries as much: the repository is the one a `git remote` named rather than every
-  `github.com/owner/name` a go.mod scrolls past, a branch is never a command's own flag, and a
-  command that came back with a page of pull requests acted on none of them. A scan runs while a
+  `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a remote at
+  all, to the repository most linked to by a pull request or issue URL), a branch is never a
+  command's own flag, and a command that came back with a page of pull requests acted on none of
+  them. A scan runs while a
   human waits for the closing line, so most records are ruled out on their bytes and never
   decoded (`maxScan`, `mayMatter`). Outbound records are never
   scanned: dancer's own overview lines carry the references they were mined from and would keep

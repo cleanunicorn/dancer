@@ -23,6 +23,15 @@
 // branch is never a command's own flag; and a command that came back with
 // a page of pull requests acted on none of them.
 //
+// When no command named a remote at all — a thread working in a checkout
+// that was already there, which is most of them — the repository falls
+// back to the one most often linked to by a pull request or issue URL in
+// the thread. That is weaker evidence and is weighted as such
+// (repoFromProse against repoFromRemote), but it is still a repository
+// somebody linked into this conversation rather than one a file happened
+// to name in passing: a bare "github.com/owner/name" never counts, because
+// only a URL that points at a pull request or an issue is tallied.
+//
 // Scan is a projection over records the caller already has, not new state:
 // it stores nothing and appends nothing. It runs at the end of every turn,
 // while a human waits for the closing line, so it is written to skip: most
@@ -367,6 +376,8 @@ func bump(dst *Ref, r Ref) {
 // one pull request and the one issue the thread is about, then the rest.
 func (sc *scanner) state() State {
 	st := State{Repo: sc.repo, Branch: sc.branch}
+	// No command named a remote, so fall back to the repository most
+	// linked to. See the package doc for what this is willing to trust.
 	if st.Repo == "" {
 		best := 0
 		for repo, n := range sc.repos {
