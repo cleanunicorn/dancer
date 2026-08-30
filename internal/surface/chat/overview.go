@@ -67,7 +67,7 @@ func whereLine(w *work.State, withRepo bool) string {
 		parts = append(parts, code(w.BranchURL(), w.Branch))
 	}
 	if withRepo && w.Repo != "" {
-		parts = append(parts, code("https://github.com/"+w.Repo, w.Repo))
+		parts = append(parts, code(w.RepoURL(), w.Repo))
 	}
 	leader := "🌿 "
 	if len(parts) == 0 {

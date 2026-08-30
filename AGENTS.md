@@ -250,7 +250,10 @@ files first — they carry the contract, the concrete packages under them are im
   starts a new one, so a `/model` choice would be undone by the first idle timeout. That
   one is carried: the claude driver reads the name out of a `/model <name>` on its way to
   the CLI (`modelArg` — it does not run the command, the CLI does) and reports it on the
-  turn's `EventResult.Model`; the coordinator keeps it as `store.TaskState.ModelPin` and
+  turn's `EventResult.Model` — a *switch report*, and nothing else: an ordinary turn's
+  result carries no model, so anything that wants to name the model a turn ran (the chat
+  surface's closing line) reads the init and remembers it per thread. The coordinator keeps
+  the switch as `store.TaskState.ModelPin` and
   asks for it again on every resume. The CLI announces the switch nowhere else a machine
   can read it — an English "Set model to Sonnet 5 for this session only" is the whole of
   it, and the resolved name only appears on the *next* turn's init, which a thread left
@@ -269,7 +272,8 @@ files first — they carry the contract, the concrete packages under them are im
   than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
   never a command's own flag, a branch is only linkable once the log saw it *pushed* (`git switch
-  -c` creates nothing GitHub has heard of), and a command that came back with a page of pull
+  -c` creates nothing GitHub has heard of, and `gh pr list --head x` is a question rather than
+  evidence), and a command that came back with a page of pull
   requests acted on none of them. A scan runs while a human waits for the closing line, so most records are ruled
   out on their bytes and never decoded (`maxScan`, `mayMatter`), and one record too dear to read
   is stepped over rather than ending the walk. Outbound records are never scanned: dispatch's own

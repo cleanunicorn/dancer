@@ -22,8 +22,9 @@
 // "github.com/owner/name" a go.mod or a README puts in front of it; a
 // branch is never a command's own flag; a branch is only linkable
 // (BranchURL) once the log has seen it pushed, because `git switch -c`
-// promises nothing GitHub knows about; and a command that came back with
-// a page of pull requests acted on none of them.
+// promises nothing GitHub knows about and a `gh pr list --head x` is a
+// question rather than evidence; and a command that came back with a
+// page of pull requests acted on none of them.
 //
 // When no command named a remote at all — a thread working in a checkout
 // that was already there, which is most of them — the repository falls
@@ -99,16 +100,26 @@ type State struct {
 	Also   []Ref  // other references, strongest and most recent first
 }
 
+// RepoURL is where Repo can be read on GitHub, and "" when the thread
+// never named one. Building a URL out of what was mined is this
+// package's job, so nothing above it has to know the shape of one.
+func (s State) RepoURL() string {
+	if s.Repo == "" {
+		return ""
+	}
+	return "https://github.com/" + s.Repo
+}
+
 // BranchURL is where Branch can be read on GitHub, and "" when there is
 // nowhere to point: no repository, no branch, or a branch the thread only
 // ever created locally. A `git switch -c` is not a promise that anything
 // was pushed, and a link to a branch that is not there is worse than no
 // link at all — so this insists on having seen the push.
 func (s State) BranchURL() string {
-	if s.Repo == "" || s.Branch == "" || !s.Pushed {
+	if s.Branch == "" || !s.Pushed || s.RepoURL() == "" {
 		return ""
 	}
-	return "https://github.com/" + s.Repo + "/tree/" + s.Branch
+	return s.RepoURL() + "/tree/" + s.Branch
 }
 
 // Empty reports whether the scan found nothing worth showing.
@@ -519,7 +530,12 @@ var (
 	branchRe = regexp.MustCompile(`\bgit\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
 	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
 	headRe   = regexp.MustCompile(`--head[=\s]+` + branchName)
-	createRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
+	// createHeadRe: the one `--head` that says the branch is on the
+	// remote. `gh pr create --head x` cannot work unless it is; a
+	// `gh pr list --head x` is a question, and asking it proves nothing.
+	// The gap between the two halves may not cross into another command.
+	createHeadRe = regexp.MustCompile(`\bgh\s+pr\s+create\b[^&|;]*--head[=\s]+` + branchName)
+	createRe     = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
 	// workRe: subcommands that act on one pull request or issue. `status`
 	// and `list` are absent on purpose — they return everything open, and
 	// grading a listing as work lets an unrelated pull request win.
@@ -612,7 +628,9 @@ func seenFor(cmd string) Seen {
 // branchOf is the branch a command creates, pushes or targets, and
 // whether the command is evidence that it reached the remote. `git push
 // origin x` and `gh pr create --head x` are; `git switch -c x` is not,
-// and neither is a bare `git branch x`.
+// a bare `git branch x` is not, and neither is a `gh pr list --head x`,
+// which names the branch a question was asked about and answers nothing
+// about where it lives.
 //
 // Every pattern is tried, not just the first that matches, because an
 // agent writes `git switch -c x && git push -u origin x` as one command
@@ -622,15 +640,23 @@ func seenFor(cmd string) Seen {
 func branchOf(cmd string) (string, bool) {
 	var name string
 	pushed := false
-	for _, re := range []*regexp.Regexp{branchRe, pushToRe, headRe} {
-		m := re.FindStringSubmatch(cmd)
+	for _, p := range []struct {
+		re       *regexp.Regexp
+		onRemote bool // this command could not have run unless it was pushed
+	}{
+		{branchRe, false},
+		{pushToRe, true},
+		{headRe, false},
+		{createHeadRe, true},
+	} {
+		m := p.re.FindStringSubmatch(cmd)
 		if m == nil || m[1] == "" || m[1] == "HEAD" {
 			continue
 		}
 		if name == "" {
 			name = m[1]
 		}
-		if re != branchRe && m[1] == name {
+		if p.onRemote && m[1] == name {
 			pushed = true
 		}
 	}

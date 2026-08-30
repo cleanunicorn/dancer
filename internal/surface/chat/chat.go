@@ -10,7 +10,9 @@
 // away when the agent asks the human something (the prompt says it all)
 // and when the turn ends, replaced by a closing line with the outcome,
 // duration, the tools it reached for, how many files came out changed,
-// the model and the charge on an API key. On a subscription
+// the model (from the session's init line, remembered per thread: an
+// ordinary turn's result names none) and the charge on an API key. On a
+// subscription
 // the charge is nobody's bill, so the closing line carries none and the
 // agent's usage report (agent.EventUsage, a moment after the result)
 // becomes a meter instead: one line per plan window, bar first, so a
@@ -82,6 +84,7 @@ type Surface struct {
 
 	mu       sync.Mutex
 	lastInit map[transport.ThreadID]string // last session-details line posted per thread
+	models   map[transport.ThreadID]string // model the session runs, for the closing line
 	turns    map[transport.ThreadID]*turn  // running turn per thread, for the status line
 }
 
@@ -260,6 +263,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		if a.ParentID != "" {
 			return nil // a sub-agent's session, not the one the human talks to
 		}
+		s.noteModel(ev.Thread, a.Model)
 		text = s.initLine(ev)
 	case agent.EventText:
 		t.phase = phaseWorking
@@ -288,7 +292,8 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		t.activity = ""
 		text = fmt.Sprintf("🚫 *%s* refused by the agent's own policy: %s", a.Tool, truncate(a.Text, 300))
 	case agent.EventResult:
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview(doneLine(t, a, now), ev.Work), Mention: requester(ev), Files: files(a)}})
+		s.noteModel(ev.Thread, a.Model) // a "/model" switch this turn carried out
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview(doneLine(t, s.models[ev.Thread], a, now), ev.Work), Mention: requester(ev), Files: files(a)}})
 	case agent.EventUsage:
 		// Lands after the closing line — or, if the human was quick,
 		// inside the next turn, where it slots in above the status line.
@@ -372,7 +377,13 @@ func (t *turn) note(a *agent.Event) {
 	switch a.Tool {
 	case agent.ToolEdit, agent.ToolWrite:
 		// Canonical names: every driver maps its own onto these two, so
-		// this counts an edit whichever CLI made it.
+		// this counts an edit whichever CLI made it. Only these two — a
+		// tool with no row in the vocabulary keeps its vendor name (see
+		// the agent package doc), and counting one here would be this
+		// layer learning a vendor's names, which is the thing the
+		// vocabulary exists to stop. A notebook edit is the one that
+		// goes uncounted today; giving it a row is a change to that
+		// contract, not to this line.
 		if p, ok := a.ToolInput["file_path"].(string); ok && p != "" {
 			if t.wrote == nil {
 				t.wrote = map[string]int{}
@@ -498,6 +509,27 @@ func statusLine(t *turn, now time.Time) string {
 	return b.String()
 }
 
+// noteModel remembers the model a thread's session is running, so the
+// closing line can name it.
+//
+// It cannot come off the result. A driver reports on agent.Event.Model
+// there only when the turn carried out a "/model" switch; every ordinary
+// turn's result leaves it empty, and reading it alone would have meant a
+// closing line that named a model on no turn but that one. The name the
+// CLI resolved is on the init line, which is a *session* event — a
+// follow-up handed to a live process has none of its own — so the answer
+// is kept per thread and outlives the turn. A resume starts a new
+// process and a new init, so it corrects itself.
+func (s *Surface) noteModel(th transport.ThreadID, name string) {
+	if name == "" {
+		return
+	}
+	if s.models == nil {
+		s.models = map[transport.ThreadID]string{}
+	}
+	s.models[th] = name
+}
+
 // doneLine is the turn's closing line: outcome, how long it took, what it
 // reached for, how many files came out changed, the model that did it and
 // what it cost. Without a tracked turn (a restart in between) it is just
@@ -506,8 +538,9 @@ func statusLine(t *turn, now time.Time) string {
 // The tool breakdown and the file count are the two answers a bare "41
 // tool calls" leaves out — whether the turn was reading or writing, and
 // whether anything actually changed — and they cost nothing to keep,
-// because every tool call already passes through note.
-func doneLine(t *turn, a *agent.Event, now time.Time) string {
+// because every tool call already passes through note. The model comes
+// from the thread rather than from a, for the reason in noteModel.
+func doneLine(t *turn, model string, a *agent.Event, now time.Time) string {
 	parts := []string{"✅ done"}
 	if t != nil {
 		parts = append(parts, formatDuration(now.Sub(t.started)))
@@ -518,8 +551,8 @@ func doneLine(t *turn, a *agent.Event, now time.Time) string {
 			parts = append(parts, plural(n, "file")+" changed")
 		}
 	}
-	if a.Model != "" {
-		parts = append(parts, a.Model)
+	if model != "" {
+		parts = append(parts, model)
 	}
 	if cost := FormatCost(a); cost != "" {
 		parts = append(parts, cost)

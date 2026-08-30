@@ -323,14 +323,14 @@ func TestStatusLine(t *testing.T) {
 		"[status] 🔧 Bash `rm -rf build` · 45s · 1 tool call")
 	now = now.Add(20 * time.Second)
 	check("result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.0125, Billing: agent.BillingAPIKey})),
-		"[remove status]", "✅ done · 1m05s · 1 tool call · $0.013")
+		"[remove status]", "✅ done · 1m05s · 1 tool call · m · $0.013")
 	check("finished", s.Render(surface.Event{Kind: surface.EventFinished, Thread: th, TaskID: task.ID, Task: &store.TaskState{Status: store.StatusIdle}}))
 
 	// On a subscription the closing line carries no cost; the usage
 	// event that follows is the cost, and it addresses nobody.
 	check("subscription turn", s.Render(agentEv(agent.Event{Type: agent.EventText, Text: "ok"})), "ok", "[status] ⏳ thinking · 0s")
 	check("subscription result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Cost: 0.31, Billing: agent.BillingSubscription})),
-		"[remove status]", "✅ done · 0s")
+		"[remove status]", "✅ done · 0s · m")
 	usage := agentEv(agent.Event{Type: agent.EventUsage, Usage: &agent.Usage{Windows: []agent.UsageWindow{{Name: "5h", Used: 15}, {Name: "7d", Used: 28}}}})
 	meter := s.Render(usage)
 	check("usage after the turn", meter, "📊 plan usage\n▰▰▱▱▱▱▱▱▱▱ 15% · 5h\n▰▰▰▱▱▱▱▱▱▱ 28% · 7d")
@@ -343,7 +343,7 @@ func TestStatusLine(t *testing.T) {
 	check("usage inside the next turn", s.Render(usage),
 		"[remove status]", "📊 plan usage\n▰▰▱▱▱▱▱▱▱▱ 15% · 5h\n▰▰▰▱▱▱▱▱▱▱ 28% · 7d", "[status] 🔧 Read `/b.go` · 0s · 1 tool call")
 	check("follow-up result", s.Render(agentEv(agent.Event{Type: agent.EventResult, Text: "done", Billing: agent.BillingSubscription})),
-		"[remove status]", "✅ done · 0s · 1 tool call")
+		"[remove status]", "✅ done · 0s · 1 tool call · m")
 
 	// A follow-up to the live process has no started event: the first
 	// agent event opens the next turn.
