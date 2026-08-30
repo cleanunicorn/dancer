@@ -189,8 +189,8 @@ func (sc *scanner) event(ev event, at time.Time) {
 		// point every bare "#47" in the thread at a stranger's issue.
 		if namesRemoteRe.MatchString(cmd) {
 			sc.remotes(ev.Text)
+			sc.pushHint(ev.Text)
 		}
-		sc.pushHint(ev.Text)
 	case agent.EventText, agent.EventResult:
 		sc.text(ev.Text, at, SeenMentioned)
 	}
@@ -273,7 +273,12 @@ func (sc *scanner) remotes(s string) {
 }
 
 // pushHint reads git's own "create a pull request" advice, which names the
-// branch that was just pushed.
+// branch that was just pushed. Like remotes, callers gate it on the command
+// having been one that talks to a remote: that URL shape can appear in a
+// file the agent read or a page it fetched, and the branch it names is
+// rendered into a line dancer signs its own name to. `branchName` finishes
+// the job — what git itself forbids in a branch cannot reach the line
+// either, so no backtick can close the code span the branch is rendered in.
 func (sc *scanner) pushHint(s string) {
 	if !strings.Contains(s, "github.com") {
 		return
@@ -447,7 +452,7 @@ var (
 	// the agent's own prose — may mention a repository without dancer
 	// concluding the thread is working in it.
 	namesRemoteRe = regexp.MustCompile(`\b(?:git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s+repo)\b`)
-	pushRe        = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/(\S+)`)
+	pushRe        = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/` + branchName)
 	// branchRe: the commands that name a branch dancer should believe.
 	// Every capture uses branchName, which cannot start with "-" — git
 	// forbids such a branch, so `git branch --show-current` and
