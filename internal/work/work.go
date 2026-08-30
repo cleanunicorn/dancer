@@ -166,7 +166,7 @@ func (sc *scanner) command(cmd string, at time.Time) {
 		if m[1] == "issue" {
 			k = KindIssue
 		}
-		sc.add(Ref{Kind: k, Number: atoi(m[3]), Seen: SeenWorked, At: at})
+		sc.add(Ref{Kind: k, Number: atoi(m[2]), Seen: SeenWorked, At: at})
 	}
 }
 
@@ -363,7 +363,7 @@ var (
 	createRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
 	workRe   = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|status|review)\b`)
 	// ghTargetRe: the number a `gh pr`/`gh issue` subcommand acts on.
-	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review)\s+#?(\d{1,5})\b`)
+	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review)\s+#?(\d{1,5})\b`)
 )
 
 // seenFor grades a command: what it creates is the thread's own, what it
