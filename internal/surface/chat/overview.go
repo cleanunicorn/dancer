@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cleanunicorn/dispatch/internal/transport"
 	"github.com/cleanunicorn/dispatch/internal/work"
 )
 
@@ -32,15 +33,18 @@ func Overview(w *work.State) string {
 	return strings.Join(lines, "\n")
 }
 
-// headline is the pull request, or the issue when there is no pull request
-// yet — the thing to click. The other one rides along as a bare number:
-// two URLs on one line is a wall, and the issue is one hop from the PR.
+// headline is the pull request, and the issue behind it when there is
+// one — or the issue alone when no pull request exists yet. Both are
+// clickable and both read as "#51": the number is what a human says out
+// loud, and the URL rides underneath it (transport.Link) rather than
+// across the line, which is what kept the issue a bare number here
+// before.
 func headline(w *work.State) string {
 	switch {
 	case w.PR != nil:
 		s := "🔀 " + link(w.PR, w.Repo)
 		if w.Issue != nil {
-			s += " · for " + ref(w.Issue, w.Repo)
+			s += " · for " + link(w.Issue, w.Repo)
 		}
 		return s
 	case w.Issue != nil:
@@ -56,10 +60,14 @@ func headline(w *work.State) string {
 func whereLine(w *work.State, withRepo bool) string {
 	var parts []string
 	if w.Branch != "" {
-		parts = append(parts, "`"+w.Branch+"`")
+		// A branch the thread only created locally is not on GitHub and
+		// stays a code span; one the log saw pushed becomes a link. The
+		// backticks come off when it does — Slack does not format the
+		// label of a link, so they would show as themselves.
+		parts = append(parts, code(w.BranchURL(), w.Branch))
 	}
 	if withRepo && w.Repo != "" {
-		parts = append(parts, "`"+w.Repo+"`")
+		parts = append(parts, code("https://github.com/"+w.Repo, w.Repo))
 	}
 	leader := "🌿 "
 	if len(parts) == 0 {
@@ -68,7 +76,7 @@ func whereLine(w *work.State, withRepo bool) string {
 	if len(w.Also) > 0 {
 		also := make([]string, 0, len(w.Also))
 		for i := range w.Also {
-			also = append(also, ref(&w.Also[i], w.Repo))
+			also = append(also, link(&w.Also[i], w.Repo))
 		}
 		parts = append(parts, "also "+strings.Join(also, ", "))
 	}
@@ -78,14 +86,22 @@ func whereLine(w *work.State, withRepo bool) string {
 	return leader + strings.Join(parts, " · ")
 }
 
-// link is a reference as something to click: the number, then the URL when
-// one is known.
+// link is a reference as something to click: its short form, carrying the
+// URL when one is known. Every reference gets one — the overview names
+// half a dozen numbers at most, and a number nobody can open is a number
+// somebody has to go and search for.
 func link(r *work.Ref, repo string) string {
-	s := ref(r, repo)
-	if r.URL != "" {
-		s += " " + r.URL
+	return transport.Link(r.URL, ref(r, repo))
+}
+
+// code renders a name that would otherwise be a code span, as a link when
+// there is somewhere to point it. It is either/or on purpose: a code span
+// inside a link label is rendered by neither Slack nor the web UI.
+func code(url, name string) string {
+	if url == "" {
+		return "`" + name + "`"
 	}
-	return s
+	return transport.Link(url, name)
 }
 
 // ref is a reference at its shortest: "#51", or "owner/repo#51" when it

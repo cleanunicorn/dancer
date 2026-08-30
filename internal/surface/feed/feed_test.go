@@ -40,7 +40,7 @@ func TestFeedMirrorsTheWork(t *testing.T) {
 		if out[0].Thread != feedThread {
 			t.Errorf("%s: posted to %s, not the feed's own thread", tc.name, out[0].Thread)
 		}
-		for _, want := range []string{tc.lead, "🔀 #51 https://github.com/o/r/pull/51", "🌿 `fix-47`"} {
+		for _, want := range []string{tc.lead, "🔀 <https://github.com/o/r/pull/51|#51>", "🌿 `fix-47`"} {
 			if !strings.Contains(out[0].Text, want) {
 				t.Errorf("%s: missing %q:\n%s", tc.name, want, out[0].Text)
 			}

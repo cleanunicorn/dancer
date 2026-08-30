@@ -9,7 +9,8 @@
 // so Slack edits it in place and the terminal redraws it. The line goes
 // away when the agent asks the human something (the prompt says it all)
 // and when the turn ends, replaced by a closing line with the outcome,
-// duration, tool count and the charge on an API key. On a subscription
+// duration, the tools it reached for, how many files came out changed,
+// the model and the charge on an API key. On a subscription
 // the charge is nobody's bill, so the closing line carries none and the
 // agent's usage report (agent.EventUsage, a moment after the result)
 // becomes a meter instead: one line per plan window, bar first, so a
@@ -20,7 +21,10 @@
 // request to open, the issue behind it, the branch it lives on
 // (overview.go, over internal/work). The lines are dispatch's own, so they
 // are transport markup and not the agent's Markdown, and there are none
-// at all for a thread that never went near a repository.
+// at all for a thread that never went near a repository. Everything on
+// them that has somewhere to point is a link (transport.Link): the pull
+// request, the issue behind it, every reference that rode along, the
+// repository, and a branch the log saw pushed.
 //
 // dispatch's own commands are bare words (status, cancel, close, agent
 // …); anything else is text for the agent, and that is deliberately how
@@ -54,6 +58,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -265,7 +270,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		text, markdown = a.Text, true
 	case agent.EventToolUse:
 		t.phase = phaseWorking
-		t.tools++
+		t.note(a)
 		t.activity = describeTool(a)
 		if !s.Verbose {
 			return s.refresh(ev.Thread, now)
@@ -345,11 +350,50 @@ const (
 type turn struct {
 	started  time.Time
 	phase    phase
-	tools    int       // tool calls so far
-	activity string    // current tool call, "" when thinking
-	visible  bool      // a status line is posted right now
-	shown    time.Time // when it was last posted
-	errored  bool      // an error line went out this turn
+	tools    int            // tool calls so far
+	byTool   map[string]int // calls per tool, for the closing line's breakdown
+	wrote    map[string]int // files the turn edited or wrote, by path
+	activity string         // current tool call, "" when thinking
+	visible  bool           // a status line is posted right now
+	shown    time.Time      // when it was last posted
+	errored  bool           // an error line went out this turn
+}
+
+// note records a tool call for the closing line. A bare count says how
+// busy the turn was and nothing about what it did; the tools it reached
+// for, and whether any file came out changed, is the part a human reads
+// the line to find out.
+func (t *turn) note(a *agent.Event) {
+	t.tools++
+	if t.byTool == nil {
+		t.byTool = map[string]int{}
+	}
+	t.byTool[toolLabel(a.Tool)]++
+	switch a.Tool {
+	case agent.ToolEdit, agent.ToolWrite:
+		// Canonical names: every driver maps its own onto these two, so
+		// this counts an edit whichever CLI made it.
+		if p, ok := a.ToolInput["file_path"].(string); ok && p != "" {
+			if t.wrote == nil {
+				t.wrote = map[string]int{}
+			}
+			t.wrote[p]++
+		}
+	}
+}
+
+// toolLabel is a tool's name at breakdown length: its own, except for an
+// MCP tool, whose "mcp__<server>__<tool>" would be the whole line.
+func toolLabel(tool string) string {
+	if tool == "" {
+		return "tool"
+	}
+	if strings.HasPrefix(tool, agent.ToolMCPPrefix) {
+		if i := strings.LastIndex(tool, "__"); i > 0 {
+			return tool[i+2:]
+		}
+	}
+	return tool
 }
 
 // begin starts tracking a turn on th.
@@ -454,21 +498,64 @@ func statusLine(t *turn, now time.Time) string {
 	return b.String()
 }
 
-// doneLine is the turn's closing line: outcome, how long it took, how
-// many tools it used and what it cost. Without a tracked turn (a restart
-// in between) it is just outcome and cost.
+// doneLine is the turn's closing line: outcome, how long it took, what it
+// reached for, how many files came out changed, the model that did it and
+// what it cost. Without a tracked turn (a restart in between) it is just
+// outcome, model and cost.
+//
+// The tool breakdown and the file count are the two answers a bare "41
+// tool calls" leaves out — whether the turn was reading or writing, and
+// whether anything actually changed — and they cost nothing to keep,
+// because every tool call already passes through note.
 func doneLine(t *turn, a *agent.Event, now time.Time) string {
 	parts := []string{"✅ done"}
 	if t != nil {
 		parts = append(parts, formatDuration(now.Sub(t.started)))
 		if t.tools > 0 {
-			parts = append(parts, plural(t.tools, "tool call"))
+			parts = append(parts, plural(t.tools, "tool call")+breakdown(t.byTool))
 		}
+		if n := len(t.wrote); n > 0 {
+			parts = append(parts, plural(n, "file")+" changed")
+		}
+	}
+	if a.Model != "" {
+		parts = append(parts, a.Model)
 	}
 	if cost := FormatCost(a); cost != "" {
 		parts = append(parts, cost)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// topTools is how many tools the breakdown names. Past three it stops
+// being a glance and the count it qualifies says the rest.
+const topTools = 3
+
+// breakdown renders the busiest tools of a turn as " (22 Read, 9 Edit,
+// 6 Bash)", or "" when there is only one kind of tool and the count
+// already said everything. Ties break on the name, so the same turn
+// always renders the same line.
+func breakdown(byTool map[string]int) string {
+	if len(byTool) < 2 {
+		return ""
+	}
+	names := make([]string, 0, len(byTool))
+	for name := range byTool {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if byTool[names[i]] != byTool[names[j]] {
+			return byTool[names[i]] > byTool[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	if len(names) > topTools {
+		names = names[:topTools]
+	}
+	for i, name := range names {
+		names[i] = fmt.Sprintf("%d %s", byTool[name], name)
+	}
+	return " (" + strings.Join(names, ", ") + ")"
 }
 
 // describeTool names a tool call for the status line: the tool and the

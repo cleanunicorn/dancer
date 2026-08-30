@@ -197,7 +197,10 @@ files first — they carry the contract, the concrete packages under them are im
   to reach the transport in that order. Heartbeat output is not written to the event log.
 - **Agent text is Markdown, ours is transport markup.** `Outbound.Markdown` is set only on what the
   agent wrote; Slack renders it through a Block Kit `markdown` block (falling back to plain text)
-  while dispatch's own lines stay mrkdwn (`*bold*`, backticks).
+  while dispatch's own lines stay mrkdwn (`*bold*`, backticks). Links in dispatch's own lines are
+  `transport.Link` — `<url|label>`, Slack's own form, which the web UI's mrkdwn renderer reads and
+  the terminal turns into an OSC 8 hyperlink (`transport.RenderLinks`), so a pull request reads as
+  `#51` and is still one click away on every transport.
 - **The Claude handshake is protocol-sensitive** (`internal/agent/claude`): spawn with
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
   `can_use_tool` with a `control_response`. After each turn on a subscription login it also sends a
@@ -265,8 +268,9 @@ files first — they carry the contract, the concrete packages under them are im
   *refuses* to believe carries as much: the repository is the one a remote command named rather
   than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
-  never a command's own flag, and a command that came back with a page of pull requests acted on
-  none of them. A scan runs while a human waits for the closing line, so most records are ruled
+  never a command's own flag, a branch is only linkable once the log saw it *pushed* (`git switch
+  -c` creates nothing GitHub has heard of), and a command that came back with a page of pull
+  requests acted on none of them. A scan runs while a human waits for the closing line, so most records are ruled
   out on their bytes and never decoded (`maxScan`, `mayMatter`), and one record too dear to read
   is stepped over rather than ending the walk. Outbound records are never scanned: dispatch's own
   overview lines carry the references they were mined from and would keep re-confirming

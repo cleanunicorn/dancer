@@ -5,6 +5,11 @@
 // are redrawn in place on the last line when Out is a terminal, and
 // printed as ordinary lines when it is a pipe, so logs and the e2e script
 // still see every update.
+//
+// dispatch's own links (transport.Link) become OSC 8 hyperlinks on a
+// terminal — the label stays short and the URL rides along invisibly —
+// and "label url" on a pipe, where an escape sequence would be noise the
+// e2e script has to read past.
 package terminal
 
 import (
@@ -98,9 +103,9 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 	case msg.From != nil && msg.Decision != nil:
 		fmt.Fprintf(c.Out, "→ %s by %s via %s\n", msg.Decision.Choice, msg.From.Display(), msg.From.Via)
 	case msg.From != nil:
-		fmt.Fprintf(c.Out, "💬 %s via %s: %s\n", msg.From.Display(), msg.From.Via, msg.Text)
+		fmt.Fprintf(c.Out, "💬 %s via %s: %s\n", msg.From.Display(), msg.From.Via, c.links(msg.Text))
 	case msg.Text != "":
-		fmt.Fprintln(c.Out, msg.Text)
+		fmt.Fprintln(c.Out, c.links(msg.Text))
 	}
 	for _, f := range msg.Files {
 		fmt.Fprintf(c.Out, "📎 %s (%d bytes)\n", f.Name, len(f.Data))
@@ -126,7 +131,7 @@ func (c *Transport) Send(ctx context.Context, msg transport.Outbound) error {
 func (c *Transport) status(msg transport.Outbound) {
 	if !c.Redraw {
 		if msg.Text != "" {
-			fmt.Fprintln(c.Out, msg.Text)
+			fmt.Fprintln(c.Out, c.links(msg.Text))
 		}
 		return
 	}
@@ -137,8 +142,21 @@ func (c *Transport) status(msg transport.Outbound) {
 	if msg.Text == "" {
 		return
 	}
-	fmt.Fprint(c.Out, msg.Text)
+	fmt.Fprint(c.Out, c.links(msg.Text))
 	c.open = msg.Key
+}
+
+// links renders dispatch's own links for this output: an OSC 8 hyperlink
+// when the line is being drawn on a terminal, and the label followed by
+// the URL when it is going to a pipe. Redraw already answers "is Out a
+// terminal", which is the same question.
+func (c *Transport) links(text string) string {
+	if !c.Redraw {
+		return transport.RenderLinks(text, func(url, label string) string { return label + " " + url })
+	}
+	return transport.RenderLinks(text, func(url, label string) string {
+		return "\033]8;;" + url + "\033\\" + label + "\033]8;;\033\\"
+	})
 }
 
 // closeLine ends a status line drawn in place so ordinary output starts
