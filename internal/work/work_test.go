@@ -462,3 +462,22 @@ func TestScanReadsTheNewestItCanAfford(t *testing.T) {
 		}
 	}
 }
+
+// TestScanSurvivesOneEnormousRecord: a record too big to afford is stepped
+// over, not a wall. Everything older than it used to be discarded — so one
+// `cat` of a large file late in a thread took the pull request with it and
+// the overview came back empty.
+func TestScanSurvivesOneEnormousRecord(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", `gh pr create --title x`, "https://github.com/o/r/pull/42")
+	// One record on its own dearer than the entire budget.
+	l.bash("u2", "cat big.py", strings.Repeat("# a line with a hash\n", maxScan/20))
+
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 42 {
+		t.Fatalf("PR = %+v, want the one named behind the enormous record", st.PR)
+	}
+	if st.PR.Seen != SeenCreated {
+		t.Errorf("PR.Seen = %v, want the creating command still paired with its result", st.PR.Seen)
+	}
+}

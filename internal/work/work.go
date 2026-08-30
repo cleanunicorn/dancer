@@ -489,10 +489,20 @@ func affordable(recs []store.Record) []store.Record {
 	n := 0
 	keep := make([]store.Record, 0, len(recs))
 	for i := len(recs) - 1; i >= 0; i-- {
-		if !mayMatter(recs[i].Payload) {
+		p := recs[i].Payload
+		if !mayMatter(p) {
 			continue
 		}
-		if n += len(recs[i].Payload); n > maxScan {
+		// A record bigger than the whole budget could never have been
+		// afforded wherever in the thread it fell, so skipping it costs
+		// nothing and leaves the budget where it was. Letting it end the
+		// walk instead would throw away every older record behind it —
+		// including the small one that named the pull request, and the
+		// overview would come back empty with nothing to say why.
+		if len(p) > maxScan {
+			continue
+		}
+		if n += len(p); n > maxScan {
 			break
 		}
 		keep = append(keep, recs[i])
