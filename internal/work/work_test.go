@@ -234,3 +234,18 @@ func TestScanMinesAPermissionRequest(t *testing.T) {
 		t.Fatalf("PR = %+v", st.PR)
 	}
 }
+
+// TestScanAlsoIsCapped: a thread that named a dozen numbers still shows an
+// overview, not a list.
+func TestScanAlsoIsCapped(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\thttps://github.com/o/r.git (fetch)")
+	l.says("run coder see #1, #2, #3, #4, #5, #6 and #7")
+	st := Scan(l.recs)
+	if st.Issue == nil {
+		t.Fatal("no issue was picked out of seven")
+	}
+	if len(st.Also) != maxAlso {
+		t.Errorf("Also holds %d, want the cap of %d: %+v", len(st.Also), maxAlso, st.Also)
+	}
+}
