@@ -126,10 +126,14 @@ type State struct {
 	PR     *Ref   // the pull request this thread is about
 	Issue  *Ref   // the issue this thread is about
 	Also   []Ref  // other references, strongest and most recent first
-	// Merged says the log saw the pull request merged: a `gh pr merge`
-	// this thread ran, answered by gh's own confirmation. It is the one
-	// outcome mined here rather than the one asked of GitHub, because it
-	// is the one a thread cannot be wrong about — it did it.
+	// Merged says the log saw *this* pull request merged: a `gh pr merge`
+	// this thread ran, answered by gh's own confirmation naming PR. It is
+	// the one outcome mined here rather than one asked of GitHub, because
+	// it is the one a thread cannot be wrong about — it did it.
+	//
+	// It is tied to PR and not to the thread, because a long-lived thread
+	// merges one pull request and opens the next: "this thread merged
+	// something once" would call #52 merged on the strength of #51.
 	//
 	// Everything else GitHub knows about a pull request changes without
 	// the thread saying so and is deliberately absent (see the package
@@ -194,7 +198,7 @@ const maxAlso = 4
 // overview lines carry the very references they were mined from and would
 // otherwise keep re-confirming themselves.
 func Scan(recs []store.Record) State {
-	sc := scanner{refs: map[string]*Ref{}, tools: map[string]string{}, repos: map[string]int{}}
+	sc := scanner{refs: map[string]*Ref{}, tools: map[string]string{}, repos: map[string]int{}, merged: map[string]bool{}}
 	for _, r := range affordable(recs) { // already filtered and budgeted
 		switch r.Kind {
 		case "inbound":
@@ -234,9 +238,9 @@ type scanner struct {
 	tools  map[string]string // tool id → the command it ran, for its result
 	repos  map[string]int    // "owner/repo" → times named
 	branch string
-	pushed string // the last branch the log saw reach the remote
-	repo   string // last repository a remote named
-	merged bool   // a `gh pr merge` of this thread's came back merged
+	pushed string          // the last branch the log saw reach the remote
+	repo   string          // last repository a remote named
+	merged map[string]bool // key of every pull request seen merged
 }
 
 // event mines one agent event. A tool call is read as an intent (what the
@@ -276,9 +280,12 @@ func (sc *scanner) event(ev event, at time.Time) {
 		// performed it and the answer that came back. Both halves are
 		// needed: `gh pr merge` alone is an attempt, and gh's own
 		// confirmation attached to no command of ours is a page the
-		// agent read.
-		if mergeCmdRe.MatchString(cmd) && mergedRe.MatchString(ev.Text) {
-			sc.merged = true
+		// agent read. What it merged is the pull request gh named in the
+		// answer — one `gh pr merge` merges one, and taking the number
+		// from the command instead would believe an argument over an
+		// outcome.
+		if mergeCmdRe.MatchString(cmd) {
+			sc.mergedIn(ev.Text)
 		}
 		// A tool's output is read from the top: what a command has to say
 		// about a reference, it says first, and a listing that runs to a
@@ -473,6 +480,31 @@ func (sc *scanner) noteRepo(repo string, weight int) {
 // alike and merge into one, and the loser would be rendered with the
 // other's link. A sighting from before any repository was named keeps an
 // empty one and is resolved in state, where the thread's repository is.
+// refKey identifies a reference: its kind and number, qualified by the
+// repository when one is known. Sightings of one number in one repository
+// collapse onto it however they were spelled.
+func refKey(k Kind, repo string, number int) string {
+	key := string(k) + "#" + strconv.Itoa(number)
+	if repo != "" {
+		key = repo + "/" + key
+	}
+	return key
+}
+
+// mergedIn records the pull request gh said it merged, out of the answer
+// to a `gh pr merge` this thread ran. gh names it — "Squashed and merged
+// pull request owner/repo#51" — and an answer that names none merged
+// nothing this scan is willing to believe.
+func (sc *scanner) mergedIn(out string) {
+	for _, m := range mergedRe.FindAllStringSubmatch(clip(out), -1) {
+		repo := repoOf(m[1], m[2])
+		if repo == "" {
+			repo = sc.repo
+		}
+		sc.merged[refKey(KindPR, repo, atoi(m[3]))] = true
+	}
+}
+
 func (sc *scanner) add(r Ref) {
 	if r.Number <= 0 {
 		return
@@ -480,10 +512,7 @@ func (sc *scanner) add(r Ref) {
 	if r.Repo == "" {
 		r.Repo = sc.repo
 	}
-	key := string(r.Kind) + "#" + strconv.Itoa(r.Number)
-	if r.Repo != "" {
-		key = r.Repo + "/" + key
-	}
+	key := refKey(r.Kind, r.Repo, r.Number)
 	cur, ok := sc.refs[key]
 	if !ok {
 		c := r
@@ -515,7 +544,7 @@ func bump(dst *Ref, r Ref) {
 // state resolves the sightings into the answer: the repository, then the
 // one pull request and the one issue the thread is about, then the rest.
 func (sc *scanner) state() State {
-	st := State{Repo: sc.repo, Branch: sc.branch, Pushed: sc.branch != "" && sc.branch == sc.pushed, Merged: sc.merged}
+	st := State{Repo: sc.repo, Branch: sc.branch, Pushed: sc.branch != "" && sc.branch == sc.pushed}
 	// No command named a remote, so fall back to the repository most
 	// linked to. See the package doc for what this is willing to trust.
 	if st.Repo == "" {
@@ -567,6 +596,14 @@ func (sc *scanner) state() State {
 		case len(st.Also) < maxAlso:
 			st.Also = append(st.Also, all[i])
 		}
+	}
+	// Merged is about the pull request the thread is on, not about the
+	// thread: one that merged #51 and then opened #52 has merged nothing
+	// it is working on now. The bare key is tried too, for a confirmation
+	// gh printed without an owner/repo in front of the number.
+	if st.PR != nil {
+		st.Merged = sc.merged[refKey(KindPR, st.PR.Repo, st.PR.Number)] ||
+			sc.merged[refKey(KindPR, "", st.PR.Number)]
 	}
 	return st
 }
@@ -627,11 +664,11 @@ const remoteCmds = `git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s
 // merge.
 var mergeCmdRe = regexp.MustCompile(cmdStart + `gh\s+pr\s+merge\b`)
 
-// mergedRe is gh saying it did it: "✓ Merged pull request #51",
-// "✓ Squashed and merged pull request o/r#51", "Rebased and merged …".
-// gh prints this and only this on a merge it performed; a refusal names
-// the reason instead and never these words.
-var mergedRe = regexp.MustCompile(`(?i)\bmerged pull request\b`)
+// mergedRe is gh saying it did it, and which one: "✓ Merged pull request
+// o/r#51", "✓ Squashed and merged pull request o/r#51", "Rebased and
+// merged …". gh prints this and only this on a merge it performed; a
+// refusal names the reason instead and never these words.
+var mergedRe = regexp.MustCompile(`(?i)\bmerged pull request\s+(?:` + ownerRepo + `)?#(\d+)`)
 
 // wrappers are the commands that run another command, and the variable
 // assignments that prefix one. What follows one is still where a command

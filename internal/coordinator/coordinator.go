@@ -129,20 +129,20 @@ type Coordinator struct {
 	transports map[string]transport.Transport
 
 	mu       sync.Mutex
-	threads  map[transport.ThreadID]executor.TaskID    // live task per thread
-	owner    map[executor.TaskID]string                // task -> surface that started it
-	pending  map[string]chan transport.Decision        // prompt base id -> waiter
-	askText  map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
-	wizards  map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
-	closed   map[transport.ThreadID]bool               // threads a human ended; projection of the store
-	merging  map[transport.ThreadID]bool               // threads with a merge in flight (finish.go)
-	turnEnds map[transport.ThreadID][]chan struct{}    // waiters for the next turn's end (finish.go)
-	sinks    map[executor.TaskID]*taskSink             // live tasks, for follow-up heartbeats
-	marks    map[transport.ThreadID]string             // reaction currently on a thread's root message
-	markMu   map[transport.ThreadID]*sync.Mutex        // serializes a thread's mark swap (see mark)
-	outMu    map[transport.ThreadID]*sync.Mutex        // serializes render+send per thread (keyed messages need order)
-	hosts    map[transport.ThreadID]string             // transport hosting a thread, once known (see threads.go)
-	titles   map[transport.ThreadID]string             // first human line of a thread, once read
+	threads  map[transport.ThreadID]executor.TaskID        // live task per thread
+	owner    map[executor.TaskID]string                    // task -> surface that started it
+	pending  map[string]chan transport.Decision            // prompt base id -> waiter
+	askText  map[transport.ThreadID]string                 // thread -> prompt base id accepting a typed answer
+	wizards  map[transport.ThreadID]context.CancelFunc     // open question flows (agent add/edit/delete, run picker)
+	closed   map[transport.ThreadID]bool                   // threads a human ended; projection of the store
+	merging  map[transport.ThreadID]bool                   // threads with a merge in flight (finish.go)
+	turnEnds map[transport.ThreadID][]chan executor.TaskID // waiters for a turn's end (finish.go)
+	sinks    map[executor.TaskID]*taskSink                 // live tasks, for follow-up heartbeats
+	marks    map[transport.ThreadID]string                 // reaction currently on a thread's root message
+	markMu   map[transport.ThreadID]*sync.Mutex            // serializes a thread's mark swap (see mark)
+	outMu    map[transport.ThreadID]*sync.Mutex            // serializes render+send per thread (keyed messages need order)
+	hosts    map[transport.ThreadID]string                 // transport hosting a thread, once known (see threads.go)
+	titles   map[transport.ThreadID]string                 // first human line of a thread, once read
 }
 
 // New returns a Coordinator.
@@ -160,7 +160,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		wizards:    map[transport.ThreadID]context.CancelFunc{},
 		closed:     map[transport.ThreadID]bool{},
 		merging:    map[transport.ThreadID]bool{},
-		turnEnds:   map[transport.ThreadID][]chan struct{}{},
+		turnEnds:   map[transport.ThreadID][]chan executor.TaskID{},
 		sinks:      map[executor.TaskID]*taskSink{},
 		marks:      map[transport.ThreadID]string{},
 		markMu:     map[transport.ThreadID]*sync.Mutex{},
@@ -533,7 +533,7 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		c.runTask(ctx, s, it)
 	case surface.FollowUp:
 		c.reopenThread(ctx, s, it.Thread)
-		_ = c.followUp(ctx, s, it)
+		_, _ = c.followUp(ctx, s, it)
 	case surface.Status:
 		st, err := c.Store.LatestTaskForThread(ctx, it.Thread)
 		if err != nil {
@@ -563,8 +563,10 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 	case surface.CloseThread:
 		c.closeThread(ctx, s, it)
 	case surface.ReviewPR:
+		c.reopenThread(ctx, s, it.Thread)
 		c.reviewPR(ctx, s, it)
 	case surface.MergePR:
+		c.reopenThread(ctx, s, it.Thread)
 		c.mergePR(ctx, s, it)
 	case surface.ListAgents:
 		defs, err := c.Store.ListDefinitions(ctx)
@@ -909,11 +911,13 @@ func dirName(key string) string {
 // followUp routes a plain message to the thread's task, resuming if needed.
 // While a question is open on the thread, the text answers it instead.
 //
-// started says a turn is now running because of this message, which is
-// what `merge` waits on before it asks GitHub to merge (finish.go). An
-// answered question, a thread with no resumable task and every reported
-// failure are all false: nothing to wait for.
-func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surface.FollowUp) (started bool) {
+// started says a turn is now running because of this message, and task is
+// the task running it — which is what `merge` waits on (finish.go), by
+// the task rather than by the thread, because a thread's previous turn
+// can end between the two. An answered question, a thread with no
+// resumable task and every reported failure are all false: nothing to
+// wait for.
+func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surface.FollowUp) (task executor.TaskID, started bool) {
 	c.mu.Lock()
 	base, asking := c.askText[it.Thread]
 	c.mu.Unlock()
@@ -929,7 +933,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 		}
 		if err := c.Executor.Send(ctx, id, it.Text, attachments(it.Files)); err == nil {
 			c.wake(ctx, id, seq)
-			return true
+			return id, true
 		} else if !errors.Is(err, execlocal.ErrNotRunning) {
 			c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, TaskID: id, Text: "send: " + err.Error()}, s)
 			return
@@ -939,7 +943,10 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	if def := c.defaultAgent(ctx, s, it.Thread); errors.Is(err, store.ErrNotFound) && def != "" {
 		// A fresh thread with plain text: start a task with the channel's default agent.
 		c.runTask(ctx, s, surface.RunTask{Thread: it.Thread, Agent: def, Prompt: it.Text, User: it.User, Files: it.Files})
-		return true
+		if id, ok := c.lookup(it.Thread); ok {
+			return id, true
+		}
+		return "", false
 	}
 	if err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no task on this thread — say `help`"}, s)
@@ -956,7 +963,7 @@ func (c *Coordinator) followUp(ctx context.Context, s surface.Surface, it surfac
 	c.broadcast(ctx, surface.Event{Kind: surface.EventResumed, Thread: it.Thread, TaskID: st.ID, Task: &st})
 	c.drives.Add(1)
 	go c.drive(ctx, st, it.Text, attachments(it.Files))
-	return true
+	return st.ID, true
 }
 
 // drive runs one executor turn-loop for a task and records the outcome.
@@ -1032,7 +1039,7 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	// not come up) emits no result for the sink to wake waiters on, and
 	// `merge` would sit here until its own timeout. Once the process is
 	// gone there is certainly no turn left to wait for.
-	c.turnEnded(st.Thread)
+	c.turnEnded(st.Thread, st.ID)
 }
 
 // heartbeat is the event that says where a task stands right now.
@@ -1329,7 +1336,7 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 	if ev.Type == agent.EventResult || ev.Type == agent.EventError {
 		// `merge` waits here: it asked the agent to make the branch
 		// mergeable and must not call GitHub until that turn is over.
-		s.c.turnEnded(st.Thread)
+		s.c.turnEnded(st.Thread, id)
 	}
 }
 

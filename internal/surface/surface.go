@@ -86,15 +86,17 @@ type ReviewPR struct {
 
 // MergePR gets the thread's pull request merged and closes the thread.
 //
-// Two steps, in this order. The agent on the thread is asked to make the
-// branch mergeable — commit and push whatever is outstanding, and merge
-// the base branch in and resolve if GitHub says it conflicts — and then
-// dispatch merges it itself (internal/gh). The close happens on GitHub's
-// answer rather than on an agent's account of it: a merge that did not
-// happen leaves the thread open with the reason in it.
+// The agent on the thread does all of it: commit and push whatever is
+// outstanding, merge the base branch in and resolve if GitHub says it
+// conflicts, then run `gh pr merge`. dispatch runs none of those — they
+// are commands, which is the agent's job — and instead reads the log back
+// when the turn ends (work.State.Merged). The thread is closed on that
+// sighting and on nothing else, so an agent that reports success the log
+// cannot confirm closes nothing.
 //
-// It routes around nothing else. A red check, a missing approval or a
-// branch protection rule is a refusal to report, not to work past.
+// It routes around nothing. A red check, a missing approval or a branch
+// protection rule is a refusal to report, not to work past, and the
+// prompt says so.
 type MergePR struct {
 	Thread transport.ThreadID
 	Method string // as the human typed it; MergeMethod reads it

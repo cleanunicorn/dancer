@@ -314,13 +314,20 @@ files first — they carry the contract, the concrete packages under them are im
   the log. A merge by someone else, a merge queue landing it later, the checks — still outside.
   The prompt tells the agent what not to work around: a conflict is a mechanical obstacle and
   gets fixed, while a red check, a missing approval or a branch protection rule is somebody's
-  decision and is a thing to report. `merge` runs off the inbox goroutine (one at a time per
-  thread, `merging`) because the turn takes minutes, waits for it through
-  `awaitTurnEnd`/`turnEnded` (`taskSink.OnEvent` on a result, and `drive` on the way out, for a
-  turn that never reached the agent at all), and refuses outright while a task is already
-  running, whose turn-end the wait would otherwise settle on. Both words are dispatch's *only
-  when they are the whole message*: "review the auth code" and "merge main into this branch" are
-  prompts, and stay prompts.
+  decision and is a thing to report. `Merged` is tied to `State.PR`, not to the thread — a thread
+  that merged #51 and then opened #52 has merged nothing it is working on now — and the pull
+  request it names is the one gh named in the answer, not the one the command was handed.
+  `merge` runs off the inbox goroutine (one at a time per thread, `merging`) because the turn
+  takes minutes, and waits for *its own* turn: `awaitTurnEnd`/`turnEnded` announce every ending
+  turn by task id (`taskSink.OnEvent` on a result, and `drive` on the way out, for a turn that
+  never reached the agent at all), and `waitForTurn` lets every other one go past — a thread's
+  previous turn is torn down after its keep-alive expires, which can be long after this one was
+  asked for. It refuses while a *turn* is running, not while a task is merely bound: a finished
+  turn keeps its process warm for `idle_timeout`, and that is exactly the moment someone reads
+  the closing line and says `merge`. It refuses too while a question is open, whose answer the
+  prompt would otherwise become. Both words are dispatch's *only when they are the whole
+  message*: "review the auth code" and "merge main into this branch" are prompts, and stay
+  prompts.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.
