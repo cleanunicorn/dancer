@@ -82,6 +82,8 @@ The same on every transport; on Slack, `@dispatch` is the mention, on the web UI
 | `agent add`                  | define a new agent question by question; saved to config.toml, usable at once |
 | `agent edit <name>`          | change an agent's model, environment, permissions, tools or system prompt; `agent edit` picks from a list |
 | `agent delete <name>`        | remove an agent after a confirmation (refused while it is a default) |
+| `review`                     | review this thread's pull request: dispatch reads it out of the thread's own log, opens a thread beside it in the same channel and starts the same agent there with a fresh session — a reader that has to get its opinion from the diff |
+| `ship`                       | merge this thread's pull request and close the thread. dispatch runs the merge itself (`gh pr merge --squash --delete-branch` with the host's login), so the thread closes on GitHub's exit code, not on an agent's account of it; a merge GitHub refused leaves the thread open with the reason. `ship merge` / `ship rebase` to not squash |
 | `close`                      | stop the task and end the thread: dispatch goes quiet there and marks it ✅ (mention it in the thread to pick it up again) |
 | `/model opus`, `/clear`, `/compact`, … | the agent's *own* commands, passed through to it as typed — every one its CLI, plugins and the project define, including ones added after this table. On Slack write `@dispatch /clear`: Slack keeps a message that *starts* with `/` for itself |
 | `commands`                   | list the commands the agent on this thread accepts (its list, read from the session) |
