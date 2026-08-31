@@ -58,7 +58,7 @@ func TestStatusCarriesTheWork(t *testing.T) {
 	reply := tr.waitFor(t, th, "task `t-1`")
 	for _, want := range []string{
 		"status *idle*",
-		"🔀 #51 https://github.com/cleanunicorn/dispatch/pull/51 · for #47",
+		"🔀 <https://github.com/cleanunicorn/dispatch/pull/51|#51> · for <https://github.com/cleanunicorn/dispatch/issues/47|#47>",
 		"🌿 `fix-47`",
 	} {
 		if !strings.Contains(reply.Text, want) {
@@ -130,7 +130,7 @@ func TestClosingLineCarriesTheWork(t *testing.T) {
 	tr.say(th, "run coder ship the fix")
 	done := tr.waitFor(t, th, "✅ done")
 	for _, want := range []string{
-		"🔀 #51 https://github.com/cleanunicorn/dispatch/pull/51 · for #47",
+		"🔀 <https://github.com/cleanunicorn/dispatch/pull/51|#51> · for <https://github.com/cleanunicorn/dispatch/issues/47|#47>",
 		"🌿 `fix-47`",
 	} {
 		if !strings.Contains(done.Text, want) {
@@ -166,7 +166,7 @@ func TestFailedTurnCarriesTheWork(t *testing.T) {
 	failed := tr.waitFor(t, th, "❌")
 	for _, want := range []string{
 		"the build fell over",
-		"🔀 #60 https://github.com/cleanunicorn/dispatch/pull/60",
+		"🔀 <https://github.com/cleanunicorn/dispatch/pull/60|#60>",
 		"🌿 `half-done`",
 	} {
 		if !strings.Contains(failed.Text, want) {

@@ -9,7 +9,10 @@
 // so Slack edits it in place and the terminal redraws it. The line goes
 // away when the agent asks the human something (the prompt says it all)
 // and when the turn ends, replaced by a closing line with the outcome,
-// duration, tool count and the charge on an API key. On a subscription
+// duration, the tools it reached for, how many files came out changed,
+// the model (from the session's init line, remembered per thread: an
+// ordinary turn's result names none) and the charge on an API key. On a
+// subscription
 // the charge is nobody's bill, so the closing line carries none and the
 // agent's usage report (agent.EventUsage, a moment after the result)
 // becomes a meter instead: one line per plan window, bar first, so a
@@ -20,7 +23,10 @@
 // request to open, the issue behind it, the branch it lives on
 // (overview.go, over internal/work). The lines are dispatch's own, so they
 // are transport markup and not the agent's Markdown, and there are none
-// at all for a thread that never went near a repository.
+// at all for a thread that never went near a repository. Everything on
+// them that has somewhere to point is a link (transport.Link): the pull
+// request, the issue behind it, every reference that rode along, the
+// repository, and a branch the log saw pushed.
 //
 // dispatch's own commands are bare words (status, cancel, close, agent
 // …); anything else is text for the agent, and that is deliberately how
@@ -54,6 +60,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +84,7 @@ type Surface struct {
 
 	mu       sync.Mutex
 	lastInit map[transport.ThreadID]string // last session-details line posted per thread
+	models   map[transport.ThreadID]string // model the session runs, for the closing line
 	turns    map[transport.ThreadID]*turn  // running turn per thread, for the status line
 }
 
@@ -255,6 +263,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		if a.ParentID != "" {
 			return nil // a sub-agent's session, not the one the human talks to
 		}
+		s.noteModel(ev.Thread, a.Model)
 		text = s.initLine(ev)
 	case agent.EventText:
 		t.phase = phaseWorking
@@ -265,7 +274,7 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		text, markdown = a.Text, true
 	case agent.EventToolUse:
 		t.phase = phaseWorking
-		t.tools++
+		t.note(a)
 		t.activity = describeTool(a)
 		if !s.Verbose {
 			return s.refresh(ev.Thread, now)
@@ -283,7 +292,8 @@ func (s *Surface) renderAgent(ev surface.Event, now time.Time) []transport.Outbo
 		t.activity = ""
 		text = fmt.Sprintf("🚫 *%s* refused by the agent's own policy: %s", a.Tool, truncate(a.Text, 300))
 	case agent.EventResult:
-		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview(doneLine(t, a, now), ev.Work), Mention: requester(ev), Files: files(a)}})
+		s.noteModel(ev.Thread, a.Model) // a "/model" switch this turn carried out
+		return s.endWith(ev.Thread, []transport.Outbound{{Thread: ev.Thread, Text: WithOverview(doneLine(t, s.models[ev.Thread], a, now), ev.Work), Mention: requester(ev), Files: files(a)}})
 	case agent.EventUsage:
 		// Lands after the closing line — or, if the human was quick,
 		// inside the next turn, where it slots in above the status line.
@@ -345,11 +355,56 @@ const (
 type turn struct {
 	started  time.Time
 	phase    phase
-	tools    int       // tool calls so far
-	activity string    // current tool call, "" when thinking
-	visible  bool      // a status line is posted right now
-	shown    time.Time // when it was last posted
-	errored  bool      // an error line went out this turn
+	tools    int            // tool calls so far
+	byTool   map[string]int // calls per tool, for the closing line's breakdown
+	wrote    map[string]int // files the turn edited or wrote, by path
+	activity string         // current tool call, "" when thinking
+	visible  bool           // a status line is posted right now
+	shown    time.Time      // when it was last posted
+	errored  bool           // an error line went out this turn
+}
+
+// note records a tool call for the closing line. A bare count says how
+// busy the turn was and nothing about what it did; the tools it reached
+// for, and whether any file came out changed, is the part a human reads
+// the line to find out.
+func (t *turn) note(a *agent.Event) {
+	t.tools++
+	if t.byTool == nil {
+		t.byTool = map[string]int{}
+	}
+	t.byTool[toolLabel(a.Tool)]++
+	switch a.Tool {
+	case agent.ToolEdit, agent.ToolWrite:
+		// Canonical names: every driver maps its own onto these two, so
+		// this counts an edit whichever CLI made it. Only these two — a
+		// tool with no row in the vocabulary keeps its vendor name (see
+		// the agent package doc), and counting one here would be this
+		// layer learning a vendor's names, which is the thing the
+		// vocabulary exists to stop. A notebook edit is the one that
+		// goes uncounted today; giving it a row is a change to that
+		// contract, not to this line.
+		if p, ok := a.ToolInput["file_path"].(string); ok && p != "" {
+			if t.wrote == nil {
+				t.wrote = map[string]int{}
+			}
+			t.wrote[p]++
+		}
+	}
+}
+
+// toolLabel is a tool's name at breakdown length: its own, except for an
+// MCP tool, whose "mcp__<server>__<tool>" would be the whole line.
+func toolLabel(tool string) string {
+	if tool == "" {
+		return "tool"
+	}
+	if strings.HasPrefix(tool, agent.ToolMCPPrefix) {
+		if i := strings.LastIndex(tool, "__"); i > 0 && i+2 < len(tool) {
+			return tool[i+2:]
+		}
+	}
+	return tool
 }
 
 // begin starts tracking a turn on th.
@@ -454,21 +509,86 @@ func statusLine(t *turn, now time.Time) string {
 	return b.String()
 }
 
-// doneLine is the turn's closing line: outcome, how long it took, how
-// many tools it used and what it cost. Without a tracked turn (a restart
-// in between) it is just outcome and cost.
-func doneLine(t *turn, a *agent.Event, now time.Time) string {
+// noteModel remembers the model a thread's session is running, so the
+// closing line can name it.
+//
+// It cannot come off the result. A driver reports on agent.Event.Model
+// there only when the turn carried out a "/model" switch; every ordinary
+// turn's result leaves it empty, and reading it alone would have meant a
+// closing line that named a model on no turn but that one. The name the
+// CLI resolved is on the init line, which is a *session* event — a
+// follow-up handed to a live process has none of its own — so the answer
+// is kept per thread and outlives the turn. A resume starts a new
+// process and a new init, so it corrects itself.
+func (s *Surface) noteModel(th transport.ThreadID, name string) {
+	if name == "" {
+		return
+	}
+	if s.models == nil {
+		s.models = map[transport.ThreadID]string{}
+	}
+	s.models[th] = name
+}
+
+// doneLine is the turn's closing line: outcome, how long it took, what it
+// reached for, how many files came out changed, the model that did it and
+// what it cost. Without a tracked turn (a restart in between) it is just
+// outcome, model and cost.
+//
+// The tool breakdown and the file count are the two answers a bare "41
+// tool calls" leaves out — whether the turn was reading or writing, and
+// whether anything actually changed — and they cost nothing to keep,
+// because every tool call already passes through note. The model comes
+// from the thread rather than from a, for the reason in noteModel.
+func doneLine(t *turn, model string, a *agent.Event, now time.Time) string {
 	parts := []string{"✅ done"}
 	if t != nil {
 		parts = append(parts, formatDuration(now.Sub(t.started)))
 		if t.tools > 0 {
-			parts = append(parts, plural(t.tools, "tool call"))
+			parts = append(parts, plural(t.tools, "tool call")+breakdown(t.byTool))
 		}
+		if n := len(t.wrote); n > 0 {
+			parts = append(parts, plural(n, "file")+" changed")
+		}
+	}
+	if model != "" {
+		parts = append(parts, model)
 	}
 	if cost := FormatCost(a); cost != "" {
 		parts = append(parts, cost)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// topTools is how many tools the breakdown names. Past three it stops
+// being a glance and the count it qualifies says the rest.
+const topTools = 3
+
+// breakdown renders the busiest tools of a turn as " (22 Read, 9 Edit,
+// 6 Bash)", or "" when there is only one kind of tool and the count
+// already said everything. Ties break on the name, so the same turn
+// always renders the same line.
+func breakdown(byTool map[string]int) string {
+	if len(byTool) < 2 {
+		return ""
+	}
+	names := make([]string, 0, len(byTool))
+	for name := range byTool {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if byTool[names[i]] != byTool[names[j]] {
+			return byTool[names[i]] > byTool[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	if len(names) > topTools {
+		names = names[:topTools]
+	}
+	for i, name := range names {
+		names[i] = fmt.Sprintf("%d %s", byTool[name], name)
+	}
+	return " (" + strings.Join(names, ", ") + ")"
 }
 
 // describeTool names a tool call for the status line: the tool and the

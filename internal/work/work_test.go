@@ -333,22 +333,73 @@ func TestScanRemoteFromABareURLIsNotBelieved(t *testing.T) {
 // --show-current` is how an agent asks which branch it is on, and it used
 // to answer "--show-current" — and overwrite the real branch with it.
 func TestScanBranchIsNeverAFlag(t *testing.T) {
-	for _, tc := range []struct{ cmd, want string }{
-		{"git switch -c status-overview", "status-overview"},
-		{"git checkout -b fix-47", "fix-47"},
-		{"git branch spike", "spike"},
-		{"git push -u origin status-overview", "status-overview"},
-		{"git push origin HEAD:release", "release"},
-		{"git branch --show-current", ""},
-		{"git branch -a", ""},
-		{"git branch --list", ""},
-		{"git branch -vv", ""},
-		{"git branch -d old-thing", ""},
-		{"git push origin --delete stale", ""},
+	for _, tc := range []struct {
+		cmd, want string
+		pushed    bool
+	}{
+		{cmd: "git switch -c status-overview", want: "status-overview"},
+		{cmd: "git checkout -b fix-47", want: "fix-47"},
+		{cmd: "git branch spike", want: "spike"},
+		{cmd: "git push -u origin status-overview", want: "status-overview", pushed: true},
+		{cmd: "git push origin HEAD:release", want: "release", pushed: true},
+		{cmd: "gh pr create --head fix-47 --fill", want: "fix-47", pushed: true},
+		{cmd: "gh pr create --fill --head fix-47", want: "fix-47", pushed: true},
+		// A listing names the branch it asked about and proves nothing
+		// about where that branch lives.
+		{cmd: "gh pr list --head fix-47", want: "fix-47"},
+		// The `--head` belongs to the listing, not to the create before
+		// it, so it is not evidence either.
+		{cmd: "gh pr create --fill && gh pr list --head other", want: "other"},
+		// One command line, both halves read: the branch is the one it
+		// created, and the push in the second half still counts.
+		{cmd: "git switch -c fix-47 && git push -u origin fix-47", want: "fix-47", pushed: true},
+		// A chain that pushes something else says nothing about the
+		// branch it just created.
+		{cmd: "git switch -c fix-47 && git push -u origin other", want: "fix-47"},
+		{cmd: "git branch --show-current"},
+		{cmd: "git branch -a"},
+		{cmd: "git branch --list"},
+		{cmd: "git branch -vv"},
+		{cmd: "git branch -d old-thing"},
+		{cmd: "git push origin --delete stale"},
 	} {
-		if got := branchOf(tc.cmd); got != tc.want {
-			t.Errorf("branchOf(%q) = %q, want %q", tc.cmd, got, tc.want)
+		got, pushed := branchOf(tc.cmd)
+		if got != tc.want || pushed != tc.pushed {
+			t.Errorf("branchOf(%q) = %q, %v, want %q, %v", tc.cmd, got, pushed, tc.want, tc.pushed)
 		}
+	}
+}
+
+// TestScanBranchIsOnlyLinkedOncePushed: a `git switch -c` creates a
+// branch on this machine and nowhere else, and a link to a branch GitHub
+// has never heard of is worse than no link. Only a push — or git's own
+// "create a pull request" advice, or a `--head` that needs one — says it
+// is there to be opened.
+func TestScanBranchIsOnlyLinkedOncePushed(t *testing.T) {
+	local := &log{at: time.Unix(0, 0)}
+	local.bash("u1", "git clone https://github.com/o/r", "Cloning...")
+	local.bash("u2", "git switch -c fix-47", "Switched to a new branch 'fix-47'")
+	if st := Scan(local.recs); st.Pushed || st.BranchURL() != "" {
+		t.Errorf("a local branch is linked: pushed=%v url=%q", st.Pushed, st.BranchURL())
+	}
+
+	pushed := &log{at: time.Unix(0, 0)}
+	pushed.bash("u1", "git clone https://github.com/o/r", "Cloning...")
+	pushed.bash("u2", "git switch -c fix-47", "Switched to a new branch 'fix-47'")
+	pushed.bash("u3", "git push -u origin fix-47", "Branch 'fix-47' set up to track 'origin/fix-47'.")
+	st := Scan(pushed.recs)
+	if !st.Pushed || st.BranchURL() != "https://github.com/o/r/tree/fix-47" {
+		t.Errorf("a pushed branch is not linked: pushed=%v url=%q", st.Pushed, st.BranchURL())
+	}
+
+	// The push was of an earlier branch; the one the thread ended on was
+	// only ever created here, so it inherits nothing.
+	moved := &log{at: time.Unix(0, 0)}
+	moved.bash("u1", "git clone https://github.com/o/r", "Cloning...")
+	moved.bash("u2", "git push -u origin first", "done")
+	moved.bash("u3", "git switch -c second", "Switched to a new branch 'second'")
+	if st := Scan(moved.recs); st.Branch != "second" || st.Pushed {
+		t.Errorf("Branch = %q pushed = %v, want second, false", st.Branch, st.Pushed)
 	}
 }
 

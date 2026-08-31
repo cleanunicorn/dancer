@@ -197,7 +197,10 @@ files first — they carry the contract, the concrete packages under them are im
   to reach the transport in that order. Heartbeat output is not written to the event log.
 - **Agent text is Markdown, ours is transport markup.** `Outbound.Markdown` is set only on what the
   agent wrote; Slack renders it through a Block Kit `markdown` block (falling back to plain text)
-  while dispatch's own lines stay mrkdwn (`*bold*`, backticks).
+  while dispatch's own lines stay mrkdwn (`*bold*`, backticks). Links in dispatch's own lines are
+  `transport.Link` — `<url|label>`, Slack's own form, which the web UI's mrkdwn renderer reads and
+  the terminal turns into an OSC 8 hyperlink (`transport.RenderLinks`), so a pull request reads as
+  `#51` and is still one click away on every transport.
 - **The Claude handshake is protocol-sensitive** (`internal/agent/claude`): spawn with
   `--permission-prompt-tool stdio`, send a `control_request`/`initialize` *first*, then answer each
   `can_use_tool` with a `control_response`. After each turn on a subscription login it also sends a
@@ -247,7 +250,10 @@ files first — they carry the contract, the concrete packages under them are im
   starts a new one, so a `/model` choice would be undone by the first idle timeout. That
   one is carried: the claude driver reads the name out of a `/model <name>` on its way to
   the CLI (`modelArg` — it does not run the command, the CLI does) and reports it on the
-  turn's `EventResult.Model`; the coordinator keeps it as `store.TaskState.ModelPin` and
+  turn's `EventResult.Model` — a *switch report*, and nothing else: an ordinary turn's
+  result carries no model, so anything that wants to name the model a turn ran (the chat
+  surface's closing line) reads the init and remembers it per thread. The coordinator keeps
+  the switch as `store.TaskState.ModelPin` and
   asks for it again on every resume. The CLI announces the switch nowhere else a machine
   can read it — an English "Set model to Sonnet 5 for this session only" is the whole of
   it, and the resolved name only appears on the *next* turn's init, which a thread left
@@ -265,17 +271,20 @@ files first — they carry the contract, the concrete packages under them are im
   *refuses* to believe carries as much: the repository is the one a remote command named rather
   than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
-  never a command's own flag, and a command that came back with a page of pull requests acted on
-  none of them. Above all a thread is not working on what it merely *read*: only the output of a
-  command that asked GitHub or a remote is evidence at all, so a file the agent opened, a
-  `git log`, a grep over a repo full of PR numbers and a result whose command was never seen say
-  nothing — and commands are recognised where a command *begins*, past any indentation, separator
-  and wrapper, so `timeout 60 gh pr create` created a pull request while `grep -rn "gh pr create" .`
-  is a grep. A here-document's body is a file being written, not commands being run (a fixture full
-  of `git switch -c x` named no branch), though what a command hands GitHub under a body flag is
-  still read for its links and its "Closes #47". The agent's own prose is read for a link and for "Closes #47" but
-  never for a bare "#12", which in a report is a quotation — often of the overview line dispatch
-  wrote under the last turn. A scan runs while a human waits for the closing line, so most records are ruled
+  never a command's own flag, a branch is only linkable once the log saw it *pushed* (`git switch
+  -c` creates nothing GitHub has heard of, and `gh pr list --head x` is a question rather than
+  evidence), and a command that came back with a page of pull requests acted on none of them.
+  Above all a thread is not working on what it merely *read*: only the output of a command that
+  asked GitHub or a remote is evidence at all, so a file the agent opened, a `git log`, a grep
+  over a repo full of PR numbers and a result whose command was never seen say nothing — and
+  commands are recognised where a command *begins*, past any indentation, separator and wrapper,
+  so `timeout 60 gh pr create` created a pull request while `grep -rn "gh pr create" .` is a grep.
+  A here-document's body is a file being written, not commands being run (a fixture full of
+  `git switch -c x` named no branch), though what a command hands GitHub under a body flag is
+  still read for its links and its "Closes #47". The agent's own prose is read for a link and for
+  "Closes #47" but never for a bare "#12", which in a report is a quotation — often of the
+  overview line dispatch wrote under the last turn.
+  A scan runs while a human waits for the closing line, so most records are ruled
   out on their bytes and never decoded (`maxScan`, `mayMatter`), and one record too dear to read
   is stepped over rather than ending the walk. Outbound records are never scanned: dispatch's own
   overview lines carry the references they were mined from and would keep re-confirming

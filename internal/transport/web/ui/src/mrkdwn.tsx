@@ -1,13 +1,18 @@
 // Renders dispatch's own lines: Slack-style mrkdwn (*bold*, _italic_,
-// `code`, ```fences```), links, and a leading @mention. Agent text is
-// Markdown and goes through react-markdown instead (see Message.tsx).
+// `code`, ```fences```), links — bare, and labelled as <url|label>, which
+// is how dispatch writes a pull request or a branch as something short and
+// clickable — and a leading @mention. Agent text is Markdown and goes
+// through react-markdown instead (see Message.tsx).
 import type { ReactNode } from "react";
 
 const URL_RE = /(https?:\/\/[^\s<)]+)/g;
 
-// tokens: `code`, *bold*, _italic_, urls. A mark only counts when it pairs,
-// so a path or a snake_case name keeps its underscores.
-const TOKEN = /(`[^`\n]+`)|((?:^|(?<=[\s(]))\*[^*\n]+\*(?=[\s).,:;!?]|$))|((?:^|(?<=[\s(]))_[^_\n]+_(?=[\s).,:;!?]|$))|(https?:\/\/[^\s<)]+)/g;
+// tokens: `code`, *bold*, _italic_, <url|label>, urls. A mark only counts
+// when it pairs, so a path or a snake_case name keeps its underscores. The
+// labelled link comes before the bare one, or the bare URL would eat the
+// "|label>" half of it.
+const TOKEN =
+  /(`[^`\n]+`)|((?:^|(?<=[\s(]))\*[^*\n]+\*(?=[\s).,:;!?]|$))|((?:^|(?<=[\s(]))_[^_\n]+_(?=[\s).,:;!?]|$))|<(https?:\/\/[^|>\s]+)\|([^>\n]+)>|(https?:\/\/[^\s<)]+)/g;
 
 function inline(text: string, key: number): ReactNode[] {
   const out: ReactNode[] = [];
@@ -24,7 +29,13 @@ function inline(text: string, key: number): ReactNode[] {
     else if (m[4])
       out.push(
         <a key={k} href={m[4]} target="_blank" rel="noopener" className="text-link underline">
-          {m[4]}
+          {m[5]}
+        </a>,
+      );
+    else if (m[6])
+      out.push(
+        <a key={k} href={m[6]} target="_blank" rel="noopener" className="text-link underline">
+          {m[6]}
         </a>,
       );
     last = re.lastIndex;
@@ -68,13 +79,17 @@ export function linkify(text: string): ReactNode[] {
 }
 
 // plain renders one line of mrkdwn as text: paired marks lose their
-// delimiters, everything else — an underscore inside a name, a lone
-// asterisk — is left alone. For places that print a summary on a strip.
+// delimiters, a labelled link keeps only its label, everything else — an
+// underscore inside a name, a lone asterisk — is left alone. For places
+// that print a summary on a strip.
 export function plain(text: string): string {
   const re = new RegExp(TOKEN.source, "g");
   return text
     .replace(/```+/g, "")
-    .replace(re, (m) => (/^https?:/.test(m) ? m : m.slice(1, -1)))
+    .replace(re, (m, _c, _b, _i, url, label) => {
+      if (url) return label;
+      return /^https?:/.test(m) ? m : m.slice(1, -1);
+    })
     .replace(/\s+/g, " ")
     .trim();
 }
