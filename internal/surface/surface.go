@@ -73,6 +73,26 @@ type CloseThread struct{ Thread transport.ThreadID }
 // Status asks for the state of the task on Thread.
 type Status struct{ Thread transport.ThreadID }
 
+// ReviewPR asks for a review of what the thread on Thread is working on.
+// The coordinator reads the pull request out of the thread's own log
+// (internal/work), opens a new thread beside it in the same channel and
+// runs the same agent there, told to review that pull request — which is
+// what a human does by hand at the end of a piece of work, in one word.
+type ReviewPR struct {
+	Thread transport.ThreadID
+	User   string // transport user id of who asked; the review task's requester
+}
+
+// Ship merges the pull request the thread on Thread is working on and
+// closes the thread. The merge is dispatch's own (internal/gh), so the
+// close happens on GitHub's answer rather than on an agent's account of
+// it: a merge that did not happen leaves the thread open.
+type Ship struct {
+	Thread transport.ThreadID
+	Method string // "", "squash", "merge" or "rebase"; "" is squash
+	User   string
+}
+
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
@@ -119,6 +139,8 @@ func (FollowUp) isIntent()     {}
 func (Cancel) isIntent()       {}
 func (CloseThread) isIntent()  {}
 func (Status) isIntent()       {}
+func (ReviewPR) isIntent()     {}
+func (Ship) isIntent()         {}
 func (ListAgents) isIntent()   {}
 func (ListCommands) isIntent() {}
 func (AddAgent) isIntent()     {}

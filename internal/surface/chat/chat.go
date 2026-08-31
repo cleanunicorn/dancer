@@ -67,6 +67,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
+	"github.com/cleanunicorn/dispatch/internal/gh"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/surface"
 	"github.com/cleanunicorn/dispatch/internal/transport"
@@ -106,6 +107,8 @@ const help = "Commands:\n" +
 	"• `status` — task on this thread\n" +
 	"• `cancel` — stop the task on this thread\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
+	"• `review` — review this thread's pull request in a new thread beside it, with the same agent\n" +
+	"• `ship` — merge this thread's pull request and close the thread (`ship merge`/`rebase` to not squash)\n" +
 	"• `/model opus`, `/clear`, `/compact`, … — the agent's own commands, passed to it as they are (`commands` lists them)\n" +
 	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dispatch /clear`\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
@@ -147,6 +150,18 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		return []surface.Intent{surface.Cancel{Thread: in.Thread}}, true
 	case "close":
 		return []surface.Intent{surface.CloseThread{Thread: in.Thread}}, true
+	case "review":
+		// Only the bare word. "review the auth code" is a perfectly good
+		// prompt, and a thread's own word must never eat one.
+		if rest == "" {
+			return []surface.Intent{surface.ReviewPR{Thread: in.Thread, User: in.UserID}}, true
+		}
+	case "ship":
+		// `ship`, `ship it`, or the merge method; anything else is text
+		// for the agent (gh.ParseMethod says which is which).
+		if _, ok := gh.ParseMethod(rest); ok {
+			return []surface.Intent{surface.Ship{Thread: in.Thread, Method: rest, User: in.UserID}}, true
+		}
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
 	case "commands", "cmds":

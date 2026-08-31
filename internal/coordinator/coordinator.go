@@ -128,19 +128,20 @@ type Coordinator struct {
 
 	transports map[string]transport.Transport
 
-	mu      sync.Mutex
-	threads map[transport.ThreadID]executor.TaskID    // live task per thread
-	owner   map[executor.TaskID]string                // task -> surface that started it
-	pending map[string]chan transport.Decision        // prompt base id -> waiter
-	askText map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
-	wizards map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
-	closed  map[transport.ThreadID]bool               // threads a human ended; projection of the store
-	sinks   map[executor.TaskID]*taskSink             // live tasks, for follow-up heartbeats
-	marks   map[transport.ThreadID]string             // reaction currently on a thread's root message
-	markMu  map[transport.ThreadID]*sync.Mutex        // serializes a thread's mark swap (see mark)
-	outMu   map[transport.ThreadID]*sync.Mutex        // serializes render+send per thread (keyed messages need order)
-	hosts   map[transport.ThreadID]string             // transport hosting a thread, once known (see threads.go)
-	titles  map[transport.ThreadID]string             // first human line of a thread, once read
+	mu       sync.Mutex
+	threads  map[transport.ThreadID]executor.TaskID    // live task per thread
+	owner    map[executor.TaskID]string                // task -> surface that started it
+	pending  map[string]chan transport.Decision        // prompt base id -> waiter
+	askText  map[transport.ThreadID]string             // thread -> prompt base id accepting a typed answer
+	wizards  map[transport.ThreadID]context.CancelFunc // open question flows (agent add/edit/delete, run picker)
+	closed   map[transport.ThreadID]bool               // threads a human ended; projection of the store
+	shipping map[transport.ThreadID]bool               // threads with a merge in flight (finish.go)
+	sinks    map[executor.TaskID]*taskSink             // live tasks, for follow-up heartbeats
+	marks    map[transport.ThreadID]string             // reaction currently on a thread's root message
+	markMu   map[transport.ThreadID]*sync.Mutex        // serializes a thread's mark swap (see mark)
+	outMu    map[transport.ThreadID]*sync.Mutex        // serializes render+send per thread (keyed messages need order)
+	hosts    map[transport.ThreadID]string             // transport hosting a thread, once known (see threads.go)
+	titles   map[transport.ThreadID]string             // first human line of a thread, once read
 }
 
 // New returns a Coordinator.
@@ -157,6 +158,7 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		askText:    map[transport.ThreadID]string{},
 		wizards:    map[transport.ThreadID]context.CancelFunc{},
 		closed:     map[transport.ThreadID]bool{},
+		shipping:   map[transport.ThreadID]bool{},
 		sinks:      map[executor.TaskID]*taskSink{},
 		marks:      map[transport.ThreadID]string{},
 		markMu:     map[transport.ThreadID]*sync.Mutex{},
@@ -558,6 +560,10 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		}
 	case surface.CloseThread:
 		c.closeThread(ctx, s, it)
+	case surface.ReviewPR:
+		c.reviewPR(ctx, s, it)
+	case surface.Ship:
+		c.ship(ctx, s, it)
 	case surface.ListAgents:
 		defs, err := c.Store.ListDefinitions(ctx)
 		if err != nil || len(defs) == 0 {
