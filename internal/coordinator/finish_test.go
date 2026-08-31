@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,7 +21,7 @@ import (
 // finishFixture is a thread that has done a piece of work: it opened
 // pull request #51 on a branch, and its task is over — which is the state
 // a human types `review` or `merge` in.
-func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.Store, transport.ThreadID, context.CancelFunc) {
+func finishFixture(t *testing.T, tr transport.Transport, ag fakeAgent) (*Coordinator, store.Store, transport.ThreadID, context.CancelFunc) {
 	t.Helper()
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -47,7 +46,7 @@ func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.St
 	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "u2",
 		Text: "https://github.com/cleanunicorn/dispatch/pull/51"})
 
-	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": ag}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
 	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
 	c.WorkdirRoot = t.TempDir()
 	c.DefaultDefinition = "coder"
@@ -62,7 +61,7 @@ func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.St
 // human sends by hand at the end of every piece of work.
 func TestReviewOpensAThreadBesideIt(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, st, th, cancel := finishFixture(t, tr)
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
 	defer cancel()
 	<-tr.ready
 
@@ -135,40 +134,36 @@ func TestReviewWithoutAPullRequest(t *testing.T) {
 	}
 }
 
-// TestMergePreparesThenMergesThenCloses: the agent commits and pushes
-// first, dispatch merges second, and the thread is closed on gh's exit
-// code and nothing else.
-func TestMergePreparesThenMergesThenCloses(t *testing.T) {
-	fakeGH(t, 0, "Merged pull request cleanunicorn/dispatch#51")
+// TestMergeAsksTheAgentAndClosesOnTheLog: dispatch runs none of it. The
+// agent commits, pushes, resolves and runs `gh pr merge` itself; dispatch
+// reads the log back and closes the thread on gh's own confirmation.
+func TestMergeAsksTheAgentAndClosesOnTheLog(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, st, th, cancel := finishFixture(t, tr)
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
 	defer cancel()
 	<-tr.ready
 
 	tr.say(th, "merge")
-	tr.waitFor(t, th, "committing and pushing what is outstanding first")
+	tr.waitFor(t, th, "🚢 asking the agent to merge")
 
-	// The agent is asked to tidy up and to resolve a conflict, and told
-	// twice not to merge: the exit code dispatch closes on is its own.
+	// Every step is the agent's, and the prompt says what not to do:
+	// getting past a check is somebody's decision, not an obstacle.
 	// (fakeAgent's resume echoes the prompt it was given.)
-	prep := tr.waitFor(t, th, "echo:")
+	prompt := tr.waitFor(t, th, "echo:")
 	for _, want := range []string{
-		"do not merge it yourself",
 		"commit it and push",
 		"mergeStateStatus",
 		"resolve the conflicts and push",
-		"Do not run `gh pr merge`",
+		"gh pr merge https://github.com/cleanunicorn/dispatch/pull/51 --squash --delete-branch",
+		"Do not try to get past a failing check",
 	} {
-		if !strings.Contains(prep.Text, want) {
-			t.Errorf("prepare prompt is missing %q:\n%s", want, prep.Text)
+		if !strings.Contains(prompt.Text, want) {
+			t.Errorf("merge prompt is missing %q:\n%s", want, prompt.Text)
 		}
 	}
 
-	tr.waitFor(t, th, "merging <https://github.com/cleanunicorn/dispatch/pull/51|#51> (squash)")
-	tr.waitFor(t, th, "✅ merged")
 	tr.waitFor(t, th, "thread closed")
 	waitReactions(t, &tr.fakeTransport, th, closedReaction)
-
 	closed, err := st.ClosedThreads(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -178,29 +173,56 @@ func TestMergePreparesThenMergesThenCloses(t *testing.T) {
 	}
 }
 
-// TestMergeLeavesTheThreadOpenWhenGitHubRefuses is the reason dispatch
-// runs the merge itself: an agent asked to merge would report the refusal
-// in prose, and a thread closed on prose is a thread nobody comes back to.
-// A red check is not something to work past — it is reported as gh gave it.
-func TestMergeLeavesTheThreadOpenWhenGitHubRefuses(t *testing.T) {
-	fakeGH(t, 1, "Pull request #51 is not mergeable: 1 required check is still pending")
+// TestMergeAsksForTheMethodItWasGiven: the word after `merge` is gh's own
+// flag and travels to the agent as one.
+func TestMergeAsksForTheMethodItWasGiven(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, st, th, cancel := finishFixture(t, tr)
+	_, _, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "merge rebase")
+	tr.waitFor(t, th, "(rebase)")
+	if prompt := tr.waitFor(t, th, "echo:"); !strings.Contains(prompt.Text, "--rebase --delete-branch") {
+		t.Errorf("merge prompt does not carry the method:\n%s", prompt.Text)
+	}
+}
+
+// TestMergeLeavesTheThreadOpenWhenTheLogDoesNotSayMerged is the whole
+// reason the close is read out of the log rather than taken from the
+// agent's word: the turn ended, the agent reported, GitHub refused, and
+// a thread closed on a refusal is a thread nobody comes back to.
+func TestMergeLeavesTheThreadOpenWhenTheLogDoesNotSayMerged(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{merge: "refused"})
 	defer cancel()
 	<-tr.ready
 
 	tr.say(th, "merge")
-	reply := tr.waitFor(t, th, "merge refused")
-	if !strings.Contains(reply.Text, "still pending") {
-		t.Errorf("reply does not carry gh's reason:\n%s", reply.Text)
-	}
+	tr.waitFor(t, th, "the log does not show")
 	closed, err := st.ClosedThreads(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(closed) != 0 {
-		t.Fatalf("thread was closed on a failed merge: %v", closed)
+		t.Fatalf("thread was closed without a merge in the log: %v", closed)
 	}
+}
+
+// TestMergeOfAnAlreadyMergedPullRequest asks nobody anything: the log
+// already says it happened.
+func TestMergeOfAnAlreadyMergedPullRequest(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "m-0",
+		ToolInput: map[string]any{"command": "gh pr merge 51 --squash"}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "m-0",
+		Text: "✓ Squashed and merged pull request cleanunicorn/dispatch#51"})
+	<-tr.ready
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "is already merged")
 }
 
 func TestMergeWithoutAPullRequest(t *testing.T) {
@@ -221,41 +243,11 @@ func TestMergeWithoutAPullRequest(t *testing.T) {
 	tr.waitFor(t, "C-dev/3.0", "nothing to merge")
 }
 
-// TestMergeWithoutASessionToPrepareWith: a thread whose task is long gone
-// cannot commit anything, and that is not a failure — what is on the
-// branch is what was pushed, which is what the merge is about.
-func TestMergeWithoutASessionToPrepareWith(t *testing.T) {
-	fakeGH(t, 0, "Merged pull request cleanunicorn/dispatch#51")
-	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	th := transport.ThreadID("C-dev/4.0")
-	// The log remembers the pull request; no task state survives.
-	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "u1",
-		ToolInput: map[string]any{"command": "gh pr create"}})
-	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "u1",
-		Text: "https://github.com/cleanunicorn/dispatch/pull/51"})
-	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
-	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
-	c.WorkdirRoot = t.TempDir()
-	go c.Run(ctx)
-	<-tr.ready
-
-	tr.say(th, "merge")
-	tr.waitFor(t, th, "no agent session here to commit with")
-	tr.waitFor(t, th, "✅ merged")
-	tr.waitFor(t, th, "thread closed")
-}
-
-// TestMergeWaitsForARunningTask: the preparing turn would queue behind
+// TestMergeWaitsForARunningTask: the merging turn would queue behind
 // whatever is running, and the wait would settle on the wrong turn's end.
 func TestMergeWaitsForARunningTask(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, _, th, cancel := finishFixture(t, tr)
+	_, _, th, cancel := finishFixture(t, tr, fakeAgent{})
 	defer cancel()
 	<-tr.ready
 
@@ -263,19 +255,4 @@ func TestMergeWaitsForARunningTask(t *testing.T) {
 	tr.waitFor(t, th, "wants to run") // live, waiting on a permission
 	tr.say(th, "merge")
 	tr.waitFor(t, th, "a task is running on this thread")
-}
-
-// fakeGH puts a `gh` on PATH that prints say and exits with code, so a
-// coordinator test can exercise the whole `merge` path without merging
-// anything on GitHub.
-func fakeGH(t *testing.T, code int, say string) {
-	t.Helper()
-	dir := t.TempDir()
-	// echo, not cat: PATH is this directory alone, so the script may
-	// only use the shell's own builtins.
-	script := "#!/bin/sh\necho '" + say + "'\nexit " + map[int]string{0: "0", 1: "1"}[code] + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
 }

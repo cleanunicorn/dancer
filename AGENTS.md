@@ -266,7 +266,8 @@ files first — they carry the contract, the concrete packages under them are im
   wrote "fix #47" in the message that started the task, the branch was born in a `git switch -c`.
   So the overview survives a restart and still works after a per-task container is gone; what
   changes without the thread saying so (the diff stat, the checks, a merge by someone else) is
-  deliberately not here. Every sighting is graded — created here > acted on > mentioned in
+  deliberately not here — the one outcome that is, `State.Merged`, is a merge *this thread
+  performed*, which is the same kind of evidence as everything else in there. Every sighting is graded — created here > acted on > mentioned in
   passing — which is what picks *the* PR out of a thread that named a dozen numbers, and sightings
   of one number in one repository collapse into one reference however they were spelled. What it
   *refuses* to believe carries as much: the repository is the one a remote command named rather
@@ -300,24 +301,26 @@ files first — they carry the contract, the concrete packages under them are im
   with no memory of why each choice was made, which is the only kind of reader worth having, and
   the same definition is the one whose environment can check the repository out. The prompt is
   posted as the new thread's root, so it reads as though a human typed it and the pull request's
-  URL is in the new thread's log from its first record. `merge` is two steps and the order is the
-  design: the agent on the thread is asked to make the branch mergeable — commit and push what is
-  outstanding, and merge the base branch in and resolve if `gh pr view --json mergeStateStatus`
-  says it conflicts — and only then does dispatch merge, itself, with `gh pr merge` on the host
-  (`internal/gh/merge.go`). The first step has to be the agent's: it has the checkout, and a
-  conflict needs someone who knows what the change meant. The second has to *not* be, for one
-  reason: something must know whether the merge happened, and gh has an exit code where an agent
-  has prose. The thread is closed on that exit code and on nothing else. What `merge` will not do
-  is route around a refusal — a conflict is mechanical and gets fixed, while a red check, a
-  missing approval or a branch protection rule is somebody's decision and is reported as gh gave
-  it, thread left open. It runs off the inbox goroutine (one at a time per thread, `merging`)
-  because a prep turn takes minutes, waits for that turn through `awaitTurnEnd`/`turnEnded`
-  (`taskSink.OnEvent` on a result, and `drive` on the way out, for a turn that never reached the
-  agent at all), and refuses outright while a task is already running, whose turn-end the wait
-  would otherwise settle on. The merge itself runs on the host rather than in the thread's
-  environment because a per-task container may be long gone and a merge needs no checkout. Both
-  words are dispatch's *only when they are the whole message*: "review the auth code" and "merge
-  main into this branch" are prompts, and stay prompts.
+  URL is in the new thread's log from its first record. `merge` asks the agent for all of it —
+  commit what is outstanding and push, resolve a conflict with the base branch if
+  `gh pr view --json mergeStateStatus` reports one, then run `gh pr merge` — and dispatch runs
+  none of it. Every step is a command, which is the agent's job; a `gh` of dispatch's own here
+  would be a second, worse GitHub client beside the one already in the container. What dispatch
+  does is what it does everywhere else: it **reads the log back**. `work.State.Merged` is a
+  `gh pr merge` this thread ran answered by gh's own "Merged pull request", and the thread is
+  closed on that sighting and on nothing else — an agent that reports success the log cannot
+  confirm closes nothing. That is the one *outcome* `internal/work` mines, and it belongs there
+  because it is the same kind of evidence as the rest: something the thread did and said so in
+  the log. A merge by someone else, a merge queue landing it later, the checks — still outside.
+  The prompt tells the agent what not to work around: a conflict is a mechanical obstacle and
+  gets fixed, while a red check, a missing approval or a branch protection rule is somebody's
+  decision and is a thing to report. `merge` runs off the inbox goroutine (one at a time per
+  thread, `merging`) because the turn takes minutes, waits for it through
+  `awaitTurnEnd`/`turnEnded` (`taskSink.OnEvent` on a result, and `drive` on the way out, for a
+  turn that never reached the agent at all), and refuses outright while a task is already
+  running, whose turn-end the wait would otherwise settle on. Both words are dispatch's *only
+  when they are the whole message*: "review the auth code" and "merge main into this branch" are
+  prompts, and stay prompts.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

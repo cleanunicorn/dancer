@@ -11,6 +11,7 @@ package surface
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/executor"
@@ -96,8 +97,29 @@ type ReviewPR struct {
 // branch protection rule is a refusal to report, not to work past.
 type MergePR struct {
 	Thread transport.ThreadID
-	Method string // "", "squash", "merge" or "rebase"; "" is squash
+	Method string // as the human typed it; MergeMethod reads it
 	User   string
+}
+
+// MergeMethod reads the word a human typed after `merge` and returns gh's
+// own flag for it. The empty string is the default, and "it" is what
+// people write and means nothing.
+//
+// It lives here rather than in either caller because both need the same
+// answer for different reasons: the chat surface asks whether the rest of
+// the message is a method at all — "merge main into this branch" is a
+// prompt for the agent, not a command — and the coordinator asks which
+// flag to put in front of the agent.
+func MergeMethod(s string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "it", "squash":
+		return "squash", true
+	case "merge":
+		return "merge", true
+	case "rebase":
+		return "rebase", true
+	}
+	return "", false
 }
 
 // ListAgents asks for the agent definitions.

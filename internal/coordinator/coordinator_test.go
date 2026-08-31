@@ -191,7 +191,10 @@ func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string
 }
 
 // fakeAgent: asks permission for Bash, reports the decision, then a result.
-type fakeAgent struct{}
+// fakeAgent's merge field says how it answers the turn `merge` asks for:
+// "" merges the pull request and gets gh's confirmation back, "refused"
+// runs the same command and is turned down by GitHub.
+type fakeAgent struct{ merge string }
 
 func (fakeAgent) Kind() agent.Kind { return "fake" }
 func (fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
@@ -253,6 +256,25 @@ func (fakeAgent) Start(ctx context.Context, env environment.Environment, def age
 }
 func (f fakeAgent) Resume(ctx context.Context, env environment.Environment, def agent.Definition, session, prompt string) (agent.Run, error) {
 	r := newFakeRun()
+	// The turn `merge` asks for: the agent runs the merge itself, and what
+	// gh answered is the only thing dispatch reads (internal/work).
+	if strings.Contains(prompt, "gh pr merge") {
+		answer := "✓ Squashed and merged pull request cleanunicorn/dispatch#51 (fix)"
+		say := "merged it"
+		if f.merge == "refused" {
+			answer = "X Pull request #51 is not mergeable: 1 required check is still pending"
+			say = "GitHub would not merge it: a check is still pending"
+		}
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: session})
+			r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + prompt})
+			r.emit(agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "m-1",
+				ToolInput: map[string]any{"command": "gh pr merge https://github.com/cleanunicorn/dispatch/pull/51 --squash --delete-branch"}})
+			r.emit(agent.Event{Type: agent.EventToolResult, ToolID: "m-1", Text: answer})
+			r.emit(agent.Event{Type: agent.EventResult, Text: say, Session: session})
+		}()
+		return r, nil
+	}
 	go func() {
 		r.emit(agent.Event{Type: agent.EventInit, Session: session})
 		r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + prompt})

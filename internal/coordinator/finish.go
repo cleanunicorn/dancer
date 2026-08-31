@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dispatch/internal/gh"
 	"github.com/cleanunicorn/dispatch/internal/surface"
 	"github.com/cleanunicorn/dispatch/internal/transport"
 	"github.com/cleanunicorn/dispatch/internal/work"
@@ -86,39 +85,35 @@ func reviewPrompt(w work.State) string {
 	return b.String()
 }
 
-// prepTimeout bounds the turn that makes a branch mergeable. Resolving a
-// conflict is real work and a permission prompt in the middle of it waits
-// for a human, so this is generous; past it the merge is abandoned rather
-// than run against a branch nobody vouched for.
-const prepTimeout = 20 * time.Minute
+// mergeTimeout bounds the turn that merges. Committing, resolving a
+// conflict and merging is real work, and a permission prompt in the
+// middle of it waits for a human; past this dispatch stops waiting and
+// says so, leaving the thread exactly as the agent left it.
+const mergeTimeout = 30 * time.Minute
 
-// mergePR gets the thread's pull request merged, then closes the thread.
+// mergePR asks the thread's agent to get its pull request merged, and
+// closes the thread if the log says it did.
 //
-// Two steps, in this order, and the order is the whole design.
+// dispatch runs none of it. The agent commits what is outstanding, pushes,
+// resolves a conflict with the base branch if GitHub reports one, and runs
+// `gh pr merge` itself — it has the checkout, the login and the context to
+// know what the change meant, and every one of those steps is a command,
+// which is the agent's job and not dispatch's. Adding a `gh` of our own
+// here would be dispatch growing a second, worse GitHub client beside the
+// one already in the container.
 //
-// First the agent on the thread is asked to make the branch mergeable:
-// commit and push whatever is still sitting in the working tree, and — if
-// GitHub says the pull request conflicts — merge the base branch in and
-// resolve it. That has to be the agent's job: it is the one with the
-// checkout, and a conflict needs someone who knows what the change meant.
+// What dispatch does instead is what it already does everywhere else: it
+// reads the log back (internal/work). A `gh pr merge` this thread ran,
+// answered by gh's own "Merged pull request", is work.State.Merged — and
+// the thread is closed on that sighting and on nothing else. An agent that
+// reports success without a merge in the log closes nothing; the thread
+// stays open with what the scan did and did not see.
 //
-// Then dispatch merges, itself, with `gh pr merge` (internal/gh). That has
-// to *not* be the agent's job, for one reason: something has to know
-// whether the merge happened. An agent asked to merge answers in prose,
-// and "the required checks are still running" reads much like "merged" to
-// anything downstream — while gh has an exit code. The thread is closed on
-// that exit code and on nothing else.
-//
-// What it will not do is route around a refusal. A conflict is a mechanical
-// obstacle and gets fixed; a red check, a missing approval or a branch
-// protection rule is somebody's decision, and it is reported as gh gave it
-// with the thread left open.
-//
-// It runs off the inbox goroutine — a prep turn can take minutes and
-// dispatch has to keep hearing everything else — and one at a time per
+// It runs off the inbox goroutine, because the turn takes minutes and
+// dispatch has to keep hearing everything else, and one at a time per
 // thread.
 func (c *Coordinator) mergePR(ctx context.Context, s surface.Surface, it surface.MergePR) {
-	method, ok := gh.ParseMethod(it.Method)
+	method, ok := surface.MergeMethod(it.Method)
 	if !ok {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "usage: `merge` · `merge squash` · `merge merge` · `merge rebase`"}, s)
 		return
@@ -128,9 +123,13 @@ func (c *Coordinator) mergePR(ctx context.Context, s surface.Surface, it surface
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: noPullRequest(w, "merge")}, s)
 		return
 	}
+	if w.Merged {
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: prLink(*w) + " is already merged — `close` when you are done here"}, s)
+		return
+	}
 	if _, busy := c.lookup(it.Thread); busy {
-		// The prep turn would queue behind whatever is running and the
-		// wait below would settle on the wrong turn's end.
+		// The merge would queue behind whatever is running and the wait
+		// below would settle on the wrong turn's end.
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is running on this thread — let it finish, or `cancel` it, then `merge`"}, s)
 		return
 	}
@@ -141,63 +140,61 @@ func (c *Coordinator) mergePR(ctx context.Context, s surface.Surface, it surface
 	go c.runMerge(context.WithoutCancel(ctx), s, it, *w, method)
 }
 
-// runMerge is mergePR off the inbox goroutine: prepare, merge, close.
-func (c *Coordinator) runMerge(ctx context.Context, s surface.Surface, it surface.MergePR, w work.State, method gh.Method) {
+// runMerge is mergePR off the inbox goroutine: ask, wait, read the log.
+func (c *Coordinator) runMerge(ctx context.Context, s surface.Surface, it surface.MergePR, w work.State, method string) {
 	defer c.endMerge(it.Thread)
-	th, url := it.Thread, prURL(w)
+	th := it.Thread
 
-	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "🚢 " + prLink(w) + " — committing and pushing what is outstanding first…"}, s)
-	c.prepare(ctx, s, it, w)
-
-	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("merging %s (%s)…", prLink(w), method)}, s)
-	out, err := gh.Merge(ctx, url, method)
-	id, _ := c.lookup(th)
-	c.append(ctx, id, th, "merge", map[string]any{"pr": url, "method": string(method), "ok": err == nil, "output": out})
-	if err != nil {
-		c.Log.Warn("merge failed", "thread", th, "pr", url, "err", err)
-		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: th, Text: "merge refused — the thread stays open\n" + quote(out)}, s)
-		return
-	}
-	c.Log.Info("merged", "thread", th, "pr", url, "method", method)
-	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "✅ merged\n" + quote(out)}, s)
-	c.closeThread(ctx, s, surface.CloseThread{Thread: th})
-}
-
-// prepare runs the turn that makes the branch mergeable and waits for it.
-//
-// A thread whose session is long gone cannot prepare anything, and that is
-// not a failure: what is on the branch is what was pushed, which is what
-// the merge is about anyway. It says so and carries on.
-func (c *Coordinator) prepare(ctx context.Context, s surface.Surface, it surface.MergePR, w work.State) {
-	done := c.awaitTurnEnd(it.Thread)
-	defer c.dropTurnWaiter(it.Thread, done)
-	if !c.followUp(ctx, s, surface.FollowUp{Thread: it.Thread, Text: preparePrompt(w), User: it.User}) {
-		c.Log.Info("merge: nothing to prepare with", "thread", it.Thread)
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "· no agent session here to commit with — merging what is already pushed"}, s)
+	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("🚢 asking the agent to merge %s (%s)…", prLink(w), method)}, s)
+	done := c.awaitTurnEnd(th)
+	defer c.dropTurnWaiter(th, done)
+	if !c.followUp(ctx, s, surface.FollowUp{Thread: th, Text: mergePrompt(w, method), User: it.User}) {
+		// followUp has already said why on the thread.
+		c.Log.Info("merge: no session to ask", "thread", th)
 		return
 	}
 	select {
 	case <-done:
 	case <-ctx.Done():
-	case <-time.After(prepTimeout):
-		c.Log.Warn("merge: the preparing turn never ended", "thread", it.Thread, "after", prepTimeout)
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "· the preparing turn is still going — merging what is pushed so far"}, s)
+		return
+	case <-time.After(mergeTimeout):
+		c.Log.Warn("merge: the turn never ended", "thread", th, "after", mergeTimeout)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "· the merging turn is still going — the thread stays open"}, s)
+		return
 	}
+
+	after := c.overview(ctx, th)
+	merged := after != nil && after.Merged
+	c.append(ctx, "", th, "merge", map[string]any{"pr": prURL(w), "method": method, "merged": merged})
+	if !merged {
+		c.Log.Info("merge: the log does not say it merged", "thread", th, "pr", prURL(w))
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "the log does not show " + prLink(w) + " merged — the thread stays open. `merge` again, or `close` if you merged it elsewhere"}, s)
+		return
+	}
+	c.Log.Info("merged", "thread", th, "pr", prURL(w), "method", method)
+	c.closeThread(ctx, s, surface.CloseThread{Thread: th})
 }
 
-// preparePrompt is what the agent is asked before the merge. It is a
-// tidy-up and a conflict fix, and it says so twice: an agent that merged
-// the pull request itself would take the exit code dispatch decides on
-// away from it.
-func preparePrompt(w work.State) string {
+// mergePrompt is what the agent is asked. Every step in it is a command
+// the agent runs; dispatch only reads what came back.
+//
+// It says twice what not to do, because the difference between a conflict
+// and a refusal is the whole of dispatch's opinion here: a conflict is a
+// mechanical obstacle and gets fixed, while a red check, a missing review
+// or a branch protection rule is somebody's decision and is a thing to
+// report.
+func mergePrompt(w work.State, method string) string {
 	var b strings.Builder
-	b.WriteString("I am about to merge " + prURL(w) + ". Get the branch ready, and do not merge it yourself.\n\n")
+	b.WriteString("Get " + prURL(w) + " merged.\n\n")
 	b.WriteString("1. If anything belonging to this change is uncommitted, commit it and push. ")
 	b.WriteString("Leave scratch files and debris out of the commit, and say what you left out.\n")
 	b.WriteString("2. Ask GitHub whether it can merge (`gh pr view --json mergeStateStatus,mergeable`). ")
 	b.WriteString("If it conflicts with the base branch, merge the base branch in, resolve the conflicts and push.\n")
-	b.WriteString("3. Stop and report. Do not run `gh pr merge`, and do not try to get past a failing check, ")
-	b.WriteString("a missing review or a branch protection rule — those are mine to report, not yours to work around.")
+	b.WriteString("3. Merge it: `gh pr merge " + prURL(w) + " --" + method + " --delete-branch`.\n")
+	b.WriteString("4. Report what happened, and paste what gh said.\n\n")
+	b.WriteString("Do not try to get past a failing check, a missing review or a branch protection rule — ")
+	b.WriteString("those are decisions somebody made, so report the refusal and stop. ")
+	b.WriteString("Do not close, reopen or retarget the pull request, and do not force-push over anyone.")
 	return b.String()
 }
 
@@ -293,18 +290,4 @@ func prLink(w work.State) string {
 		return transport.Link(u, label)
 	}
 	return label
-}
-
-// quote indents gh's own output so it reads as the tool's words and not
-// dispatch's, and keeps a long failure from filling the thread.
-func quote(out string) string {
-	out = strings.TrimSpace(out)
-	if out == "" {
-		return "_(gh said nothing)_"
-	}
-	lines := strings.Split(out, "\n")
-	if len(lines) > 10 {
-		lines = append(lines[:10], "…")
-	}
-	return "```\n" + strings.Join(lines, "\n") + "\n```"
 }

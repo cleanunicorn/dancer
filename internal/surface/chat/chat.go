@@ -67,7 +67,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
-	"github.com/cleanunicorn/dispatch/internal/gh"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/surface"
 	"github.com/cleanunicorn/dispatch/internal/transport"
@@ -158,9 +157,9 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		}
 	case "merge":
 		// `merge`, `merge it`, or the merge method; anything else — "merge
-		// main into this branch" — is text for the agent, and gh.ParseMethod
-		// is what says which is which.
-		if _, ok := gh.ParseMethod(rest); ok {
+		// main into this branch" — is text for the agent, and
+		// surface.MergeMethod is what says which is which.
+		if _, ok := surface.MergeMethod(rest); ok {
 			return []surface.Intent{surface.MergePR{Thread: in.Thread, Method: rest, User: in.UserID}}, true
 		}
 	case "agents", "defs", "definitions":
