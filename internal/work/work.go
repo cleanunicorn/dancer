@@ -26,6 +26,27 @@
 // question rather than evidence; and a command that came back with a
 // page of pull requests acted on none of them.
 //
+// Above all, a thread is not working on what it merely read. Only the
+// output of a command that asked GitHub or a remote is evidence at all:
+// `gh pr view`, `git push`, the URL that came back from `gh pr create`.
+// The bytes of a file the agent opened are not, however many numbers they
+// cite — nor is `git log`, nor a grep over a repository that talks about
+// pull requests, nor a result whose command a scan never saw. Commands
+// are recognised where a command begins — past any indentation, any
+// separator and any wrapper, so `timeout 60 gh pr create` created a pull
+// request while `grep -rn "gh pr create" .` is a grep. And a
+// here-document's body is a file being written rather than commands being
+// run: a fixture full of `git switch -c x` named no branch, though what a
+// command hands GitHub under a body flag — a pull request's body — is
+// still read for what it links and what it says it closes.
+//
+// The agent's own prose is read the same careful way: for a link, and for
+// "Closes #47", but never for a bare "#12". When the agent means a pull
+// request it links it; a number in a report is a quotation — of a file it
+// read, of an example it is proposing, of the overview dispatch itself
+// wrote under the last turn. That last one is the loop outbound records
+// are skipped to avoid, arriving by another door.
+//
 // When no command named a remote at all — a thread working in a checkout
 // that was already there, which is most of them — the repository falls
 // back to the one most often linked to by a pull request or issue URL in
@@ -213,18 +234,34 @@ func (sc *scanner) event(ev event, at time.Time) {
 			return
 		}
 		if ev.ToolID != "" {
-			sc.tools[ev.ToolID] = cmd
+			// Stripped, because this is what the result is graded and
+			// gated by: a file written through a here-document must not
+			// be able to say `gh pr view` and let its own contents back
+			// in as an answer from GitHub.
+			sc.tools[ev.ToolID] = stripHeredocs(cmd)
 		}
 		sc.command(cmd, at)
 	case agent.EventToolResult:
 		cmd := sc.tools[ev.ToolID]
+		// Only what a command that asked GitHub answered is read at all.
+		// Every other output is the world going past: a source file the
+		// agent opened names the numbers its comments cite, `git log`
+		// names the pull request of every commit it prints, and a grep
+		// over a repository that talks about pull requests hands back a
+		// page of them. None of that is what the thread is working on —
+		// and a result nothing is known about (a file read through the
+		// Read tool, or a command whose own record the budget stepped
+		// over) is the same bet made blind.
+		if !asksGitHubRe.MatchString(cmd) {
+			return
+		}
 		// A tool's output is read from the top: what a command has to say
 		// about a reference, it says first, and a listing that runs to a
 		// megabyte says nothing more by its end.
 		sc.text(clip(ev.Text), at, seenFor(cmd))
-		// Only the output of a command that reports a remote is read for
-		// one. Any other output is someone else's repository going past:
-		// `cat go.mod` names three, and believing the last of them would
+		// Of those, only the output of a command that reports a remote is
+		// read for one: `gh pr view` prints whatever repository the pull
+		// request's body links to, and believing the last of them would
 		// point every bare "#47" in the thread at a stranger's issue.
 		if namesRemoteRe.MatchString(cmd) {
 			sc.remotes(ev.Text)
@@ -235,14 +272,30 @@ func (sc *scanner) event(ev event, at time.Time) {
 		// says what it did at the top and links the pull request at the
 		// bottom, and a report long enough to be cut is exactly the one
 		// whose link is furthest from the start.
-		sc.text(clipEnds(ev.Text), at, SeenMentioned)
+		sc.prose(clipEnds(ev.Text), at)
 	}
 }
 
 // command reads a shell command for what it says about the work: the
 // branch it creates or pushes, and the pull request or issue it acts on.
+//
+// What the command *runs* is read apart from what it *carries*. An agent
+// writes a file by handing the shell a here-document, and the body of one
+// is data: a test fixture full of `git switch -c x` is not a branch this
+// thread made, and a README full of "github.com/o/r" is not the
+// repository it is in — believing them renamed a thread's branch to `x`
+// and pointed its numbers at o/r. So everything is read out of the
+// stripped command, and what it carries is read only when it is handed to
+// GitHub under a flag that takes prose — `gh pr create --body-file - <<EOF`
+// — and then as prose. A here-document merely standing next to a `gh`
+// call is a file again: `cat > notes.md <<EOF … EOF; gh pr view 51` wrote
+// notes, and the numbers in them are not this thread's work.
 func (sc *scanner) command(cmd string, at time.Time) {
-	cmd = clip(cmd)
+	// From both ends, because it is read as prose: a pull request body
+	// long enough to be cut is exactly the one whose "Closes #47" is the
+	// last line of it.
+	carries := clipEnds(cmd)
+	cmd = clip(stripHeredocs(cmd))
 	if b, pushed := branchOf(cmd); b != "" {
 		sc.branch = b
 		if pushed {
@@ -253,6 +306,15 @@ func (sc *scanner) command(cmd string, at time.Time) {
 		sc.remotes(cmd) // `git clone https://github.com/o/r`, `git remote add …`
 	}
 	sc.text(cmd, at, seenFor(cmd))
+	// What a command hands GitHub — the body of a pull request, of an
+	// issue, of a comment — is read the way the agent's own prose is,
+	// because that is what it is: for its links and for what it says it
+	// closes, never for a bare number, which in a body is an example or
+	// an aside. "Closes #47" in a body is still the truest sighting a
+	// thread has of the issue behind its work.
+	if carries != cmd && asksGitHubRe.MatchString(cmd) && bodyFlagRe.MatchString(cmd) {
+		sc.prose(carries, at)
+	}
 	// `gh pr view 51`, `gh issue develop 47`: the bare number after the
 	// subcommand is a reference even without a `#`.
 	if m := ghTargetRe.FindStringSubmatch(cmd); m != nil {
@@ -264,11 +326,29 @@ func (sc *scanner) command(cmd string, at time.Time) {
 	}
 }
 
-// text mines free text — a human's message, the agent's prose, a tool's
-// output — for references at no more than strength max. Callers hand it a
-// string already cut to size, because which end of a long one holds the
-// answer depends on what wrote it: clip for a listing, clipEnds for prose.
+// text mines free text — a human's message, a command, a tool's output —
+// for references at no more than strength max. Callers hand it a string
+// already cut to size, because which end of a long one holds the answer
+// depends on what wrote it: clip for a listing, clipEnds for prose.
 func (sc *scanner) text(s string, at time.Time, max Seen) {
+	sc.mine(s, at, max, true)
+}
+
+// prose mines what the agent itself wrote, which is read for a link but
+// never for a bare number. When the agent means a pull request it links
+// it; a "#12" in a report is nearly always a quotation — of a file it
+// read, of an example it is proposing, of the very overview line dispatch
+// wrote under the last turn. That last one is the loop outbound records
+// are skipped to avoid, arriving by another door: a thread whose subject
+// was this overview kept mining its own numbers back out of the agent's
+// summary of them.
+func (sc *scanner) prose(s string, at time.Time) {
+	sc.mine(s, at, SeenMentioned, false)
+}
+
+// mine reads the references out of a string: URLs and "Closes #47"
+// always, a bare "#12" only when the writer is trusted to have meant one.
+func (sc *scanner) mine(s string, at time.Time, max Seen, bare bool) {
 	if !mayRefer(s) {
 		return
 	}
@@ -289,9 +369,14 @@ func (sc *scanner) text(s string, at time.Time, max Seen) {
 		sc.add(Ref{Repo: repo, Kind: k, Number: atoi(m[4]), URL: m[0], Seen: max, At: at})
 	}
 	// "Closes #47" links an issue to the work however casually it was
-	// written, so it counts as worked on even in prose.
+	// written, so it counts as worked on even in prose: it is the one
+	// thing a body says that a machine reads too, and it is how the pull
+	// request a thread just opened names the issue behind it.
 	for _, m := range closesRe.FindAllStringSubmatch(s, -1) {
 		sc.add(Ref{Repo: repoOf(m[1], m[2]), Kind: KindIssue, Number: atoi(m[3]), Seen: SeenWorked, At: at})
+	}
+	if !bare {
+		return
 	}
 	// A bare "#12" says a number but not what it is; GitHub numbers pull
 	// requests and issues from one series, and the log rarely says which.
@@ -505,6 +590,26 @@ const ownerRepo = `([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)`
 // neither, which is why the list is exactly the ones that do.
 const numbered = `view|checkout|edit|diff|merge|ready|comment|close|reopen|develop|review`
 
+// remoteCmds are the commands that talk to a remote, and so may say which
+// repository the thread is working in. Two regexes are built on the list:
+// one asks whether a command named a remote, the other whether its output
+// is worth reading at all.
+const remoteCmds = `git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s+repo`
+
+// wrappers are the commands that run another command, and the variable
+// assignments that prefix one. What follows one is still where a command
+// begins: `timeout 60 gh pr create` created a pull request, and losing it
+// costs the thread the very reference this package exists to find.
+const wrappers = `(?:(?:sudo|nohup|command|time|exec)\s+|env\s+|timeout\s+(?:-\S+\s+)*\S+\s+|\w+=\S*\s+)*`
+
+// cmdStart is where a command begins on a shell line: the start of it, or
+// just past a separator that starts another one, in either case past any
+// indentation and any wrapper. Every command this package recognises is
+// anchored there, so a command that merely *quotes* one — `grep -rn "gh pr
+// create" .`, whose output is a source file, or `rg "git clone"` — is not
+// mistaken for it.
+const cmdStart = `(?:^|[\n;&|(])\s*` + wrappers
+
 var (
 	urlRe    = regexp.MustCompile(`https?://github\.com/` + ownerRepo + `/(pull|issues)/(\d+)`)
 	bareRe   = regexp.MustCompile(`(?:^|[^\w/#-])(?:` + ownerRepo + `)?#(\d{1,5})\b`)
@@ -518,8 +623,12 @@ var (
 	// repository being worked in. Everything else — `cat go.mod`, a README,
 	// the agent's own prose — may mention a repository without dispatch
 	// concluding the thread is working in it.
-	namesRemoteRe = regexp.MustCompile(`\b(?:git\s+(?:remote|clone|ls-remote|config|push|pull|fetch)|gh\s+repo)\b`)
-	pushRe        = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/` + branchName)
+	namesRemoteRe = regexp.MustCompile(cmdStart + `(?:` + remoteCmds + `)\b`)
+	// asksGitHubRe: the commands whose *output* is evidence at all —
+	// the ones that asked GitHub or a remote, and so came back with an
+	// answer about this thread's work rather than with a file's contents.
+	asksGitHubRe = regexp.MustCompile(cmdStart + `(?:` + remoteCmds + `|gh\s)`)
+	pushRe       = regexp.MustCompile(`github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/new/` + branchName)
 	// branchRe: the commands that name a branch dispatch should believe.
 	// Every capture uses branchName, which cannot start with "-" — git
 	// forbids such a branch, so `git branch --show-current` and
@@ -527,21 +636,26 @@ var (
 	// naming their own flag. `git branch` is only believed bare: with a
 	// flag it lists (`-a`) or deletes (`-d old`) far more often than it
 	// creates.
-	branchRe = regexp.MustCompile(`\bgit\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
-	pushToRe = regexp.MustCompile(`\bgit\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
+	branchRe = regexp.MustCompile(cmdStart + `git\s+(?:(?:checkout\s+-b|switch\s+-c)\s+(?:-\S+\s+)*|branch\s+)` + branchName)
+	pushToRe = regexp.MustCompile(cmdStart + `git\s+push\s+(?:-\S+\s+)*origin\s+(?:HEAD:)?` + branchName)
 	headRe   = regexp.MustCompile(`--head[=\s]+` + branchName)
 	// createHeadRe: the one `--head` that says the branch is on the
 	// remote. `gh pr create --head x` cannot work unless it is; a
 	// `gh pr list --head x` is a question, and asking it proves nothing.
 	// The gap between the two halves may not cross into another command.
-	createHeadRe = regexp.MustCompile(`\bgh\s+pr\s+create\b[^&|;]*--head[=\s]+` + branchName)
-	createRe     = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+create\b`)
+	createHeadRe = regexp.MustCompile(cmdStart + `gh\s+pr\s+create\b[^&|;]*--head[=\s]+` + branchName)
+	createRe     = regexp.MustCompile(cmdStart + `gh\s+(?:pr|issue)\s+create\b`)
 	// workRe: subcommands that act on one pull request or issue. `status`
 	// and `list` are absent on purpose — they return everything open, and
 	// grading a listing as work lets an unrelated pull request win.
-	workRe = regexp.MustCompile(`\bgh\s+(?:pr|issue)\s+(?:` + numbered + `)\b`)
+	workRe = regexp.MustCompile(cmdStart + `gh\s+(?:pr|issue)\s+(?:` + numbered + `)\b`)
+	// bodyFlagRe: the flags that hand a command's here-document to GitHub
+	// as prose — a pull request's body, an issue's, a comment's. Without
+	// one, a here-document next to a `gh` call is a file like any other:
+	// `cat > notes.md <<EOF … EOF; gh pr view 51` writes notes.
+	bodyFlagRe = regexp.MustCompile(`--body(?:-file)?\b|(?:^|\s)-[bF](?:\s|=)`)
 	// ghTargetRe: the number a `gh pr`/`gh issue` subcommand acts on.
-	ghTargetRe = regexp.MustCompile(`\bgh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
+	ghTargetRe = regexp.MustCompile(cmdStart + `gh\s+(pr|issue)\s+(?:` + numbered + `)\s+#?(\d{1,5})\b`)
 )
 
 // githubHost is the one hostname any of this is about. Four places test
@@ -678,6 +792,77 @@ func path(k Kind) string {
 }
 
 func trimGit(s string) string { return strings.TrimSuffix(s, ".git") }
+
+// heredocRe matches a here-document operator and captures its delimiter:
+// `<<EOF`, `<<-EOF`, `<<'PY'`, `<< "SQL"`. Quoted, the delimiter is
+// whatever it says; bare, it must be two or more capitals, which is how
+// every here-document anybody writes spells one — and what tells the
+// operator from a `<<` that is not one, a shell shift or a C++ stream
+// gone past in a grep pattern, whose body would be the rest of the
+// command and whose delimiter would never come.
+var heredocRe = regexp.MustCompile(`<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Z_][A-Z0-9_]+))`)
+
+// stripHeredocs removes the bodies of a command's here-documents, leaving
+// what the command runs. An agent writes files through the shell — a test
+// fixture, a PR body, a whole Python script — and everything between the
+// operator and its delimiter is that file, not another command. The
+// operator goes with the body, so each pass strictly shortens the string
+// and the walk ends.
+func stripHeredocs(cmd string) string {
+	for {
+		m := heredocRe.FindStringSubmatchIndex(cmd)
+		if m == nil {
+			return cmd
+		}
+		head, delim, rest := cmd[:m[0]], submatch(cmd, m), cmd[m[1]:]
+		nl := strings.IndexByte(rest, '\n')
+		if nl < 0 {
+			// No line after the operator, so no body was written: drop
+			// the operator alone and keep the rest of the command. A
+			// `<<` that was never one — `echo "a << bb" && gh pr create`
+			// — must not take the real command after it.
+			cmd = head + rest
+			continue
+		}
+		// Joined by a newline, not by nothing: what follows the body is
+		// the next command, and it must still begin a line for cmdStart
+		// to recognise it as one.
+		cmd = head + "\n" + afterHeredoc(rest[nl+1:], delim)
+	}
+}
+
+// submatch is the delimiter heredocRe captured, whichever of its three
+// spellings — single-quoted, double-quoted, bare — matched.
+func submatch(s string, m []int) string {
+	for i := 2; i+1 < len(m); i += 2 {
+		if m[i] >= 0 {
+			return s[m[i]:m[i+1]]
+		}
+	}
+	return ""
+}
+
+// afterHeredoc returns what follows the line that closes a here-document.
+// A body that is never closed — a command cut short, a delimiter the clip
+// took — ends the command, which is what an unterminated one does to a
+// shell too.
+func afterHeredoc(body, delim string) string {
+	for i := 0; i < len(body); {
+		line := body[i:]
+		end := len(body)
+		if j := strings.IndexByte(line, '\n'); j >= 0 {
+			line, end = line[:j], i+j+1
+		}
+		if strings.TrimSpace(line) == delim {
+			return body[end:]
+		}
+		if end == len(body) {
+			break
+		}
+		i = end
+	}
+	return ""
+}
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 

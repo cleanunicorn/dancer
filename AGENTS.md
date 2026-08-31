@@ -273,8 +273,18 @@ files first — they carry the contract, the concrete packages under them are im
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
   never a command's own flag, a branch is only linkable once the log saw it *pushed* (`git switch
   -c` creates nothing GitHub has heard of, and `gh pr list --head x` is a question rather than
-  evidence), and a command that came back with a page of pull
-  requests acted on none of them. A scan runs while a human waits for the closing line, so most records are ruled
+  evidence), and a command that came back with a page of pull requests acted on none of them.
+  Above all a thread is not working on what it merely *read*: only the output of a command that
+  asked GitHub or a remote is evidence at all, so a file the agent opened, a `git log`, a grep
+  over a repo full of PR numbers and a result whose command was never seen say nothing — and
+  commands are recognised where a command *begins*, past any indentation, separator and wrapper,
+  so `timeout 60 gh pr create` created a pull request while `grep -rn "gh pr create" .` is a grep.
+  A here-document's body is a file being written, not commands being run (a fixture full of
+  `git switch -c x` named no branch), though what a command hands GitHub under a body flag is
+  still read for its links and its "Closes #47". The agent's own prose is read for a link and for
+  "Closes #47" but never for a bare "#12", which in a report is a quotation — often of the
+  overview line dispatch wrote under the last turn.
+  A scan runs while a human waits for the closing line, so most records are ruled
   out on their bytes and never decoded (`maxScan`, `mayMatter`), and one record too dear to read
   is stepped over rather than ending the walk. Outbound records are never scanned: dispatch's own
   overview lines carry the references they were mined from and would keep re-confirming
