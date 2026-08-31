@@ -83,11 +83,18 @@ type ReviewPR struct {
 	User   string // transport user id of who asked; the review task's requester
 }
 
-// Ship merges the pull request the thread on Thread is working on and
-// closes the thread. The merge is dispatch's own (internal/gh), so the
-// close happens on GitHub's answer rather than on an agent's account of
-// it: a merge that did not happen leaves the thread open.
-type Ship struct {
+// MergePR gets the thread's pull request merged and closes the thread.
+//
+// Two steps, in this order. The agent on the thread is asked to make the
+// branch mergeable — commit and push whatever is outstanding, and merge
+// the base branch in and resolve if GitHub says it conflicts — and then
+// dispatch merges it itself (internal/gh). The close happens on GitHub's
+// answer rather than on an agent's account of it: a merge that did not
+// happen leaves the thread open with the reason in it.
+//
+// It routes around nothing else. A red check, a missing approval or a
+// branch protection rule is a refusal to report, not to work past.
+type MergePR struct {
 	Thread transport.ThreadID
 	Method string // "", "squash", "merge" or "rebase"; "" is squash
 	User   string
@@ -140,7 +147,7 @@ func (Cancel) isIntent()       {}
 func (CloseThread) isIntent()  {}
 func (Status) isIntent()       {}
 func (ReviewPR) isIntent()     {}
-func (Ship) isIntent()         {}
+func (MergePR) isIntent()      {}
 func (ListAgents) isIntent()   {}
 func (ListCommands) isIntent() {}
 func (AddAgent) isIntent()     {}

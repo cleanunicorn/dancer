@@ -10,7 +10,7 @@ import (
 )
 
 // Method is how a pull request is merged. It is the word a human types
-// after `ship`, and the flag `gh pr merge` is given.
+// after `merge`, and the flag `gh pr merge` is given.
 type Method string
 
 const (
@@ -50,11 +50,13 @@ const mergeTimeout = 2 * time.Minute
 // reason: it has to know whether the merge actually happened. An agent
 // asked to merge answers in prose, and "the required checks are still
 // running" reads much like "merged" to anything downstream — while
-// `gh pr merge` has an exit code. The thread a `ship` closes is closed on
-// that exit code and on nothing else.
+// `gh pr merge` has an exit code. The thread a `merge` closes is closed on
+// that exit code and on nothing else. Getting the branch *ready* is the
+// agent's half of the same word (coordinator/finish.go): it commits, it
+// pushes, it resolves a conflict. This is only the last move.
 //
 // It runs on the host rather than in the thread's environment: a per-task
-// container is usually gone by the time anyone says `ship`, and a merge
+// container may be gone by the time anyone says `merge`, and a merge
 // needs no checkout — only the pull request's URL and a login, which is
 // exactly what the host has. It is the same login Lend borrows the other
 // way, so an agent that opened the pull request and the dispatch that

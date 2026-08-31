@@ -108,7 +108,7 @@ const help = "Commands:\n" +
 	"• `cancel` — stop the task on this thread\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
 	"• `review` — review this thread's pull request in a new thread beside it, with the same agent\n" +
-	"• `ship` — merge this thread's pull request and close the thread (`ship merge`/`rebase` to not squash)\n" +
+	"• `merge` — commit and push what is outstanding, merge this thread's pull request, close the thread (`merge rebase` to not squash)\n" +
 	"• `/model opus`, `/clear`, `/compact`, … — the agent's own commands, passed to it as they are (`commands` lists them)\n" +
 	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dispatch /clear`\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
@@ -156,11 +156,12 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		if rest == "" {
 			return []surface.Intent{surface.ReviewPR{Thread: in.Thread, User: in.UserID}}, true
 		}
-	case "ship":
-		// `ship`, `ship it`, or the merge method; anything else is text
-		// for the agent (gh.ParseMethod says which is which).
+	case "merge":
+		// `merge`, `merge it`, or the merge method; anything else — "merge
+		// main into this branch" — is text for the agent, and gh.ParseMethod
+		// is what says which is which.
 		if _, ok := gh.ParseMethod(rest); ok {
-			return []surface.Intent{surface.Ship{Thread: in.Thread, Method: rest, User: in.UserID}}, true
+			return []surface.Intent{surface.MergePR{Thread: in.Thread, Method: rest, User: in.UserID}}, true
 		}
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true

@@ -150,7 +150,7 @@ files first — they carry the contract, the concrete packages under them are im
 - **`coordinator`** — the only stateful brain: intents → tasks, event fan-out to every surface,
   permission/question decision relay (`pending`/`askText` maps keyed by prompt id), guided wizards
   (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), the end-of-thread words
-  (`finish.go`: `review`, `ship`), restart recovery. It is also
+  (`finish.go`: `review`, `merge`), restart recovery. It is also
   the clock: every `Heartbeat` (10s) while a turn runs it broadcasts `EventHeartbeat`, and on a
   `transport.Reactor` it marks the thread's root message ⏳ (working) / ✋ (waiting for a decision) /
   📬 (answered, waiting for the next message) / ❌ (failed) / ✅ (closed) — one mark, always
@@ -292,7 +292,7 @@ files first — they carry the contract, the concrete packages under them are im
   themselves. The coordinator attaches the answer to `surface.Event.Work`; `chat` and `feed` both
   render it, so the ops channel never falls behind the thread.
 - **The end of a thread is two words, and neither of them asks for a number**
-  (`internal/coordinator/finish.go`). `review` and `ship` read what the thread is working on
+  (`internal/coordinator/finish.go`). `review` and `merge` read what the thread is working on
   out of its own log (`internal/work`, through `overview`), because a thread that opened a pull
   request already said so and pasting the URL back is exactly the friction they remove. `review`
   opens a thread *beside* this one in the same channel (`transport.ThreadOpener`, the same path
@@ -300,15 +300,24 @@ files first — they carry the contract, the concrete packages under them are im
   with no memory of why each choice was made, which is the only kind of reader worth having, and
   the same definition is the one whose environment can check the repository out. The prompt is
   posted as the new thread's root, so it reads as though a human typed it and the pull request's
-  URL is in the new thread's log from its first record. `ship` merges and *then* closes — and the
-  merge is dispatch's own `gh pr merge` on the host (`internal/gh/merge.go`), not a follow-up to
-  the agent, for one reason: it has to know whether the merge happened, and gh has an exit code
-  where an agent has prose. A merge GitHub refused leaves the thread open with gh's own reason in
-  it. The merge runs off the inbox goroutine (one at a time per thread, `shipping`) so a slow
-  merge cannot stop dispatch hearing anything else, and it runs on the host rather than in the
-  thread's environment because a per-task container is long gone by the time anyone says `ship`
-  and a merge needs no checkout. Both are bare words *only when they are the whole message*:
-  "review the auth code" and "ship this behind a flag" are prompts, and stay prompts.
+  URL is in the new thread's log from its first record. `merge` is two steps and the order is the
+  design: the agent on the thread is asked to make the branch mergeable — commit and push what is
+  outstanding, and merge the base branch in and resolve if `gh pr view --json mergeStateStatus`
+  says it conflicts — and only then does dispatch merge, itself, with `gh pr merge` on the host
+  (`internal/gh/merge.go`). The first step has to be the agent's: it has the checkout, and a
+  conflict needs someone who knows what the change meant. The second has to *not* be, for one
+  reason: something must know whether the merge happened, and gh has an exit code where an agent
+  has prose. The thread is closed on that exit code and on nothing else. What `merge` will not do
+  is route around a refusal — a conflict is mechanical and gets fixed, while a red check, a
+  missing approval or a branch protection rule is somebody's decision and is reported as gh gave
+  it, thread left open. It runs off the inbox goroutine (one at a time per thread, `merging`)
+  because a prep turn takes minutes, waits for that turn through `awaitTurnEnd`/`turnEnded`
+  (`taskSink.OnEvent` on a result, and `drive` on the way out, for a turn that never reached the
+  agent at all), and refuses outright while a task is already running, whose turn-end the wait
+  would otherwise settle on. The merge itself runs on the host rather than in the thread's
+  environment because a per-task container may be long gone and a merge needs no checkout. Both
+  words are dispatch's *only when they are the whole message*: "review the auth code" and "merge
+  main into this branch" are prompts, and stay prompts.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.
