@@ -893,3 +893,97 @@ func TestScanHeredocNextToAGhCallIsStillAFile(t *testing.T) {
 		t.Errorf("Also = %+v, mined from a file being written", st.Also)
 	}
 }
+
+// TestScanMerged: a merge the thread performed is the one outcome mined
+// here, and it takes both halves — the command that did it and gh's own
+// answer. Everything else about a merge (someone else's, a merge queue
+// landing it later) is still deliberately outside this package.
+func TestScanMerged(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		out  string
+		want bool
+	}{
+		{"gh merged it", "gh pr merge 51 --squash --delete-branch",
+			"✓ Squashed and merged pull request cleanunicorn/dispatch#51 (fix the status line)\n✓ Deleted branch fix-47", true},
+		{"past a wrapper", "timeout 120 gh pr merge https://github.com/cleanunicorn/dispatch/pull/51 --merge",
+			"✓ Merged pull request cleanunicorn/dispatch#51", true},
+		{"rebased", "gh pr merge 51 --rebase", "✓ Rebased and merged pull request cleanunicorn/dispatch#51", true},
+		// GitHub said no. The command ran; nothing merged.
+		{"refused", "gh pr merge 51 --squash",
+			"X Pull request cleanunicorn/dispatch#51 is not mergeable: the base branch policy prohibits the merge", false},
+		{"conflicting", "gh pr merge 51 --squash",
+			"X Pull request cleanunicorn/dispatch#51 is not mergeable: the merge commit cannot be cleanly created", false},
+		// The words without a merge of ours behind them: a thread is not
+		// working on what it merely read.
+		{"a grep for the command", `grep -rn "gh pr merge" .`,
+			"docs/flow.md:12: ✓ Merged pull request cleanunicorn/dispatch#51", false},
+		{"someone else's, in a listing", "gh pr list --state merged",
+			"51\tfix the status line\tMerged pull request cleanunicorn/dispatch#51", false},
+		// The attempt on its own is not the outcome.
+		{"no answer at all", "gh pr merge 51 --squash", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := &log{at: time.Unix(0, 0)}
+			l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
+			l.bash("u2", "gh pr create", "https://github.com/cleanunicorn/dispatch/pull/51")
+			l.bash("u3", tc.cmd, tc.out)
+			if got := Scan(l.recs).Merged; got != tc.want {
+				t.Errorf("Merged = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestScanUnmergedThread: the ordinary thread says nothing about merging,
+// and must not be read as though it did.
+func TestScanUnmergedThread(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.says("run coder please fix #47")
+	l.bash("u1", "git push -u origin fix-47", "branch 'fix-47' set up to track 'origin/fix-47'")
+	l.bash("u2", "gh pr create --body \"Closes #47\"", "https://github.com/cleanunicorn/dispatch/pull/51")
+	if st := Scan(l.recs); st.Merged {
+		t.Error("an open pull request was read as merged")
+	}
+}
+
+// TestScanMergedIsAboutThisPullRequest: a long-lived thread merges one
+// pull request and opens the next. "This thread merged something once"
+// would call the open one merged on the strength of the closed one.
+func TestScanMergedIsAboutThisPullRequest(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
+	l.bash("u2", "gh pr create", "https://github.com/cleanunicorn/dispatch/pull/51")
+	l.bash("u3", "gh pr merge 51 --squash", "✓ Squashed and merged pull request cleanunicorn/dispatch#51")
+	if st := Scan(l.recs); st.PR == nil || st.PR.Number != 51 || !st.Merged {
+		t.Fatalf("after the merge: PR=%v Merged=%v", st.PR, st.Merged)
+	}
+	// The next piece of work on the same thread.
+	l.bash("u4", "gh pr create", "https://github.com/cleanunicorn/dispatch/pull/52")
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 52 {
+		t.Fatalf("PR = %v, want #52", st.PR)
+	}
+	if st.Merged {
+		t.Error("#52 was read as merged because #51 was")
+	}
+}
+
+// TestScanMergedNamesAnotherPullRequest: the confirmation gh prints is
+// about the pull request gh names, not the one the thread is on.
+func TestScanMergedNamesAnotherPullRequest(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
+	l.bash("u2", "gh pr create", "https://github.com/cleanunicorn/dispatch/pull/51")
+	// A dependency's pull request, merged from this thread.
+	l.bash("u3", "gh pr merge 49 --squash", "✓ Squashed and merged pull request cleanunicorn/dispatch#49")
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 51 {
+		t.Fatalf("PR = %v, want #51", st.PR)
+	}
+	if st.Merged {
+		t.Error("#51 was read as merged on a confirmation naming #49")
+	}
+}

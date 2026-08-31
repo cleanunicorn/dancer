@@ -11,6 +11,7 @@ package surface
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/executor"
@@ -83,14 +84,44 @@ type ReviewPR struct {
 	User   string // transport user id of who asked; the review task's requester
 }
 
-// Ship merges the pull request the thread on Thread is working on and
-// closes the thread. The merge is dispatch's own (internal/gh), so the
-// close happens on GitHub's answer rather than on an agent's account of
-// it: a merge that did not happen leaves the thread open.
-type Ship struct {
+// MergePR gets the thread's pull request merged and closes the thread.
+//
+// The agent on the thread does all of it: commit and push whatever is
+// outstanding, merge the base branch in and resolve if GitHub says it
+// conflicts, then run `gh pr merge`. dispatch runs none of those — they
+// are commands, which is the agent's job — and instead reads the log back
+// when the turn ends (work.State.Merged). The thread is closed on that
+// sighting and on nothing else, so an agent that reports success the log
+// cannot confirm closes nothing.
+//
+// It routes around nothing. A red check, a missing approval or a branch
+// protection rule is a refusal to report, not to work past, and the
+// prompt says so.
+type MergePR struct {
 	Thread transport.ThreadID
-	Method string // "", "squash", "merge" or "rebase"; "" is squash
+	Method string // as the human typed it; MergeMethod reads it
 	User   string
+}
+
+// MergeMethod reads the word a human typed after `merge` and returns gh's
+// own flag for it. The empty string is the default, and "it" is what
+// people write and means nothing.
+//
+// It lives here rather than in either caller because both need the same
+// answer for different reasons: the chat surface asks whether the rest of
+// the message is a method at all — "merge main into this branch" is a
+// prompt for the agent, not a command — and the coordinator asks which
+// flag to put in front of the agent.
+func MergeMethod(s string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "it", "squash":
+		return "squash", true
+	case "merge":
+		return "merge", true
+	case "rebase":
+		return "rebase", true
+	}
+	return "", false
 }
 
 // ListAgents asks for the agent definitions.
@@ -140,7 +171,7 @@ func (Cancel) isIntent()       {}
 func (CloseThread) isIntent()  {}
 func (Status) isIntent()       {}
 func (ReviewPR) isIntent()     {}
-func (Ship) isIntent()         {}
+func (MergePR) isIntent()      {}
 func (ListAgents) isIntent()   {}
 func (ListCommands) isIntent() {}
 func (AddAgent) isIntent()     {}
