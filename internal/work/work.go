@@ -198,7 +198,7 @@ const maxAlso = 4
 // overview lines carry the very references they were mined from and would
 // otherwise keep re-confirming themselves.
 func Scan(recs []store.Record) State {
-	sc := scanner{refs: map[string]*Ref{}, tools: map[string]string{}, repos: map[string]int{}, merged: map[string]bool{}}
+	sc := scanner{refs: map[string]*Ref{}, tools: map[string]string{}, repos: map[string]int{}, merged: map[int][]string{}}
 	for _, r := range affordable(recs) { // already filtered and budgeted
 		switch r.Kind {
 		case "inbound":
@@ -238,9 +238,15 @@ type scanner struct {
 	tools  map[string]string // tool id → the command it ran, for its result
 	repos  map[string]int    // "owner/repo" → times named
 	branch string
-	pushed string          // the last branch the log saw reach the remote
-	repo   string          // last repository a remote named
-	merged map[string]bool // key of every pull request seen merged
+	pushed string // the last branch the log saw reach the remote
+	repo   string // last repository a remote named
+	// merged is every pull request the log saw this thread merge: its
+	// number, and the repositories gh named it in. A list rather than a
+	// set of keys because the two halves are not always qualified alike —
+	// gh writes "cleanunicorn/dispatch#51" even on a thread that never
+	// named a remote and so has no repository to qualify its own
+	// reference with. state decides which of them count.
+	merged map[int][]string
 }
 
 // event mines one agent event. A tool call is read as an intent (what the
@@ -470,27 +476,6 @@ func (sc *scanner) noteRepo(repo string, weight int) {
 	sc.repos[repo] += weight
 }
 
-// add records a sighting, keeping the strongest one and the latest time.
-//
-// A sighting that named no repository — a bare "#12", a `gh pr view 49`
-// whose output echoed no URL — is stamped with the repository in hand at
-// the time, when one is known by then. Two threads' worth of work in one
-// conversation (a clone of org/A, then one of org/B) can each mention
-// "#3" and mean different pull requests; without the stamp they would key
-// alike and merge into one, and the loser would be rendered with the
-// other's link. A sighting from before any repository was named keeps an
-// empty one and is resolved in state, where the thread's repository is.
-// refKey identifies a reference: its kind and number, qualified by the
-// repository when one is known. Sightings of one number in one repository
-// collapse onto it however they were spelled.
-func refKey(k Kind, repo string, number int) string {
-	key := string(k) + "#" + strconv.Itoa(number)
-	if repo != "" {
-		key = repo + "/" + key
-	}
-	return key
-}
-
 // mergedIn records the pull request gh said it merged, out of the answer
 // to a `gh pr merge` this thread ran. gh names it — "Squashed and merged
 // pull request owner/repo#51" — and an answer that names none merged
@@ -501,10 +486,23 @@ func (sc *scanner) mergedIn(out string) {
 		if repo == "" {
 			repo = sc.repo
 		}
-		sc.merged[refKey(KindPR, repo, atoi(m[3]))] = true
+		n := atoi(m[3])
+		if !slices.Contains(sc.merged[n], repo) {
+			sc.merged[n] = append(sc.merged[n], repo)
+		}
 	}
 }
 
+// add records a sighting, keeping the strongest one and the latest time.
+//
+// A sighting that named no repository — a bare "#12", a `gh pr view 49`
+// whose output echoed no URL — is stamped with the repository in hand at
+// the time, when one is known by then. Two threads' worth of work in one
+// conversation (a clone of org/A, then one of org/B) can each mention
+// "#3" and mean different pull requests; without the stamp they would key
+// alike and merge into one, and the loser would be rendered with the
+// other's link. A sighting from before any repository was named keeps an
+// empty one and is resolved in state, where the thread's repository is.
 func (sc *scanner) add(r Ref) {
 	if r.Number <= 0 {
 		return
@@ -512,7 +510,10 @@ func (sc *scanner) add(r Ref) {
 	if r.Repo == "" {
 		r.Repo = sc.repo
 	}
-	key := refKey(r.Kind, r.Repo, r.Number)
+	key := string(r.Kind) + "#" + strconv.Itoa(r.Number)
+	if r.Repo != "" {
+		key = r.Repo + "/" + key
+	}
 	cur, ok := sc.refs[key]
 	if !ok {
 		c := r
@@ -599,11 +600,22 @@ func (sc *scanner) state() State {
 	}
 	// Merged is about the pull request the thread is on, not about the
 	// thread: one that merged #51 and then opened #52 has merged nothing
-	// it is working on now. The bare key is tried too, for a confirmation
-	// gh printed without an owner/repo in front of the number.
+	// it is working on now.
+	//
+	// The repository has to agree, but only when both sides name one. gh
+	// qualifies its confirmation whatever the thread knows, and a thread
+	// whose every sighting was a bare number — `gh pr view 51`, with no
+	// remote ever named — has no repository to compare it against. There
+	// is one repository in play there; nobody wrote it down, and refusing
+	// the merge for that leaves the thread open on a pull request that is
+	// merged.
 	if st.PR != nil {
-		st.Merged = sc.merged[refKey(KindPR, st.PR.Repo, st.PR.Number)] ||
-			sc.merged[refKey(KindPR, "", st.PR.Number)]
+		for _, repo := range sc.merged[st.PR.Number] {
+			if repo == "" || st.PR.Repo == "" || repo == st.PR.Repo {
+				st.Merged = true
+				break
+			}
+		}
 	}
 	return st
 }

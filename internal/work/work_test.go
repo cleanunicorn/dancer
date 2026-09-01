@@ -971,6 +971,38 @@ func TestScanMergedIsAboutThisPullRequest(t *testing.T) {
 	}
 }
 
+// TestScanMergedWithoutARepository: gh qualifies its confirmation
+// ("cleanunicorn/dispatch#51") whatever the thread knows, and a thread
+// whose every sighting was a bare number has no repository to compare it
+// against. It merged the one pull request it is on; requiring the two to
+// agree left it reading its own merge as somebody else's.
+func TestScanMergedWithoutARepository(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "gh pr view 51", "title:\tfix the status line")
+	l.bash("u2", "gh pr merge 51 --squash --delete-branch",
+		"✓ Squashed and merged pull request cleanunicorn/dispatch#51 (fix the status line)")
+	st := Scan(l.recs)
+	if st.PR == nil || st.PR.Number != 51 {
+		t.Fatalf("PR = %v, want #51", st.PR)
+	}
+	if !st.Merged {
+		t.Error("a merge this thread performed was not read as one")
+	}
+}
+
+// TestScanMergedInAnotherRepository: once the thread knows where it is,
+// a merge of the same number somewhere else is not its own.
+func TestScanMergedInAnotherRepository(t *testing.T) {
+	l := &log{at: time.Unix(0, 0)}
+	l.bash("u1", "git remote -v", "origin\tgit@github.com:cleanunicorn/dispatch.git (fetch)")
+	l.bash("u2", "gh pr create", "https://github.com/cleanunicorn/dispatch/pull/51")
+	l.bash("u3", "gh pr merge --repo other/repo 51 --squash",
+		"✓ Squashed and merged pull request other/repo#51")
+	if st := Scan(l.recs); st.Merged {
+		t.Error("a merge in another repository was read as this thread's")
+	}
+}
+
 // TestScanMergedNamesAnotherPullRequest: the confirmation gh prints is
 // about the pull request gh names, not the one the thread is on.
 func TestScanMergedNamesAnotherPullRequest(t *testing.T) {

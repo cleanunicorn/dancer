@@ -327,4 +327,16 @@ func TestMergeOfAPullRequestWithNoURL(t *testing.T) {
 	if strings.Contains(prompt.Text, "merge #51 ") {
 		t.Errorf("merge prompt hands the shell a comment:\n%s", prompt.Text)
 	}
+	// And the merge is read back: gh qualifies its confirmation
+	// ("cleanunicorn/dispatch#51") on a thread that never named a
+	// repository, and a thread that cannot recognise its own merge stays
+	// open on a pull request that is merged.
+	tr.waitFor(t, th, "thread closed")
+	closed, err := st.ClosedThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 1 || closed[0] != th {
+		t.Fatalf("closed threads = %v, want [%s]", closed, th)
+	}
 }
