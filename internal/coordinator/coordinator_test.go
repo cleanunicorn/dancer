@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -191,11 +192,15 @@ func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string
 }
 
 // fakeAgent: asks permission for Bash, reports the decision, then a result.
-type fakeAgent struct{}
+// fakeAgent's merge field says how it answers the turn `merge` asks for:
+// "" merges the pull request and gets gh's confirmation back, "refused"
+// runs the same command and is turned down by GitHub.
+type fakeAgent struct{ merge string }
 
 func (fakeAgent) Kind() agent.Kind { return "fake" }
-func (fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
+func (f fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
 	r := newFakeRun()
+	r.merge = f.merge
 	if strings.HasPrefix(prompt, "ask") {
 		go func() {
 			r.emit(agent.Event{Type: agent.EventInit, Session: "sess-q"})
@@ -253,6 +258,17 @@ func (fakeAgent) Start(ctx context.Context, env environment.Environment, def age
 }
 func (f fakeAgent) Resume(ctx context.Context, env environment.Environment, def agent.Definition, session, prompt string) (agent.Run, error) {
 	r := newFakeRun()
+	r.merge = f.merge
+	// The turn `merge` asks for: the agent runs the merge itself, and what
+	// gh answered is the only thing dispatch reads (internal/work).
+	if strings.Contains(prompt, "gh pr merge") {
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: session})
+			r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + prompt})
+			r.mergeTurn(session, prompt)
+		}()
+		return r, nil
+	}
 	go func() {
 		r.emit(agent.Event{Type: agent.EventInit, Session: session})
 		r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + prompt})
@@ -265,6 +281,7 @@ type fakeRun struct {
 	events  chan agent.Event
 	decided chan agent.PermissionDecision
 	done    chan struct{}
+	merge   string // fakeAgent.merge, for a message asking for `gh pr merge`
 
 	mu     sync.Mutex
 	closed bool
@@ -290,10 +307,43 @@ func (r *fakeRun) Send(ctx context.Context, text string) error {
 	// activity before the turn's result, or its idle timer never restarts.
 	go func() {
 		r.emit(agent.Event{Type: agent.EventText, Text: "echo:" + text})
+		if strings.Contains(text, "gh pr merge") {
+			r.mergeTurn("sess-1", text)
+			return
+		}
 		r.emit(agent.Event{Type: agent.EventResult, Text: "ok", Session: "sess-1"})
 	}()
 	return nil
 }
+
+// mergeTurn is the turn `merge` asks for: the agent runs the merge itself,
+// and what gh answered is the only thing dispatch reads (internal/work).
+//
+// It runs the command out of the prompt rather than one of its own, so a
+// thread that only ever knew a number logs `gh pr merge 51` and hands the
+// scan no repository — which is the thread gh's own qualified answer has
+// to be recognised on.
+func (r *fakeRun) mergeTurn(session, prompt string) {
+	answer := "✓ Squashed and merged pull request cleanunicorn/dispatch#51 (fix)"
+	say := "merged it"
+	if r.merge == "refused" {
+		answer = "X Pull request #51 is not mergeable: 1 required check is still pending"
+		say = "GitHub would not merge it: a check is still pending"
+	}
+	cmd := "gh pr merge 51 --squash --delete-branch"
+	if m := mergeCmdInPrompt.FindString(prompt); m != "" {
+		cmd = m
+	}
+	r.emit(agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "m-1",
+		ToolInput: map[string]any{"command": cmd}})
+	r.emit(agent.Event{Type: agent.EventToolResult, ToolID: "m-1", Text: answer})
+	r.emit(agent.Event{Type: agent.EventResult, Text: say, Session: session})
+}
+
+// mergeCmdInPrompt picks dispatch's own `gh pr merge …` line out of the
+// prompt it wrote (finish.go's mergePrompt puts it in backticks).
+var mergeCmdInPrompt = regexp.MustCompile("gh pr merge [^`\n]*")
+
 func (r *fakeRun) Decide(ctx context.Context, d agent.PermissionDecision) error {
 	r.decided <- d
 	return nil

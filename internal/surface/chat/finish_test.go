@@ -9,9 +9,9 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/transport"
 )
 
-// TestHandleFinishCommands: `review` and `ship` are dispatch's words only
-// when they are the whole message. "review the auth code" and "ship this
-// behind a flag" are prompts a human would reasonably type, and a bare
+// TestHandleFinishCommands: `review` and `merge` are dispatch's words only
+// when they are the whole message. "review the auth code" and "merge main
+// into this branch" are prompts a human would reasonably type, and a bare
 // word that ate them would be worse than not having one.
 func TestHandleFinishCommands(t *testing.T) {
 	s := New("chat", "slack", false)
@@ -23,15 +23,16 @@ func TestHandleFinishCommands(t *testing.T) {
 		{"review", surface.ReviewPR{Thread: th}},
 		{"Review", surface.ReviewPR{Thread: th}},
 		{"  review  ", surface.ReviewPR{Thread: th}},
-		{"ship", surface.Ship{Thread: th}},
-		{"ship it", surface.Ship{Thread: th, Method: "it"}},
-		{"ship squash", surface.Ship{Thread: th, Method: "squash"}},
-		{"ship rebase", surface.Ship{Thread: th, Method: "rebase"}},
-		{"SHIP MERGE", surface.Ship{Thread: th, Method: "MERGE"}},
+		{"merge", surface.MergePR{Thread: th}},
+		{"merge it", surface.MergePR{Thread: th, Method: "it"}},
+		{"merge squash", surface.MergePR{Thread: th, Method: "squash"}},
+		{"merge rebase", surface.MergePR{Thread: th, Method: "rebase"}},
+		{"MERGE MERGE", surface.MergePR{Thread: th, Method: "MERGE"}},
 		// Prompts that begin with the same word pass through untouched.
 		{"review the auth code", surface.FollowUp{Thread: th, Text: "review the auth code"}},
 		{"review #51 for me", surface.FollowUp{Thread: th, Text: "review #51 for me"}},
-		{"ship this behind a flag", surface.FollowUp{Thread: th, Text: "ship this behind a flag"}},
+		{"merge main into this branch", surface.FollowUp{Thread: th, Text: "merge main into this branch"}},
+		{"merge the two helpers", surface.FollowUp{Thread: th, Text: "merge the two helpers"}},
 	}
 	for _, tc := range cases {
 		got, ok := s.Handle(context.Background(), transport.Inbound{Transport: "slack", Thread: th, Text: tc.text})
@@ -50,8 +51,8 @@ func TestFinishCommandsCarryTheUser(t *testing.T) {
 	if got, _ := s.Handle(context.Background(), in); got[0].(surface.ReviewPR).User != "U42" {
 		t.Errorf("review: user = %q", got[0].(surface.ReviewPR).User)
 	}
-	in.Text = "ship"
-	if got, _ := s.Handle(context.Background(), in); got[0].(surface.Ship).User != "U42" {
-		t.Errorf("ship: user = %q", got[0].(surface.Ship).User)
+	in.Text = "merge"
+	if got, _ := s.Handle(context.Background(), in); got[0].(surface.MergePR).User != "U42" {
+		t.Errorf("merge: user = %q", got[0].(surface.MergePR).User)
 	}
 }

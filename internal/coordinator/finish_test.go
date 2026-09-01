@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/environment"
 	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/executor"
 	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
@@ -21,8 +21,8 @@ import (
 
 // finishFixture is a thread that has done a piece of work: it opened
 // pull request #51 on a branch, and its task is over — which is the state
-// a human types `review` or `ship` in.
-func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.Store, transport.ThreadID, context.CancelFunc) {
+// a human types `review` or `merge` in.
+func finishFixture(t *testing.T, tr transport.Transport, ag fakeAgent) (*Coordinator, store.Store, transport.ThreadID, context.CancelFunc) {
 	t.Helper()
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -34,7 +34,9 @@ func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.St
 		t.Fatal(err)
 	}
 	if err := st.PutTask(ctx, store.TaskState{ID: "t-1", Transport: "slack", Thread: th,
-		Definition: agent.Definition{Name: "coder", Kind: "fake"}, Session: "s-1", Status: store.StatusIdle}); err != nil {
+		Definition: agent.Definition{Name: "coder", Kind: "fake",
+			Environment: environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()}},
+		Session: "s-1", Status: store.StatusIdle}); err != nil {
 		t.Fatal(err)
 	}
 	appendInbound(t, st, th, "run coder please fix #47")
@@ -45,7 +47,7 @@ func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.St
 	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "u2",
 		Text: "https://github.com/cleanunicorn/dispatch/pull/51"})
 
-	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": ag}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
 	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
 	c.WorkdirRoot = t.TempDir()
 	c.DefaultDefinition = "coder"
@@ -60,7 +62,7 @@ func finishFixture(t *testing.T, tr transport.Transport) (*Coordinator, store.St
 // human sends by hand at the end of every piece of work.
 func TestReviewOpensAThreadBesideIt(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, st, th, cancel := finishFixture(t, tr)
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
 	defer cancel()
 	<-tr.ready
 
@@ -133,21 +135,36 @@ func TestReviewWithoutAPullRequest(t *testing.T) {
 	}
 }
 
-// TestShipMergesThenCloses: the thread is closed on gh's exit code and
-// nothing else, and gh's own words are posted with it.
-func TestShipMergesThenCloses(t *testing.T) {
-	fakeGH(t, 0, "Merged pull request cleanunicorn/dispatch#51")
+// TestMergeAsksTheAgentAndClosesOnTheLog: dispatch runs none of it. The
+// agent commits, pushes, resolves and runs `gh pr merge` itself; dispatch
+// reads the log back and closes the thread on gh's own confirmation.
+func TestMergeAsksTheAgentAndClosesOnTheLog(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, st, th, cancel := finishFixture(t, tr)
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
 	defer cancel()
 	<-tr.ready
 
-	tr.say(th, "ship")
-	tr.waitFor(t, th, "🚢 merging")
-	tr.waitFor(t, th, "✅ merged")
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "🚢 asking the agent to merge")
+
+	// Every step is the agent's, and the prompt says what not to do:
+	// getting past a check is somebody's decision, not an obstacle.
+	// (fakeAgent's resume echoes the prompt it was given.)
+	prompt := tr.waitFor(t, th, "echo:")
+	for _, want := range []string{
+		"commit it and push",
+		"mergeStateStatus",
+		"resolve the conflicts and push",
+		"gh pr merge https://github.com/cleanunicorn/dispatch/pull/51 --squash --delete-branch",
+		"Do not try to get past a failing check",
+	} {
+		if !strings.Contains(prompt.Text, want) {
+			t.Errorf("merge prompt is missing %q:\n%s", want, prompt.Text)
+		}
+	}
+
 	tr.waitFor(t, th, "thread closed")
 	waitReactions(t, &tr.fakeTransport, th, closedReaction)
-
 	closed, err := st.ClosedThreads(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -157,31 +174,59 @@ func TestShipMergesThenCloses(t *testing.T) {
 	}
 }
 
-// TestShipLeavesTheThreadOpenWhenTheMergeFails is the reason dispatch runs
-// the merge itself: an agent asked to merge would report the refusal in
-// prose, and a thread closed on prose is a thread nobody comes back to.
-func TestShipLeavesTheThreadOpenWhenTheMergeFails(t *testing.T) {
-	fakeGH(t, 1, "Pull request #51 is not mergeable: 1 required check is still pending")
+// TestMergeAsksForTheMethodItWasGiven: the word after `merge` is gh's own
+// flag and travels to the agent as one.
+func TestMergeAsksForTheMethodItWasGiven(t *testing.T) {
 	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
-	_, st, th, cancel := finishFixture(t, tr)
+	_, _, th, cancel := finishFixture(t, tr, fakeAgent{})
 	defer cancel()
 	<-tr.ready
 
-	tr.say(th, "ship")
-	reply := tr.waitFor(t, th, "merge failed")
-	if !strings.Contains(reply.Text, "still pending") {
-		t.Errorf("reply does not carry gh's reason:\n%s", reply.Text)
+	tr.say(th, "merge rebase")
+	tr.waitFor(t, th, "(rebase)")
+	if prompt := tr.waitFor(t, th, "echo:"); !strings.Contains(prompt.Text, "--rebase --delete-branch") {
+		t.Errorf("merge prompt does not carry the method:\n%s", prompt.Text)
 	}
+}
+
+// TestMergeLeavesTheThreadOpenWhenTheLogDoesNotSayMerged is the whole
+// reason the close is read out of the log rather than taken from the
+// agent's word: the turn ended, the agent reported, GitHub refused, and
+// a thread closed on a refusal is a thread nobody comes back to.
+func TestMergeLeavesTheThreadOpenWhenTheLogDoesNotSayMerged(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{merge: "refused"})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "the log does not show")
 	closed, err := st.ClosedThreads(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(closed) != 0 {
-		t.Fatalf("thread was closed on a failed merge: %v", closed)
+		t.Fatalf("thread was closed without a merge in the log: %v", closed)
 	}
 }
 
-func TestShipWithoutAPullRequest(t *testing.T) {
+// TestMergeOfAnAlreadyMergedPullRequest asks nobody anything: the log
+// already says it happened.
+func TestMergeOfAnAlreadyMergedPullRequest(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "m-0",
+		ToolInput: map[string]any{"command": "gh pr merge 51 --squash"}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "m-0",
+		Text: "✓ Squashed and merged pull request cleanunicorn/dispatch#51"})
+	<-tr.ready
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "is already merged")
+}
+
+func TestMergeWithoutAPullRequest(t *testing.T) {
 	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -195,21 +240,200 @@ func TestShipWithoutAPullRequest(t *testing.T) {
 	go c.Run(ctx)
 	<-tr.ready
 
-	tr.say("C-dev/3.0", "ship")
-	tr.waitFor(t, "C-dev/3.0", "nothing to ship")
+	tr.say("C-dev/3.0", "merge")
+	tr.waitFor(t, "C-dev/3.0", "nothing to merge")
 }
 
-// fakeGH puts a `gh` on PATH that prints say and exits with code, so a
-// coordinator test can exercise the whole `ship` path without merging
-// anything on GitHub.
-func fakeGH(t *testing.T, code int, say string) {
-	t.Helper()
-	dir := t.TempDir()
-	// echo, not cat: PATH is this directory alone, so the script may
-	// only use the shell's own builtins.
-	script := "#!/bin/sh\necho '" + say + "'\nexit " + map[int]string{0: "0", 1: "1"}[code] + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+// TestMergeWaitsForARunningTurn: the merging turn would queue behind
+// what is running, and its report would be read before it had happened.
+func TestMergeWaitsForARunningTurn(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, _, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "run coder do it")
+	tr.waitFor(t, th, "wants to run") // live, waiting on a permission
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "a turn is running on this thread")
+}
+
+// TestMergeRightAfterATurnEnds: a finished turn leaves its process warm
+// for idle_timeout and the thread bound to it the whole time. That is not
+// "a task is running" — it is exactly the moment someone reads the closing
+// line and says `merge`, and refusing it there made the word useless for
+// the ten minutes it is most wanted.
+func TestMergeRightAfterATurnEnds(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	c, _, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	// A turn that runs to its end and leaves the process alive.
+	tr.say(th, "run coder ship it")
+	tr.waitFor(t, th, "✅ done")
+	// The process is still warm and the thread still bound to it — which
+	// is what `merge` used to be refused for.
+	if !boundTo(c, th) {
+		t.Fatal("the thread let go of its task before idle_timeout")
+	}
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "🚢 asking the agent to merge")
+	tr.waitFor(t, th, "thread closed")
+}
+
+// TestMergeThatMergesNothingLeavesAClosedThreadClosed: `merge` reopens
+// the thread it is about to run a turn in, and only then. Every other way
+// out of it is a refusal, and a refusal that reopened the thread would
+// take dispatch off mute in a thread nobody asked to restart — `status`
+// has always put the tombstone back, and these have to as well.
+func TestMergeThatMergesNothingLeavesAClosedThreadClosed(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	c, st, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "close")
+	tr.waitFor(t, th, "thread closed")
+
+	// #51 is already merged, so `merge` has nothing to do here.
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "m-0",
+		ToolInput: map[string]any{"command": "gh pr merge 51 --squash"}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "m-0",
+		Text: "✓ Squashed and merged pull request cleanunicorn/dispatch#51"})
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "is already merged")
+	if !c.threadClosed(th) {
+		t.Error("a `merge` that merged nothing reopened the thread")
+	}
+	closed, err := st.ClosedThreads(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir)
+	if len(closed) != 1 || closed[0] != th {
+		t.Fatalf("closed threads = %v, want [%s]", closed, th)
+	}
+}
+
+// TestMergeReopensTheThreadItActsIn: the other half of the same rule — a
+// `merge` that does run a turn must take the thread off mute first, or
+// execute's defer tombstones it and the agent's turn goes to nobody.
+func TestMergeReopensTheThreadItActsIn(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "close")
+	tr.waitFor(t, th, "thread closed")
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "♻️ thread reopened")
+	tr.waitFor(t, th, "🚢 asking the agent to merge")
+	tr.waitForN(t, th, "thread closed", 2) // the `close` above, then the merge's own
+	closed, err := st.ClosedThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 1 || closed[0] != th {
+		t.Fatalf("closed threads = %v, want [%s]", closed, th)
+	}
+}
+
+// TestWaitForTurnIgnoresAnEndFromBeforeItAsked pins the other half of
+// "wait for *its own* turn". Naming the task is not enough on the warm
+// path, where the turn before the merge and the merge itself are the same
+// task: the end that matters is the one announced after the prompt went
+// out, so runMerge empties the waiter before sending and anything left
+// over cannot satisfy it.
+func TestWaitForTurnIgnoresAnEndFromBeforeItAsked(t *testing.T) {
+	c := &Coordinator{turnEnds: map[transport.ThreadID][]chan executor.TaskID{}}
+	th, task := transport.ThreadID("C-dev/1.0"), executor.TaskID("t-1")
+
+	ends := c.awaitTurnEnd(th)
+	defer c.dropTurnWaiter(th, ends)
+	c.turnEnded(th, task) // the turn the human read the closing line of
+	drainEnds(ends)       // …which runMerge drops before it asks for anything
+
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan bool, 1)
+	go func() { got <- c.waitForTurn(ctx, nil, th, task, ends) }()
+	select {
+	case ok := <-got:
+		t.Fatalf("waitForTurn returned %v on an end announced before the prompt", ok)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The turn it actually asked for.
+	c.turnEnded(th, task)
+	select {
+	case ok := <-got:
+		if !ok {
+			t.Error("waitForTurn missed the end of the turn it asked for")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("waitForTurn never saw its own turn end")
+	}
+	cancel()
+}
+
+// boundTo says the thread still holds a task, warm or running.
+func boundTo(c *Coordinator, th transport.ThreadID) bool {
+	_, ok := c.lookup(th)
+	return ok
+}
+
+// TestMergeOfAPullRequestWithNoURL: the log knew a number and never a
+// URL. "#51" on a command line is the start of a shell comment, so the
+// prompt has to name the bare number.
+func TestMergeOfAPullRequestWithNoURL(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	th := transport.ThreadID("C-dev/5.0")
+	if err := st.PutDefinition(ctx, agent.Definition{Name: "coder", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutTask(ctx, store.TaskState{ID: "t-5", Transport: "slack", Thread: th,
+		Definition: agent.Definition{Name: "coder", Kind: "fake",
+			Environment: environment.Spec{Kind: environment.KindLocal, Workdir: t.TempDir()}},
+		Session: "s-5", Status: store.StatusIdle}); err != nil {
+		t.Fatal(err)
+	}
+	// `gh pr view 51` acts on a number; no URL and no remote ever named.
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "u1",
+		ToolInput: map[string]any{"command": "gh pr view 51"}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "u1", Text: "title:\tfix the status line"})
+	ex := execlocal.New(map[agent.Kind]agent.Agent{"fake": fakeAgent{}}, map[environment.Kind]environment.Factory{environment.KindLocal: envlocal.Factory{}}, time.Minute)
+	c := New(st, ex, []transport.Transport{tr}, []surface.Surface{chat.New("chat", "slack", false)}, nil)
+	c.WorkdirRoot = t.TempDir()
+	go c.Run(ctx)
+	<-tr.ready
+
+	tr.say(th, "merge")
+	prompt := tr.waitFor(t, th, "echo:")
+	if !strings.Contains(prompt.Text, "gh pr merge 51 --squash --delete-branch") {
+		t.Errorf("merge prompt does not name the bare number:\n%s", prompt.Text)
+	}
+	if strings.Contains(prompt.Text, "merge #51 ") {
+		t.Errorf("merge prompt hands the shell a comment:\n%s", prompt.Text)
+	}
+	// And the merge is read back: gh qualifies its confirmation
+	// ("cleanunicorn/dispatch#51") on a thread that never named a
+	// repository, and a thread that cannot recognise its own merge stays
+	// open on a pull request that is merged.
+	tr.waitFor(t, th, "thread closed")
+	closed, err := st.ClosedThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 1 || closed[0] != th {
+		t.Fatalf("closed threads = %v, want [%s]", closed, th)
+	}
 }

@@ -150,7 +150,7 @@ files first — they carry the contract, the concrete packages under them are im
 - **`coordinator`** — the only stateful brain: intents → tasks, event fan-out to every surface,
   permission/question decision relay (`pending`/`askText` maps keyed by prompt id), guided wizards
   (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), the end-of-thread words
-  (`finish.go`: `review`, `ship`), restart recovery. It is also
+  (`finish.go`: `review`, `merge`), restart recovery. It is also
   the clock: every `Heartbeat` (10s) while a turn runs it broadcasts `EventHeartbeat`, and on a
   `transport.Reactor` it marks the thread's root message ⏳ (working) / ✋ (waiting for a decision) /
   📬 (answered, waiting for the next message) / ❌ (failed) / ✅ (closed) — one mark, always
@@ -266,9 +266,11 @@ files first — they carry the contract, the concrete packages under them are im
   wrote "fix #47" in the message that started the task, the branch was born in a `git switch -c`.
   So the overview survives a restart and still works after a per-task container is gone; what
   changes without the thread saying so (the diff stat, the checks, a merge by someone else) is
-  deliberately not here. Every sighting is graded — created here > acted on > mentioned in
-  passing — which is what picks *the* PR out of a thread that named a dozen numbers, and sightings
-  of one number in one repository collapse into one reference however they were spelled. What it
+  deliberately not here — the one outcome that is, `State.Merged`, is a merge *this thread
+  performed*, which is the same kind of evidence as everything else in there. Every sighting
+  is graded — created here > acted on > mentioned in passing — which is what picks *the* PR out
+  of a thread that named a dozen numbers, and sightings of one number in one repository collapse
+  into one reference however they were spelled. What it
   *refuses* to believe carries as much: the repository is the one a remote command named rather
   than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
@@ -292,7 +294,7 @@ files first — they carry the contract, the concrete packages under them are im
   themselves. The coordinator attaches the answer to `surface.Event.Work`; `chat` and `feed` both
   render it, so the ops channel never falls behind the thread.
 - **The end of a thread is two words, and neither of them asks for a number**
-  (`internal/coordinator/finish.go`). `review` and `ship` read what the thread is working on
+  (`internal/coordinator/finish.go`). `review` and `merge` read what the thread is working on
   out of its own log (`internal/work`, through `overview`), because a thread that opened a pull
   request already said so and pasting the URL back is exactly the friction they remove. `review`
   opens a thread *beside* this one in the same channel (`transport.ThreadOpener`, the same path
@@ -300,15 +302,46 @@ files first — they carry the contract, the concrete packages under them are im
   with no memory of why each choice was made, which is the only kind of reader worth having, and
   the same definition is the one whose environment can check the repository out. The prompt is
   posted as the new thread's root, so it reads as though a human typed it and the pull request's
-  URL is in the new thread's log from its first record. `ship` merges and *then* closes — and the
-  merge is dispatch's own `gh pr merge` on the host (`internal/gh/merge.go`), not a follow-up to
-  the agent, for one reason: it has to know whether the merge happened, and gh has an exit code
-  where an agent has prose. A merge GitHub refused leaves the thread open with gh's own reason in
-  it. The merge runs off the inbox goroutine (one at a time per thread, `shipping`) so a slow
-  merge cannot stop dispatch hearing anything else, and it runs on the host rather than in the
-  thread's environment because a per-task container is long gone by the time anyone says `ship`
-  and a merge needs no checkout. Both are bare words *only when they are the whole message*:
-  "review the auth code" and "ship this behind a flag" are prompts, and stay prompts.
+  URL is in the new thread's log from its first record. `merge` asks the agent for all of it —
+  commit what is outstanding and push, resolve a conflict with the base branch if
+  `gh pr view --json mergeStateStatus` reports one, then run `gh pr merge` — and dispatch runs
+  none of it. Every step is a command, which is the agent's job; a `gh` of dispatch's own here
+  would be a second, worse GitHub client beside the one already in the container. What dispatch
+  does is what it does everywhere else: it **reads the log back**. `work.State.Merged` is a
+  `gh pr merge` this thread ran answered by gh's own "Merged pull request", and the thread is
+  closed on that sighting and on nothing else — an agent that reports success the log cannot
+  confirm closes nothing. That is the one *outcome* `internal/work` mines, and it belongs there
+  because it is the same kind of evidence as the rest: something the thread did and said so in
+  the log. A merge by someone else, a merge queue landing it later, the checks — still outside.
+  The prompt tells the agent what not to work around: a conflict is a mechanical obstacle and
+  gets fixed, while a red check, a missing approval or a branch protection rule is somebody's
+  decision and is a thing to report. `Merged` is tied to `State.PR`, not to the thread — a thread
+  that merged #51 and then opened #52 has merged nothing it is working on now — and the pull
+  request it names is the one gh named in the answer, not the one the command was handed. The
+  *repository* has to agree only when both sides name one: gh qualifies its confirmation
+  ("cleanunicorn/dispatch#51") whatever the thread knows, and a thread whose every sighting was
+  a bare number — `gh pr view 51`, no remote ever named — has none to compare it against, which
+  is exactly the thread `prArg` writes a bare number for. There is one repository in play there;
+  nobody wrote it down, and refusing the merge for that left the thread open on a pull request
+  that is merged.
+  `merge` runs off the inbox goroutine (one at a time per thread, `merging`) because the turn
+  takes minutes, and waits for *its own* turn: `awaitTurnEnd`/`turnEnded` announce every ending
+  turn by task id (`taskSink.OnEvent` on a result, and `drive` on the way out, for a turn that
+  never reached the agent at all), and `waitForTurn` lets every other one go past — a thread's
+  previous turn is torn down after its keep-alive expires, which can be long after this one was
+  asked for. The id is not enough on the warm path, where the turn before the merge and the merge
+  itself are the *same task*: so the waiter is registered before the "🚢 asking…" line is posted,
+  and emptied (`drainEnds`) after it, which drops an end the post gave time to arrive and cannot
+  cost `merge` its own, unsent one. It refuses while a *turn* is running, not while a task is
+  merely bound: a finished turn keeps its process warm for `idle_timeout`, and that is exactly
+  the moment someone reads the closing line and says `merge`. It refuses too while a question is
+  open, whose answer the prompt would otherwise become. Both reopen a closed thread themselves,
+  once they know they are going to act and never on the way out of a refusal: a `merge` with
+  nothing to merge leaves a
+  closed thread closed, the way `status` always has. Both words are dispatch's *only when they
+  are the whole
+  message*: "review the auth code" and "merge main into this branch" are prompts, and stay
+  prompts.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.
