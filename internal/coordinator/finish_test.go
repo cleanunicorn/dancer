@@ -10,6 +10,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/environment"
 	envlocal "github.com/cleanunicorn/dispatch/internal/environment/local"
+	"github.com/cleanunicorn/dispatch/internal/executor"
 	execlocal "github.com/cleanunicorn/dispatch/internal/executor/local"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/store/sqlite"
@@ -280,6 +281,102 @@ func TestMergeRightAfterATurnEnds(t *testing.T) {
 	tr.say(th, "merge")
 	tr.waitFor(t, th, "🚢 asking the agent to merge")
 	tr.waitFor(t, th, "thread closed")
+}
+
+// TestMergeThatMergesNothingLeavesAClosedThreadClosed: `merge` reopens
+// the thread it is about to run a turn in, and only then. Every other way
+// out of it is a refusal, and a refusal that reopened the thread would
+// take dispatch off mute in a thread nobody asked to restart — `status`
+// has always put the tombstone back, and these have to as well.
+func TestMergeThatMergesNothingLeavesAClosedThreadClosed(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	c, st, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "close")
+	tr.waitFor(t, th, "thread closed")
+
+	// #51 is already merged, so `merge` has nothing to do here.
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "m-0",
+		ToolInput: map[string]any{"command": "gh pr merge 51 --squash"}})
+	logAgent(t, st, th, agent.Event{Type: agent.EventToolResult, ToolID: "m-0",
+		Text: "✓ Squashed and merged pull request cleanunicorn/dispatch#51"})
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "is already merged")
+	if !c.threadClosed(th) {
+		t.Error("a `merge` that merged nothing reopened the thread")
+	}
+	closed, err := st.ClosedThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 1 || closed[0] != th {
+		t.Fatalf("closed threads = %v, want [%s]", closed, th)
+	}
+}
+
+// TestMergeReopensTheThreadItActsIn: the other half of the same rule — a
+// `merge` that does run a turn must take the thread off mute first, or
+// execute's defer tombstones it and the agent's turn goes to nobody.
+func TestMergeReopensTheThreadItActsIn(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	_, st, th, cancel := finishFixture(t, tr, fakeAgent{})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "close")
+	tr.waitFor(t, th, "thread closed")
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "♻️ thread reopened")
+	tr.waitFor(t, th, "🚢 asking the agent to merge")
+	tr.waitForN(t, th, "thread closed", 2) // the `close` above, then the merge's own
+	closed, err := st.ClosedThreads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed) != 1 || closed[0] != th {
+		t.Fatalf("closed threads = %v, want [%s]", closed, th)
+	}
+}
+
+// TestWaitForTurnIgnoresAnEndFromBeforeItAsked pins the other half of
+// "wait for *its own* turn". Naming the task is not enough on the warm
+// path, where the turn before the merge and the merge itself are the same
+// task: the end that matters is the one announced after the prompt went
+// out, so runMerge empties the waiter before sending and anything left
+// over cannot satisfy it.
+func TestWaitForTurnIgnoresAnEndFromBeforeItAsked(t *testing.T) {
+	c := &Coordinator{turnEnds: map[transport.ThreadID][]chan executor.TaskID{}}
+	th, task := transport.ThreadID("C-dev/1.0"), executor.TaskID("t-1")
+
+	ends := c.awaitTurnEnd(th)
+	defer c.dropTurnWaiter(th, ends)
+	c.turnEnded(th, task) // the turn the human read the closing line of
+	drainEnds(ends)       // …which runMerge drops before it asks for anything
+
+	ctx, cancel := context.WithCancel(context.Background())
+	got := make(chan bool, 1)
+	go func() { got <- c.waitForTurn(ctx, nil, th, task, ends) }()
+	select {
+	case ok := <-got:
+		t.Fatalf("waitForTurn returned %v on an end announced before the prompt", ok)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// The turn it actually asked for.
+	c.turnEnded(th, task)
+	select {
+	case ok := <-got:
+		if !ok {
+			t.Error("waitForTurn missed the end of the turn it asked for")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("waitForTurn never saw its own turn end")
+	}
+	cancel()
 }
 
 // boundTo says the thread still holds a task, warm or running.

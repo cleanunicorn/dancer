@@ -563,10 +563,11 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 	case surface.CloseThread:
 		c.closeThread(ctx, s, it)
 	case surface.ReviewPR:
-		c.reopenThread(ctx, s, it.Thread)
+		// Both reopen the thread themselves, once they know they are
+		// going to act: every other path out of them is a refusal, and a
+		// refusal must leave a closed thread closed (see the defer above).
 		c.reviewPR(ctx, s, it)
 	case surface.MergePR:
-		c.reopenThread(ctx, s, it.Thread)
 		c.mergePR(ctx, s, it)
 	case surface.ListAgents:
 		defs, err := c.Store.ListDefinitions(ctx)
@@ -1331,13 +1332,23 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		// A turn that failed ends here too, and the half-finished pull
 		// request it left behind is the thing someone has to deal with.
 		out.Work = s.c.overview(ctx, st.Thread)
-	}
-	s.c.broadcast(ctx, out)
-	if ev.Type == agent.EventResult || ev.Type == agent.EventError {
 		// `merge` waits here: it asked the agent to make the branch
-		// mergeable and must not call GitHub until that turn is over.
+		// mergeable and must not read the log until that turn is over.
+		//
+		// The placement is a balance, and both sides of it are real. The
+		// status above already reads as idle, so mergePR's turnRunning
+		// goes false from there — and a `merge` accepted between the two
+		// registers its waiter in time to be woken by *this* turn, which
+		// on the warm path is the same task and so cannot be told apart
+		// by id. Announcing before the mark and the overview keeps the
+		// reaction call and a whole-log scan out of that gap. Announcing
+		// before the broadcast would put it ahead of the turn's own
+		// closing line, and a thread that reads "🔒 thread closed" above
+		// "✅ done" has been told the story backwards. So: after the
+		// scan, before the send.
 		s.c.turnEnded(st.Thread, id)
 	}
+	s.c.broadcast(ctx, out)
 }
 
 func (s *taskSink) AwaitDecision(ctx context.Context, id executor.TaskID, ev agent.Event) (agent.PermissionDecision, error) {

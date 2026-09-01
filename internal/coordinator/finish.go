@@ -61,6 +61,12 @@ func (c *Coordinator) reviewPR(ctx context.Context, s surface.Surface, it surfac
 		tt.Remember(newTh)
 	}
 	c.Log.Info("review thread opened", "from", it.Thread, "thread", newTh, "pr", w.PR.Number)
+	// The review is happening, so this thread is live again: without
+	// this, execute's defer puts the tombstone back and the reply below
+	// lands in a thread dispatch has stopped listening to. Only here,
+	// past every refusal above — `review` that came to nothing must leave
+	// a closed thread closed.
+	c.reopenThread(ctx, s, it.Thread)
 	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "🔍 reviewing " + prLink(*w) + " in a new thread"}, s)
 	c.runTask(ctx, s, surface.RunTask{Thread: newTh, Agent: c.agentOf(ctx, s, it.Thread), Prompt: prompt, User: it.User})
 }
@@ -148,6 +154,11 @@ func (c *Coordinator) mergePR(ctx context.Context, s surface.Surface, it surface
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "already merging this thread's pull request"}, s)
 		return
 	}
+	// Claimed: a turn is about to run here, so the thread is live again
+	// and execute's defer must not tombstone it back. Only here, past
+	// every refusal above — a `merge` that merged nothing must leave a
+	// closed thread closed.
+	c.reopenThread(ctx, s, it.Thread)
 	go c.runMerge(ctx, s, it, *w, method)
 }
 
@@ -161,9 +172,18 @@ func (c *Coordinator) runMerge(ctx context.Context, s surface.Surface, it surfac
 	defer c.endMerge(it.Thread)
 	th := it.Thread
 
-	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("🚢 asking the agent to merge %s (%s)…", prLink(w), method)}, s)
+	// Registered before the line is posted and emptied after it. Both
+	// halves matter, and the order is the whole point. Registering first
+	// means our own turn's end cannot be announced into a waiter that is
+	// not there yet. Emptying afterwards drops the *previous* turn's end
+	// — which the post gave a Slack round-trip's worth of time to arrive
+	// in, and which on the warm path is the same task, so the id below
+	// cannot tell it from ours. It cannot cost us our own: the prompt
+	// below has not been sent.
 	ends := c.awaitTurnEnd(th)
 	defer c.dropTurnWaiter(th, ends)
+	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("🚢 asking the agent to merge %s (%s)…", prLink(w), method)}, s)
+	drainEnds(ends)
 	task, started := c.followUp(ctx, s, surface.FollowUp{Thread: th, Text: mergePrompt(w, method), User: it.User})
 	if !started {
 		// followUp reports its own failures, but not all of them, so say
@@ -318,6 +338,19 @@ func (c *Coordinator) dropTurnWaiter(th transport.ThreadID, ch chan executor.Tas
 // waiter is interested in one turn and hears about at most a handful
 // before it: past this the oldest are what it has already skipped.
 const turnEndBuffer = 8
+
+// drainEnds empties a waiter of the ends it has already been told about.
+// Not "drain", which in this codebase is the shutdown letting in-flight
+// tool calls finish.
+func drainEnds(ends chan executor.TaskID) {
+	for {
+		select {
+		case <-ends:
+		default:
+			return
+		}
+	}
+}
 
 // turnEnded tells everything waiting on this thread that task's turn is
 // over. Waiters are left registered — the one that cares removes itself
