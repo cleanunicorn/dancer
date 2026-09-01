@@ -267,9 +267,10 @@ files first — they carry the contract, the concrete packages under them are im
   So the overview survives a restart and still works after a per-task container is gone; what
   changes without the thread saying so (the diff stat, the checks, a merge by someone else) is
   deliberately not here — the one outcome that is, `State.Merged`, is a merge *this thread
-  performed*, which is the same kind of evidence as everything else in there. Every sighting is graded — created here > acted on > mentioned in
-  passing — which is what picks *the* PR out of a thread that named a dozen numbers, and sightings
-  of one number in one repository collapse into one reference however they were spelled. What it
+  performed*, which is the same kind of evidence as everything else in there. Every sighting
+  is graded — created here > acted on > mentioned in passing — which is what picks *the* PR out
+  of a thread that named a dozen numbers, and sightings of one number in one repository collapse
+  into one reference however they were spelled. What it
   *refuses* to believe carries as much: the repository is the one a remote command named rather
   than every `github.com/owner/name` a go.mod scrolls past (falling back, when no command named a
   remote at all, to the repository most linked to by a pull request or issue URL), a branch is
@@ -316,16 +317,29 @@ files first — they carry the contract, the concrete packages under them are im
   gets fixed, while a red check, a missing approval or a branch protection rule is somebody's
   decision and is a thing to report. `Merged` is tied to `State.PR`, not to the thread — a thread
   that merged #51 and then opened #52 has merged nothing it is working on now — and the pull
-  request it names is the one gh named in the answer, not the one the command was handed.
+  request it names is the one gh named in the answer, not the one the command was handed. The
+  *repository* has to agree only when both sides name one: gh qualifies its confirmation
+  ("cleanunicorn/dispatch#51") whatever the thread knows, and a thread whose every sighting was
+  a bare number — `gh pr view 51`, no remote ever named — has none to compare it against, which
+  is exactly the thread `prArg` writes a bare number for. There is one repository in play there;
+  nobody wrote it down, and refusing the merge for that left the thread open on a pull request
+  that is merged.
   `merge` runs off the inbox goroutine (one at a time per thread, `merging`) because the turn
   takes minutes, and waits for *its own* turn: `awaitTurnEnd`/`turnEnded` announce every ending
   turn by task id (`taskSink.OnEvent` on a result, and `drive` on the way out, for a turn that
   never reached the agent at all), and `waitForTurn` lets every other one go past — a thread's
   previous turn is torn down after its keep-alive expires, which can be long after this one was
-  asked for. It refuses while a *turn* is running, not while a task is merely bound: a finished
-  turn keeps its process warm for `idle_timeout`, and that is exactly the moment someone reads
-  the closing line and says `merge`. It refuses too while a question is open, whose answer the
-  prompt would otherwise become. Both words are dispatch's *only when they are the whole
+  asked for. The id is not enough on the warm path, where the turn before the merge and the merge
+  itself are the *same task*: so the waiter is registered before the "🚢 asking…" line is posted,
+  and emptied (`drainEnds`) after it, which drops an end the post gave time to arrive and cannot
+  cost `merge` its own, unsent one. It refuses while a *turn* is running, not while a task is
+  merely bound: a finished turn keeps its process warm for `idle_timeout`, and that is exactly
+  the moment someone reads the closing line and says `merge`. It refuses too while a question is
+  open, whose answer the prompt would otherwise become. Both reopen a closed thread themselves,
+  once they know they are going to act and never on the way out of a refusal: a `merge` with
+  nothing to merge leaves a
+  closed thread closed, the way `status` always has. Both words are dispatch's *only when they
+  are the whole
   message*: "review the auth code" and "merge main into this branch" are prompts, and stay
   prompts.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
