@@ -11,6 +11,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/executor"
 	"github.com/cleanunicorn/dispatch/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 // ErrNotFound is returned when a task or definition does not exist.
@@ -104,6 +105,13 @@ type Store interface {
 	// SetThreadClosed(.., false) reopens a closed thread.
 	SetThreadClosed(ctx context.Context, thread transport.ThreadID, closed bool) error
 	ClosedThreads(ctx context.Context) ([]transport.ThreadID, error)
+
+	// Workflows: one run per thread (workflow.State), which is what makes
+	// a workflow survive a restart — the coordinator writes it after
+	// every step transition and replays it on the next start.
+	PutWorkflow(ctx context.Context, w workflow.State) error
+	ListWorkflows(ctx context.Context) ([]workflow.State, error)
+	DeleteWorkflow(ctx context.Context, thread transport.ThreadID) error
 
 	// Flows: one per thread; PutFlow replaces an existing one.
 	PutFlow(ctx context.Context, f FlowState) error

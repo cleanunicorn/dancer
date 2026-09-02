@@ -83,6 +83,13 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 			p.Options = append(p.Options, transport.Option{Value: o.Label, Label: o.Label, Description: o.Description})
 		}
 		return []transport.Outbound{{Thread: s.thread, Text: text, Prompt: p}}
+	case surface.EventWorkflow:
+		// The feed watches every thread's workflow the way it watches
+		// every task: one line per move.
+		if ev.Workflow == nil {
+			return nil
+		}
+		return out(fmt.Sprintf("🧗 workflow *%s* on %s — %s", ev.Workflow.Def.Name, ev.Thread, ev.Text))
 	case surface.EventAgent:
 		if ev.Agent == nil {
 			return nil

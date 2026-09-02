@@ -150,7 +150,7 @@ files first — they carry the contract, the concrete packages under them are im
 - **`coordinator`** — the only stateful brain: intents → tasks, event fan-out to every surface,
   permission/question decision relay (`pending`/`askText` maps keyed by prompt id), guided wizards
   (`wizard.go`: add/edit/delete agent, the bare-`run` agent picker), the end-of-thread words
-  (`finish.go`: `review`, `merge`), restart recovery. It is also
+  (`finish.go`: `review`, `merge`), workflow runs (`workflow.go`), restart recovery. It is also
   the clock: every `Heartbeat` (10s) while a turn runs it broadcasts `EventHeartbeat`, and on a
   `transport.Reactor` it marks the thread's root message ⏳ (working) / ✋ (waiting for a decision) /
   📬 (answered, waiting for the next message) / ❌ (failed) / ✅ (closed) — one mark, always
@@ -325,23 +325,61 @@ files first — they carry the contract, the concrete packages under them are im
   nobody wrote it down, and refusing the merge for that left the thread open on a pull request
   that is merged.
   `merge` runs off the inbox goroutine (one at a time per thread, `merging`) because the turn
-  takes minutes, and waits for *its own* turn: `awaitTurnEnd`/`turnEnded` announce every ending
-  turn by task id (`taskSink.OnEvent` on a result, and `drive` on the way out, for a turn that
-  never reached the agent at all), and `waitForTurn` lets every other one go past — a thread's
-  previous turn is torn down after its keep-alive expires, which can be long after this one was
-  asked for. The id is not enough on the warm path, where the turn before the merge and the merge
-  itself are the *same task*: so the waiter is registered before the "🚢 asking…" line is posted,
-  and emptied (`drainEnds`) after it, which drops an end the post gave time to arrive and cannot
-  cost `merge` its own, unsent one. It refuses while a *turn* is running, not while a task is
-  merely bound: a finished turn keeps its process warm for `idle_timeout`, and that is exactly
-  the moment someone reads the closing line and says `merge`. It refuses too while a question is
-  open, whose answer the prompt would otherwise become. Both reopen a closed thread themselves,
+  takes minutes, and waits for *its own* turn: a turn is named by where it ended in the log
+  (`turns.go`) — the waiter holds a floor, the seq of the record written before the prompt was
+  sent, and settles on the first end past it, because on the warm path the turn before the merge
+  and the merge itself are the *same task* and no id can tell them apart. It refuses while a
+  *turn* is running, not while a task is merely bound: a finished turn keeps its process warm
+  for `idle_timeout`, and that is exactly the moment someone reads the closing line and says
+  `merge`. It refuses too while a question is open, whose answer the prompt would otherwise
+  become. Both reopen a closed thread themselves,
   once they know they are going to act and never on the way out of a refusal: a `merge` with
   nothing to merge leaves a
   closed thread closed, the way `status` always has. Both words are dispatch's *only when they
   are the whole
   message*: "review the auth code" and "merge main into this branch" are prompts, and stay
   prompts.
+- **A workflow is that loop with the steps in a list** (`internal/workflow` for what a step is,
+  `internal/coordinator/workflow.go` for the runner; `WORKFLOWS.md` is the design and the plan).
+  A `[[workflow]]` in config is started by name — `workflow feature <what you want>` — and each
+  step is one agent turn that dispatch then *judges on the records the step itself produced*: a
+  `since seq` floor makes the window the step's own, so the pull request step one opened cannot
+  satisfy step three, and it is the same number the turn is recognised by (`turns.go`), because
+  a turn is the records it produced. `expect` says what the window must show (`pr`, `push`,
+  `merged` mined by `internal/work`; `report` and a failed turn from the events themselves;
+  `check` is a command dispatch runs in the step's environment; `judge` asks a decider, whose
+  static answer is a human). A `gate` asks a human between steps — the same cross-surface
+  question machinery agents use, no timeout, re-asked after a restart. A failed step goes to
+  its `on_fail` (`ask`, the default; `retry`, bounded; `stop`), and `cancel` stops the run as a
+  record, so a restart cannot resume a workflow a human stopped. A named run is state first:
+  every transition is in the log and the `workflows` table, and a restart *grades before it
+  resends* — a step whose turn was cut short is judged on what made it to the log, and only a
+  step that did not happen is asked for again. `review` and `merge` are quiet one-step runs of
+  the same engine: the words keep their own lines and their refusals (`finish.go`), and there
+  is one way to run a turn and read the log back.
+- **A workflow does not have to be written down first** (`internal/coordinator/plan.go`,
+  `internal/workflow/plan.go`). `plan <what you want, and how>` hands the ask, the vocabulary and
+  the agents that exist to `server.planner_agent` and gets a workflow back. The safety argument is
+  one sentence: **the generated thing takes the same path as the written one** — it is a
+  `workflow.Definition`, it goes through the same `workflow.Validate`, it runs on the same runner,
+  so a plan naming an agent nobody defined or an `expect` nobody implements is refused exactly as
+  a `[[workflow]]` would be. There is no second, looser road for a plan a model wrote. Three things
+  bound it, each borrowed from something that already works here. It is **opt-in**: without
+  `planner_agent` the word is refused, and every failure — no planner, a turn that would not start,
+  a reply with no JSON in it, a plan `Validate` refuses — leaves the thread with a message and
+  nothing started, which is dispatch as it is today. It is **shown before it runs**
+  (`workflow.Describe`: what each step is, who runs it, where, and what will make it count as
+  done), confirmed on the same cross-surface question machinery a gate uses, and the refusals are
+  re-checked after the button because that question has no timeout. And it **plans in an empty
+  room** — a scratch directory, no tools, no system prompt, no MCP — for the reason
+  `decider.Claude` does: a project's CLAUDE.md and hooks would otherwise reach the planner as
+  instructions, and the ask it is judging is data. The vocabulary it is given (`workflow.Schema`)
+  is generated from the same constants `Validate` checks against, so the prompt cannot drift from
+  what the validator accepts; `TestSchemaNamesEveryConstant` keeps a new `expect` from being added
+  to only one of them. The planning turn ends on its **answer**, not on the executor's keep-alive:
+  a one-shot question has no follow-up to be warm for. `workflow save <name>` writes the plan into
+  `config.toml` (`config.AppendWorkflow`), because a workflow made from chat that is not written
+  back is lost on the next restart — the same step `agent add` takes.
 - **Definition vs instance.** `agent.Definition` is stored config; an instance is Definition +
   Environment + session id + thread. Definitions are seeded from config into the store on every start,
   so anything created from chat must *also* be written back to `config.toml` or it is lost on restart.

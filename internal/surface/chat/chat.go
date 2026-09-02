@@ -108,6 +108,10 @@ const help = "Commands:\n" +
 	"• `close` — stop the task and end this thread (mention me here to reopen it)\n" +
 	"• `review` — review this thread's pull request in a new thread beside it, with the same agent\n" +
 	"• `merge` — commit and push what is outstanding, merge this thread's pull request, close the thread (`merge rebase` to not squash)\n" +
+	"• `workflows` — list the workflows config defines\n" +
+	"• `workflow <name> <what you want>` — run one on this thread, step by step (`cancel` stops it)\n" +
+	"• `plan <what you want, and how>` — dispatch works out the steps, shows them, and runs them if you say so\n" +
+	"• `workflow save <name>` — keep this thread's last plan as a workflow you can start by name\n" +
 	"• `/model opus`, `/clear`, `/compact`, … — the agent's own commands, passed to it as they are (`commands` lists them)\n" +
 	"   on Slack a message may not *start* with `/` — it never leaves Slack — so write `@dispatch /clear`\n" +
 	"• `agent list` — list agent definitions (`agents` for short)\n" +
@@ -162,6 +166,44 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		if _, ok := surface.MergeMethod(rest); ok {
 			return []surface.Intent{surface.MergePR{Thread: in.Thread, Method: rest, User: in.UserID}}, true
 		}
+	case "workflows":
+		// Only the bare word, like `review`: "workflows are listed
+		// here" is a sentence that starts with one, not a request.
+		if rest == "" {
+			return []surface.Intent{surface.ListWorkflows{Thread: in.Thread}}, true
+		}
+	case "workflow":
+		name, ask := splitWord(rest)
+		switch {
+		case name == "":
+			return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `workflow <name> <what you want>` — `workflows` lists them"}}, true
+		case name == "stop" && ask == "":
+			return []surface.Intent{surface.StopWorkflow{Thread: in.Thread}}, true
+		case name == "save":
+			// `workflow save <name>` keeps the last plan made here.
+			if ask == "" {
+				return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `workflow save <name>` — writes this thread's last plan into the config"}}, true
+			}
+			word, extra := splitWord(ask)
+			if extra != "" {
+				return []surface.Intent{surface.Say{Thread: in.Thread, Text: "a workflow's name is one word: `workflow save " + word + "`"}}, true
+			}
+			return []surface.Intent{surface.SaveWorkflow{Thread: in.Thread, Name: word}}, true
+		case ask == "":
+			return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `workflow " + name + " <what you want>`"}}, true
+		}
+		return []surface.Intent{surface.RunWorkflow{Thread: in.Thread, Name: name, Ask: ask, User: in.UserID}}, true
+	case "plan":
+		// `plan <what you want and how>`: dispatch composes the steps
+		// instead of looking a workflow up. Only with something after it
+		// — a bare "plan" is a word somebody is about to finish typing,
+		// and "plan the migration" is a prompt for the agent unless
+		// planning is what dispatch does with it. The word is dispatch's
+		// here, so it says what it needs.
+		if rest == "" {
+			return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `plan <what you want, and how you want it done>` — dispatch works out the steps and asks before running them"}}, true
+		}
+		return []surface.Intent{surface.PlanWorkflow{Thread: in.Thread, Ask: rest, User: in.UserID}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
 	case "commands", "cmds":
@@ -245,7 +287,14 @@ func (s *Surface) Render(ev surface.Event) []transport.Outbound {
 	case surface.EventClosed:
 		return s.endWith(ev.Thread, say("✅ thread closed — mention me here to pick it up again"))
 	case surface.EventReply, surface.EventAllowed:
-		msgs = say(WithOverview(ev.Text, ev.Work))
+		msgs = say(WithOverview(withWorkflow(ev.Text, ev.Workflow), ev.Work))
+	case surface.EventWorkflow:
+		// A workflow moving on its home thread: ordinary lines, so the
+		// agent's own status line is never displaced by them.
+		if ev.Workflow == nil {
+			return nil
+		}
+		msgs = []transport.Outbound{{Thread: ev.Thread, Text: ev.Text, Mention: ev.Workflow.User}}
 	case surface.EventNotice:
 		msgs = tell(ev.Text)
 	case surface.EventError:

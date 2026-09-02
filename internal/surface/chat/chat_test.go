@@ -102,6 +102,18 @@ func TestHandleCommands(t *testing.T) {
 		{"Agent Update coder", surface.EditAgent{Thread: th, Agent: "coder"}},
 		{"agent delete coder", surface.DeleteAgent{Thread: th, Agent: "coder"}},
 		{"agent rm", surface.DeleteAgent{Thread: th}},
+		{"workflows", surface.ListWorkflows{Thread: th}},
+		{"workflow feature ship the thing", surface.RunWorkflow{Thread: th, Name: "feature", Ask: "ship the thing"}},
+		{"workflow stop", surface.StopWorkflow{Thread: th}},
+		// A workflow's ask is everything after the name, so a prompt with
+		// spaces survives whole; and neither word eats a sentence that
+		// only starts like one.
+		{"workflow feature  fix  two spaces", surface.RunWorkflow{Thread: th, Name: "feature", Ask: "fix  two spaces"}},
+		{"workflows are listed here", surface.FollowUp{Thread: th, Text: "workflows are listed here"}},
+		// An unknown name stays a RunWorkflow: the coordinator says there
+		// is no such workflow, rather than silently prompting the agent
+		// with half a sentence.
+		{"workflow through the night", surface.RunWorkflow{Thread: th, Name: "through", Ask: "the night"}},
 		{"add agent config to the readme", surface.FollowUp{Thread: th, Text: "add agent config to the readme"}},
 		{"delete the old files", surface.FollowUp{Thread: th, Text: "delete the old files"}},
 		{"edit main.go", surface.FollowUp{Thread: th, Text: "edit main.go"}},

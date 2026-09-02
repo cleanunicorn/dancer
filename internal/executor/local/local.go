@@ -405,6 +405,25 @@ func (e *Executor) Cancel(ctx context.Context, id executor.TaskID) error {
 	return nil
 }
 
+// Check runs a command in the task's environment: the workflow step's own
+// evidence, gathered by dispatch rather than reported by the agent.
+//
+// It runs in the environment the agent worked in, which is the only place
+// the answer means anything — the checkout it edited, the container it
+// installed into. That also bounds when it can be asked for: once the
+// idle timeout has taken the process and its container down there is
+// nothing left to run it in, and the step has to have been judged before
+// then.
+func (e *Executor) Check(ctx context.Context, id executor.TaskID, cmd string) (int, string, error) {
+	e.mu.Lock()
+	l, ok := e.running[id]
+	e.mu.Unlock()
+	if !ok {
+		return 0, "", ErrNotRunning
+	}
+	return environment.Check(ctx, l.env, cmd)
+}
+
 // IsRunning reports whether the task has a live process.
 func (e *Executor) IsRunning(id executor.TaskID) bool {
 	e.mu.Lock()

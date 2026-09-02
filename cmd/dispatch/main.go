@@ -37,6 +37,7 @@ import (
 	trslack "github.com/cleanunicorn/dispatch/internal/transport/slack"
 	"github.com/cleanunicorn/dispatch/internal/transport/terminal"
 	trweb "github.com/cleanunicorn/dispatch/internal/transport/web"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 func main() {
@@ -181,6 +182,11 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 	}
 	c.DefaultDefinition = cfg.Server.DefaultAgent
 	c.AgentKinds = registeredKinds(agents)
+	c.Workflows = cfg.WorkflowDefinitions()
+	c.PlannerAgent = cfg.Server.PlannerAgent
+	c.SaveWorkflow = func(_ context.Context, d workflow.Definition) error {
+		return config.AppendWorkflow(cfgPath, config.WorkflowFromDefinition(d))
+	}
 	c.ChannelAgents = cfg.ChannelAgents()
 	c.SaveChannelAgent = func(_ context.Context, transportName, channel, agent string) error {
 		return config.AppendChannel(cfgPath, config.Channel{Transport: transportName, ID: channel, Agent: agent})

@@ -1,7 +1,7 @@
 # WORKFLOWS.md — the design and the plan
 
-*Draft. Nothing here is implemented yet. Written to match the shape of `DECIDER.md`:
-the design and the plan in one file, kept current as work lands.*
+*Written to match the shape of `DECIDER.md`: the design and the plan in one
+file, kept current as work lands. All of it is implemented.*
 
 ## Progress
 
@@ -9,15 +9,19 @@ the design and the plan in one file, kept current as work lands.*
 - [x] Review folded in: the turn id is a floor, a workflow can be stopped, resume grades before
       it resends, `report` is graded on the result, the model pin is restored, retry is bounded,
       prompts are rendered before they are sent
-- [ ] M0 — a turn has an id
-- [ ] M1 — `internal/workflow`: schema, validation, templating, state machine
-- [ ] M2 — config `[[workflow]]` + store projection
-- [ ] M3 — the runner in the coordinator; `review` and `merge` become built-in steps
-- [ ] M4 — chat words, rendering, feed
-- [ ] M5 — gates (human approval between steps)
-- [ ] M6 — restart resume + `make restart-drill` coverage
-- [ ] M7 — the planner: on-demand workflows from a Slack message
-- [ ] M8 — `save this as a workflow` write-back + docs
+- [x] M0 — a turn has an id (`internal/coordinator/turns.go`: ends carry a result seq, waiters
+      hold a floor, `Done` settles a waiter whose turn wrote no record)
+- [x] M1 — `internal/workflow`: schema, validation, templating, judging, state, tests
+- [x] M2 — config `[[workflow]]` + the `workflows` table (`store.PutWorkflow`/`ListWorkflows`)
+- [x] M3 — the runner (`internal/coordinator/workflow.go`); `review`/`merge` re-expressed as
+      quiet one-step runs of it (`finish.go` keeps the words' refusals and lines)
+- [x] M4 — `workflows`, `workflow <name> <ask>`, status rendering, feed
+- [x] M5 — gates (cross-surface, persisted, re-asked after a restart)
+- [x] M6 — restart resume (grades before it resends) + `make restart-drill` workflow leg
+- [x] M7 — the planner: on-demand workflows from a message (`plan <what you want, and how>`),
+      shown and confirmed before anything runs, refused by the same `workflow.Validate` a config
+      workflow goes through, planning in an empty room with no tools
+- [x] M8 — `workflow save <name>` write-back (`config.AppendWorkflow`) + docs
 
 ---
 
@@ -54,13 +58,14 @@ A **step** is:
 |-----------|---------|
 | `name`    | how the step is referred to in later prompts and in the status line |
 | `agent`   | definition name; empty = the thread's current agent |
-| `model`   | override for this step only, restored when the step ends |
+| `model`   | override for this step only, restored when the step ends (a leaked `ModelPin` would outlive its step) |
 | `thread`  | `same` (follow-up on the home thread) or `new` (a fresh thread beside it, fresh session) |
 | `prompt`  | Go template over the workflow's state |
 | `builtin` | `review` / `merge` — the words that already exist, as steps |
-| `expect`  | what the log must show: `pr`, `push`, `merged`, `report`, `none` |
+| `expect`  | what the log must show: `pr`, `push`, `merged`, `report`, `judge`, `none` |
+| `check`   | a command dispatch runs itself in the step's environment; exit 0 or the step failed |
 | `gate`    | a question for a human instead of a turn for an agent |
-| `on_fail` | `ask` (default) · `retry` · `stop` |
+| `on_fail` | `ask` (default) · `retry` (bounded by `max_retries`, default 2) · `stop` |
 
 Nothing else. No conditionals, no loops, no parallelism in v1 — a linear list with a human gate is
 already the whole of the example that prompted this, and every added construct is a construct that
@@ -71,9 +76,12 @@ Four rules a step carries that the table cannot say:
 - `pr`, `push` and `merged` are `internal/work` sightings, graded on the records the step itself
   produced. A `report` is not something a log can be mined for — every turn ends in text — so it
   is graded on the `EventResult` itself: the turn ended, not in error, with something to say.
-  `none` asks nothing and is satisfied by the turn ending.
-- `retry` retries once, then takes the ordinary failure path (`ask`, by default) — an unbounded
-  retry loop is a bill, not a workflow.
+  `none` asks nothing and is satisfied by the turn ending — but a turn that never *did* end (a
+  restart cut it short; the window holds no result) fails any step. A `check` is observed, not
+  mined: dispatch execs it in the step's own environment. `judge` asks a decider — whose static
+  answer is `ask`, so without one it becomes a human question.
+- `retry` retries up to `max_retries` (twice by default), then takes the ordinary failure path
+  (`ask`, by default) — an unbounded retry loop is a bill, not a workflow.
 - a per-step `model` lands as `TaskState.ModelPin`, which persists per task, so a `same`-thread
   step that overrides the model puts the previous pin back when the step ends; a pin that
   outlived its step would change every later step on that thread.
@@ -175,65 +183,115 @@ abstraction is real, and it stops there being two ways to run a turn and read th
 
 ## On-demand workflows (the planner)
 
-The second type: tag dispatch in Slack, describe what you want and how you want it done, and
-dispatch composes the workflow.
+The second type: say what you want and how you want it done, and dispatch composes the workflow.
 
-The contract that makes this safe is the one `internal/decider` already established:
+```
+plan add a health endpoint, have a second model review it, then let me approve the merge
+```
 
-1. **One execution path.** The planner emits the *same* struct the TOML parses into, validated by
-   the same `workflow.Validate`. There is no "dynamic" runner.
-2. **It can only name what exists.** Agents must be real definitions, `expect` and `builtin` must
-   be known values, models must be ones the named agent's kind can run. Anything else is refused
-   and the message becomes an ordinary task — which is exactly today's behaviour, so the fallback
-   for every planner failure is "dispatch works as it does now".
-3. **It is shown before it runs.** The steps are posted and confirmed with a button — the same
-   gate machinery, cross-surface, persisted. On Slack that is also the only honest thing to do
-   before spending five agent turns.
-4. **It is written to the log**, so a restart resumes the plan that was approved, and a human can
-   read what was planned six hours later.
-5. **`save as feature`** writes it into `config.toml` via a `config.AppendWorkflow` alongside
-   `AppendDefinition` — because anything created from chat that is not written back is lost on
-   restart.
+`internal/coordinator/plan.go` hands the ask, the vocabulary and the agents that exist to
+`server.planner_agent` and gets a workflow back. The safety argument is one sentence:
 
-**Who plans.** Recommendation: the planner is *a dispatch agent* — a definition with a local
-read-only environment, asked for JSON. No new dependency, no second API client, and it borrows the
-operator's login like everything else. The alternative is a `[planner]` section reusing
-`decider/claude.go` and `decider/openai.go` as clients: faster (one HTTP call, no CLI spawn) at
-the cost of a config surface and a second way to reach a model. Start with the agent; move it if
-the latency is annoying.
+> **The generated thing takes the same path as the written one.**
 
-**Trigger.** An explicit word — `plan <description>` — not "every first message in the channel is
-planned". The codebase is emphatic that a message which is not one of dispatch's bare words is the
-agent's prompt, and silently routing prompts through a planner would change what every message in
-a channel means. Off by default, one config key to turn on.
+A plan is a `workflow.Definition`. It goes through the same `workflow.Validate`. It runs on the
+same runner. A plan naming an agent nobody defined, an `expect` nobody implements, two steps with
+one name or a step with two shapes is refused exactly as a `[[workflow]]` in config would be —
+`TestAPlannedWorkflowIsValidatedLikeAWrittenOne` pins that. There is no second, looser road for a
+plan a model wrote, which is what makes this worth having at all.
+
+Three things bound it, each borrowed from something that already works here.
+
+**It is opt-in, and every failure is a no-op.** Without `server.planner_agent` the word is refused.
+No planner, a turn that would not start, a reply with no JSON in it, a plan `Validate` refuses —
+each leaves the thread with a message and nothing started, which is dispatch exactly as it is
+without the feature.
+
+**It is shown before it runs.** `workflow.Describe` writes out what each step *is* — who runs it,
+where, what will make it count as done — rather than quoting a page of template back:
+
+```
+🧭 here is the plan for:
+> add a health endpoint, have a second model review it, then let me approve
+
+_implement then review_
+1. *implement* — {{.Ask}} · with coder · done when: a pull request was opened
+2. *review* — Review {{.PR}}. Report only. · with reviewer · in a thread of its own · done when: it reported
+3. *approve* — asks a human: Merge {{.PR}}?
+4. *merge* — `merge` · done when: gh confirmed the merge
+
+Run it? Every step is a real agent turn.
+```
+
+Confirmed with a button, on the same cross-surface question machinery a gate uses. The refusals
+are re-checked *after* the answer, because that question has no timeout and a turn can start on
+the thread while it is open.
+
+**It plans in an empty room.** A scratch directory, no tools, no system prompt, no MCP — for the
+reason `decider.Claude` does it: dispatch is normally started from a checkout, and a CLI started
+there would read that project's CLAUDE.md, its hooks and its MCP config *ahead of its own
+instructions*. The ask the planner is judging is data, so it is judged somewhere with nothing in
+it. A tool request is denied, which is both the safe answer and the one that ends the turn
+quickest.
+
+Two smaller things that turned out to matter.
+
+**The vocabulary is generated from the validator's own constants.** `workflow.Schema()` is built
+out of `Expects()`, `OnFails()`, `Threads()` and `Builtins()`, so what the planner is told it may
+write and what `Validate` will accept cannot drift apart; `TestSchemaNamesEveryConstant` fails if
+a new `expect` is added to only one of them. Without that, adding a value would silently mean
+either "refused for a value it was never offered" or "told to use a value that is refused".
+
+**The planning turn ends on its answer.** An executor keeps a finished turn's process warm for
+`idle_timeout` so a follow-up is instant — right for a conversation, pure waiting for a one-shot
+question that has no follow-up. `planSink` closes a channel on the result and the planner cancels
+the run there; the `context.Canceled` that unwinding reports is not an error.
+
+**Who plans.** The planner is *a dispatch agent* — a definition named in config — not a new API
+client. No new dependency, no second way to reach a model, and it borrows the operator's login
+like everything else. The alternative was a `[planner]` section reusing `decider/claude.go` and
+`decider/openai.go` as transports: one HTTP call instead of a CLI spawn, at the cost of a config
+surface and a second path to a model. If the latency ever annoys, that is the move.
+
+**Trigger.** An explicit word. The codebase is emphatic that a message which is not one of
+dispatch's bare words is the agent's prompt, and silently routing prompts through a planner would
+change what every message in a channel means.
+
+**Keeping one.** `workflow save <name>` writes the thread's last plan into `config.toml` through
+`config.AppendWorkflow` — textual, comment-preserving, validated, restored if the result does not
+load, the same contract `AppendDefinition` has. It is also added to the running coordinator's
+list, so it is startable by name straight away rather than after a restart. A plan nobody saved
+is a draft and is deliberately kept in memory only.
 
 ---
 
-## What has to be fixed first
+## What had to be fixed first
 
-**A turn has no id.** `awaitTurnEnd` announces an ending turn by *task* id, and on a warm session
-the turn before a `merge` and the merge itself are the same task — `finish.go` works around it by
-registering the waiter before it posts a line and draining after (`drainEnds`), which is a timing
-argument, not an identity. One workflow runs several turns on one thread, so this stops being a
-workaround and starts being a bug.
+Both of these were found while planning and are now in the tree.
 
-The id cannot be the result record's seq: a waiter has to name its turn *before* the turn exists —
-`merge` registers before it posts — and a result seq is only knowable when the turn ends. So the
-identity is a **floor**, not a name: the runner records the log seq as it sends, the announcement
-carries the ended turn's result seq, and a waiter is matched by "the first end on this task past
-my floor". That is the same `since seq` the evidence fix below needs, so it is built once and
-used twice. One more thing must survive the generalization: `turnEnded` today drops an
-announcement rather than block on a full waiter channel, and a dropped end would hang a workflow
-step until its timeout — a registered waiter must not be able to miss its end. Half a day, and it
-is a genuine standalone fix.
+**A turn had no id.** `awaitTurnEnd` announced an ending turn by *task* id, and on a warm session
+the turn before a `merge` and the merge itself are the same task — `finish.go` worked around it by
+registering the waiter before it posted a line and draining after (`drainEnds`), which is a timing
+argument, not an identity. One workflow runs several turns on one thread and loses that argument
+on its first step.
 
-**`internal/work` scans a whole thread.** A step's evidence must be *its own*: a workflow whose
-step 1 opened #51 must not have step 3 satisfied by that same sighting. Fix: a `since seq` floor
-on the scan, so a step is graded on the records it produced — the same floor the turn id above is
-matched by, built once.
+The id could not be the result record's seq: a waiter has to name its turn *before* the turn
+exists, and a result seq is only knowable when the turn ends. So the identity is a **floor**, not
+a name — `internal/coordinator/turns.go`: the caller writes a record before it asks for the turn
+and holds that seq, ends carry the result seq, and a waiter settles on the first end past its
+floor. `drainEnds` is gone. Two details had to come with it: an end also carries `Done`, because a
+turn that never reached the agent writes no record to outrank a floor and its waiter would
+otherwise sit until its timeout; and a full waiter channel still drops rather than blocking the
+agent's event loop, so the buffer is sized for the handful of ends a waiter can be behind by.
+
+**`internal/work` scanned a whole thread.** A step's evidence has to be *its own*: a workflow whose
+step 1 opened #51 must not have step 3 satisfied by that same sighting. `overviewSince` filters
+the records to the ones past the step's floor — the same number the turn is recognised by, built
+once and used twice, because a turn *is* the records it produced.
 
 **A report can be long.** `{{.Steps.review.Report}}` is a whole review going into the next prompt.
-Trim at a sane budget and say in the prompt that it was trimmed, rather than silently truncating.
+`workflow.Trim` cuts at a rune boundary and says in the prompt that it did, because a silently
+truncated report reads as one that stopped mid-sentence and the agent has no way to know.
 
 ## What this does not become
 
@@ -242,7 +300,7 @@ Trim at a sane budget and say in the prompt that it was trimmed, rather than sil
 - **Not a CI system.** Checks, approvals and branch protection stay somebody's decision to report,
   not an obstacle to work past — the same line `mergePrompt` already draws.
 - **Not cheap.** Five steps is five real agent turns, one of them on a second model. That is the
-  point, but it should be said out loud in the docs.
+  point, and `plan` says it out loud on the button: "Every step is a real agent turn."
 
 ---
 
@@ -262,11 +320,16 @@ Each is a checkbox in one PR unless noted.
 | M7 | the planner: `plan <description>`, confirm, run | 1d |
 | M8 | `save as workflow` write-back, `WORKFLOWS.md`, `config.example.toml` | 0.5d |
 
-**≈6.5 days.** M0–M6 are the predetermined workflows and ship as one PR. M7–M8 are the planner:
-a separate feature behind its own config key that is useful only once M0–M6 exist, and that is the
-one place a split is worth arguing for.
+All eight shipped in one pull request. The split worth arguing for was M7–M8 — the planner is a
+separate feature behind its own config key, and it is useful only once M0–M6 exist — but it is
+small, it is off by default, and it shares `workflow.Validate` and the runner with the rest, so
+splitting it would have meant landing that shared surface twice.
 
 ## Validation
 
-`make test-race`, `make e2e`, `make restart-drill`, plus a live run of the `feature` workflow
-end to end against a scratch repository with two different agent kinds.
+- `make test-race` — the whole suite under the race detector.
+- `make lint` — `gofmt` and `go vet`.
+- `make e2e` — the binary through the terminal transport.
+- `make restart-drill` — SIGTERM mid-tool-call, drain, resume, including the workflow leg: a run
+  cut short mid-step is graded before it is resent, so a step that already happened is not asked
+  for twice.

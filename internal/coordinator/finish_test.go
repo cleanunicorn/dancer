@@ -349,34 +349,76 @@ func TestMergeReopensTheThreadItActsIn(t *testing.T) {
 // out, so runMerge empties the waiter before sending and anything left
 // over cannot satisfy it.
 func TestWaitForTurnIgnoresAnEndFromBeforeItAsked(t *testing.T) {
-	c := &Coordinator{turnEnds: map[transport.ThreadID][]chan executor.TaskID{}}
+	c := &Coordinator{turnEnds: map[transport.ThreadID][]chan turnEnd{}}
 	th, task := transport.ThreadID("C-dev/1.0"), executor.TaskID("t-1")
 
 	ends := c.awaitTurnEnd(th)
 	defer c.dropTurnWaiter(th, ends)
-	c.turnEnded(th, task) // the turn the human read the closing line of
-	drainEnds(ends)       // …which runMerge drops before it asks for anything
+	// The turn whose closing line the human read a second ago: the same
+	// task, and below the floor the merge is about to write.
+	c.turnEnded(th, turnEnd{Task: task, Seq: 41})
+	const since = 42
 
 	ctx, cancel := context.WithCancel(context.Background())
-	got := make(chan bool, 1)
-	go func() { got <- c.waitForTurn(ctx, nil, th, task, ends) }()
+	got := make(chan turnWait, 1)
+	go func() { got <- c.waitForTurn(ctx, task, since, ends, time.Minute) }()
 	select {
-	case ok := <-got:
-		t.Fatalf("waitForTurn returned %v on an end announced before the prompt", ok)
+	case w := <-got:
+		t.Fatalf("waitForTurn returned %v on an end announced before its floor", w)
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	// The turn it actually asked for.
-	c.turnEnded(th, task)
+	// The turn it actually asked for: past the floor.
+	c.turnEnded(th, turnEnd{Task: task, Seq: 57})
 	select {
-	case ok := <-got:
-		if !ok {
-			t.Error("waitForTurn missed the end of the turn it asked for")
+	case w := <-got:
+		if w != turnDone {
+			t.Errorf("waitForTurn = %v, want turnDone", w)
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("waitForTurn never saw its own turn end")
 	}
 	cancel()
+}
+
+// TestWaitForTurnSettlesOnAProcessThatIsGone: a turn that never reached
+// the agent writes no record to outrank the floor, so the only thing that
+// can release its waiter is the task's process being gone.
+func TestWaitForTurnSettlesOnAProcessThatIsGone(t *testing.T) {
+	c := &Coordinator{turnEnds: map[transport.ThreadID][]chan turnEnd{}}
+	th, task := transport.ThreadID("C-dev/1.1"), executor.TaskID("t-2")
+	ends := c.awaitTurnEnd(th)
+	defer c.dropTurnWaiter(th, ends)
+
+	got := make(chan turnWait, 1)
+	go func() { got <- c.waitForTurn(context.Background(), task, 42, ends, time.Minute) }()
+	// Another task's process going away is not ours.
+	c.turnEnded(th, turnEnd{Task: "t-other", Seq: 7, Done: true})
+	select {
+	case w := <-got:
+		t.Fatalf("waitForTurn returned %v for another task's process", w)
+	case <-time.After(50 * time.Millisecond):
+	}
+	c.turnEnded(th, turnEnd{Task: task, Seq: 7, Done: true})
+	select {
+	case w := <-got:
+		if w != turnDone {
+			t.Errorf("waitForTurn = %v, want turnDone", w)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("waitForTurn never settled on a process that is gone")
+	}
+}
+
+// TestWaitForTurnGivesUp: a turn that outlasts the caller's patience.
+func TestWaitForTurnGivesUp(t *testing.T) {
+	c := &Coordinator{turnEnds: map[transport.ThreadID][]chan turnEnd{}}
+	th := transport.ThreadID("C-dev/1.2")
+	ends := c.awaitTurnEnd(th)
+	defer c.dropTurnWaiter(th, ends)
+	if w := c.waitForTurn(context.Background(), "t-3", 42, ends, 10*time.Millisecond); w != turnSlow {
+		t.Errorf("waitForTurn = %v, want turnSlow", w)
+	}
 }
 
 // boundTo says the thread still holds a task, warm or running.

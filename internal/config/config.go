@@ -19,6 +19,7 @@ import (
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	"github.com/cleanunicorn/dispatch/internal/environment"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 // Config is the on-disk configuration.
@@ -34,6 +35,70 @@ type Config struct {
 	Surfaces    []Surface    `toml:"surfaces"`
 	Channels    []Channel    `toml:"channels"`
 	Definitions []Definition `toml:"definitions"`
+	Workflows   []Workflow   `toml:"workflow"`
+}
+
+// Workflow is a piece of work broken into steps (internal/workflow),
+// written down in config so it can be started by name. Its fields are
+// workflow.Definition's; the two are kept apart for the reason Definition
+// and agent.Definition are — one is the file's shape, the other is the
+// program's.
+type Workflow struct {
+	Name        string         `toml:"name"`
+	Description string         `toml:"description,omitempty"`
+	Steps       []WorkflowStep `toml:"step"`
+}
+
+// WorkflowStep is one step: a prompt for an agent, one of dispatch's own
+// words, or a question for a human. See internal/workflow for what each
+// field means and what makes a step done.
+type WorkflowStep struct {
+	Name       string `toml:"name"`
+	Agent      string `toml:"agent,omitempty"`
+	Model      string `toml:"model,omitempty"`
+	Thread     string `toml:"thread,omitempty"`
+	Prompt     string `toml:"prompt,omitempty"`
+	Builtin    string `toml:"builtin,omitempty"`
+	Expect     string `toml:"expect,omitempty"`
+	Check      string `toml:"check,omitempty"`
+	Gate       string `toml:"gate,omitempty"`
+	OnFail     string `toml:"on_fail,omitempty"`
+	MaxRetries int    `toml:"max_retries,omitempty"`
+}
+
+// WorkflowDefinitions is the config's workflows in the program's shape.
+func (c *Config) WorkflowDefinitions() []workflow.Definition {
+	out := make([]workflow.Definition, 0, len(c.Workflows))
+	for _, w := range c.Workflows {
+		out = append(out, w.definition())
+	}
+	return out
+}
+
+func (w Workflow) definition() workflow.Definition {
+	d := workflow.Definition{Name: w.Name, Description: w.Description}
+	for _, s := range w.Steps {
+		d.Steps = append(d.Steps, workflow.Step{
+			Name: s.Name, Agent: s.Agent, Model: s.Model, Thread: s.Thread,
+			Prompt: s.Prompt, Builtin: s.Builtin, Expect: s.Expect,
+			Check: s.Check, Gate: s.Gate, OnFail: s.OnFail, MaxRetries: s.MaxRetries,
+		})
+	}
+	return d
+}
+
+// WorkflowFromDefinition is the other direction: what the planner or a
+// chat-driven change writes back into config.toml.
+func WorkflowFromDefinition(d workflow.Definition) Workflow {
+	w := Workflow{Name: d.Name, Description: d.Description}
+	for _, s := range d.Steps {
+		w.Steps = append(w.Steps, WorkflowStep{
+			Name: s.Name, Agent: s.Agent, Model: s.Model, Thread: s.Thread,
+			Prompt: s.Prompt, Builtin: s.Builtin, Expect: s.Expect,
+			Check: s.Check, Gate: s.Gate, OnFail: s.OnFail, MaxRetries: s.MaxRetries,
+		})
+	}
+	return w
 }
 
 // Channel sets per-channel defaults: messages in that channel without an
@@ -103,6 +168,12 @@ type Server struct {
 	// MaxAutoResumes caps consecutive automatic resumes of one task, so a
 	// task that keeps taking dispatch down cannot restart-loop (default 3).
 	MaxAutoResumes int `toml:"max_auto_resumes,omitempty"`
+	// PlannerAgent is the definition that writes on-demand workflows for
+	// `plan <what you want>` (internal/coordinator/plan.go). Empty — the
+	// default — refuses the word: composing a workflow with a model is a
+	// deliberate step, and without it dispatch runs only the workflows
+	// somebody wrote down in [[workflow]].
+	PlannerAgent string `toml:"planner_agent,omitempty"`
 }
 
 // AgentCLI is one agent's section — [claude], [codex], [opencode] — saying
@@ -456,6 +527,23 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: definition %q: unknown environment kind %q", d.Name, d.Environment.Kind)
 		}
 	}
+	if c.Server.PlannerAgent != "" && !seen[c.Server.PlannerAgent] {
+		return fmt.Errorf("config: server.planner_agent: unknown agent %q", c.Server.PlannerAgent)
+	}
+	// A workflow is checked by the same gate the planner's output goes
+	// through (workflow.Validate), including that every agent it names
+	// exists — which here is the config's own definitions, since the
+	// store has not been seeded yet.
+	flows := map[string]bool{}
+	for _, w := range c.Workflows {
+		if flows[w.Name] {
+			return fmt.Errorf("config: duplicate workflow %q", w.Name)
+		}
+		flows[w.Name] = true
+		if err := workflow.Validate(w.definition(), func(name string) bool { return seen[name] }); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+	}
 	for _, ch := range c.Channels {
 		if ch.ID == "" {
 			return fmt.Errorf("config: channel without id")
@@ -609,6 +697,33 @@ func AppendDefinition(path string, d Definition) error {
 // AppendChannel records a per-channel default agent by appending a
 // [[channels]] block to the config file at path (later blocks win, see
 // Channel). The result is validated before the file is touched.
+// AppendWorkflow writes a workflow into config.toml. It is what turns a
+// plan somebody approved in a thread into one that can be started by name
+// tomorrow — the same step AppendDefinition is for an agent, and for the
+// same reason: what is only in memory is gone on the next restart.
+func AppendWorkflow(path string, w Workflow) error {
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	cfg.Workflows = append(cfg.Workflows, w)
+	cfg.applyDefaults(path)
+	if err := cfg.validate(); err != nil {
+		return err
+	}
+	snippet, err := workflowSnippet(w)
+	if err != nil {
+		return err
+	}
+	return appendBlock(path, "# saved from chat on "+time.Now().Format("2006-01-02"), snippet)
+}
+
+func workflowSnippet(w Workflow) ([]byte, error) {
+	return tomlSnippet(struct {
+		Workflows []Workflow `toml:"workflow"`
+	}{[]Workflow{w}})
+}
+
 func AppendChannel(path string, ch Channel) error {
 	cfg, err := Load(path)
 	if err != nil {
