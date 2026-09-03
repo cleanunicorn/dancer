@@ -41,4 +41,20 @@ type Executor interface {
 	Send(ctx context.Context, id TaskID, text string, files []agent.File) error
 	// Cancel stops a running task.
 	Cancel(ctx context.Context, id TaskID) error
+	// IsRunning reports whether the task has a live process. A finished
+	// turn keeps its process warm for idle_timeout, so this says "warm or
+	// working", not "mid-turn" — the distinction a workflow step's model
+	// override needs (a warm process would ignore the new model).
+	IsRunning(id TaskID) bool
+	// Check runs one shell command in the task's environment and reports
+	// the exit code and what it printed. It is how a workflow step is
+	// judged on something the log cannot mine — "the tests pass" is not a
+	// pull request — by dispatch running the command itself rather than
+	// believing the agent's account of it.
+	//
+	// It borrows the task's live environment, so it has to be called
+	// while the process is still there: after the turn ends, before the
+	// idle timeout tears a per-task container down. ErrNotRunning when
+	// it is already gone.
+	Check(ctx context.Context, id TaskID, cmd string) (code int, output string, err error)
 }

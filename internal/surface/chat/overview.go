@@ -6,6 +6,7 @@ import (
 
 	"github.com/cleanunicorn/dispatch/internal/transport"
 	"github.com/cleanunicorn/dispatch/internal/work"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 // Overview is dispatch's word on what a thread is working on, in at most two
@@ -123,4 +124,14 @@ func WithOverview(line string, w *work.State) string {
 		return line + "\n" + o
 	}
 	return line
+}
+
+// withWorkflow appends where a workflow on the thread stands, the way the
+// overview appends what the thread is working on — so `status` answers both
+// halves of "what is going on here".
+func withWorkflow(line string, w *workflow.State) string {
+	if w == nil || !w.Live() {
+		return line
+	}
+	return line + "\n🧗 workflow *" + w.Def.Name + "* — " + w.Summary()
 }

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cleanunicorn/dispatch/internal/executor"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/surface"
 	"github.com/cleanunicorn/dispatch/internal/transport"
 	"github.com/cleanunicorn/dispatch/internal/work"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 // The end of a piece of work is the same few messages every time: open a
@@ -37,6 +37,12 @@ import (
 // that can check the repository out. `default <agent>` in the channel
 // changes what a review runs on nothing but the channel's next new thread;
 // to review with a different agent, start that thread by hand.
+//
+// The word itself is only the refusals and the sending off: the open, the
+// wait for the review's turn and the reading of its report back are one
+// quiet run of the workflow engine (workflow.go's attemptReview) — the
+// same path a named workflow's review step takes, with none of a named
+// run's progress lines.
 func (c *Coordinator) reviewPR(ctx context.Context, s surface.Surface, it surface.ReviewPR) {
 	w := c.overview(ctx, it.Thread)
 	if w == nil || w.PR == nil {
@@ -44,31 +50,24 @@ func (c *Coordinator) reviewPR(ctx context.Context, s surface.Surface, it surfac
 		return
 	}
 	host := c.taskTransport(ctx, s, it.Thread)
-	opener, ok := c.transports[host].(transport.ThreadOpener)
-	if !ok {
+	if _, ok := c.transports[host].(transport.ThreadOpener); !ok {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: fmt.Sprintf("the %s transport cannot open a thread — start the review thread yourself", host)}, s)
 		return
 	}
-	prompt := reviewPrompt(*w)
-	newTh, err := opener.OpenThread(ctx, channelOf(it.Thread), transport.Outbound{Text: prompt})
-	if err != nil {
-		c.Log.Error("review: open thread", "transport", host, "thread", it.Thread, "err", err)
-		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: "review: could not open a thread — " + err.Error()}, s)
-		return
-	}
-	c.setHost(newTh, host)
-	if tt, ok := c.transports[host].(transport.ThreadTracker); ok {
-		tt.Remember(newTh)
-	}
-	c.Log.Info("review thread opened", "from", it.Thread, "thread", newTh, "pr", w.PR.Number)
 	// The review is happening, so this thread is live again: without
 	// this, execute's defer puts the tombstone back and the reply below
 	// lands in a thread dispatch has stopped listening to. Only here,
 	// past every refusal above — `review` that came to nothing must leave
 	// a closed thread closed.
 	c.reopenThread(ctx, s, it.Thread)
-	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "🔍 reviewing " + prLink(*w) + " in a new thread"}, s)
-	c.runTask(ctx, s, surface.RunTask{Thread: newTh, Agent: c.agentOf(ctx, s, it.Thread), Prompt: prompt, User: it.User})
+	c.beginWorkflow(ctx, workflowStart{s: s, quiet: true, st: oneStepWorkflow("review", workflow.BuiltinReview, it.Thread, c.taskTransport(ctx, s, it.Thread), s.Name(), it.User)})
+}
+
+// oneStepWorkflow is the run a bare end-of-thread word is: one built-in
+// step, quiet, over when the step is.
+func oneStepWorkflow(name, builtin string, th transport.ThreadID, transportName, surfaceName, user string) *workflow.State {
+	return workflow.Start(workflow.Definition{Name: name, Steps: []workflow.Step{{Name: name, Builtin: builtin}}},
+		th, transportName, surfaceName, "", user, time.Now())
 }
 
 // agentOf names the agent to run beside a thread: the one the thread's own
@@ -118,9 +117,10 @@ const mergeTimeout = 30 * time.Minute
 // reports success without a merge in the log closes nothing; the thread
 // stays open with what the scan did and did not see.
 //
-// It runs off the inbox goroutine, because the turn takes minutes and
-// dispatch has to keep hearing everything else, and one at a time per
-// thread.
+// The word is the refusals, the claim and the sending off; the asking,
+// waiting and reading back are one quiet run of the workflow engine
+// (workflow.go's attemptMerge), the same path a named workflow's merge
+// step takes.
 func (c *Coordinator) mergePR(ctx context.Context, s surface.Surface, it surface.MergePR) {
 	method, ok := surface.MergeMethod(it.Method)
 	if !ok {
@@ -159,79 +159,49 @@ func (c *Coordinator) mergePR(ctx context.Context, s surface.Surface, it surface
 	// every refusal above — a `merge` that merged nothing must leave a
 	// closed thread closed.
 	c.reopenThread(ctx, s, it.Thread)
-	go c.runMerge(ctx, s, it, *w, method)
+	c.beginWorkflow(ctx, workflowStart{s: s, quiet: true, mergeClaimed: true, mergeMethod: method,
+		st: oneStepWorkflow("merge", workflow.BuiltinMerge, it.Thread, c.taskTransport(ctx, s, it.Thread), s.Name(), it.User)})
 }
 
-// runMerge is mergePR off the inbox goroutine: ask, wait, read the log.
+// The merge record, written twice: once when the agent is asked, which is
+// also the floor the turn and its evidence are read from, and once with
+// what the log said afterwards. A crash between them leaves a thread that
+// says what it was in the middle of.
+const recordMerge = "merge"
+
+const (
+	mergeAsked    = "asked"
+	mergeFinished = "finished"
+)
+
+type mergeRecord struct {
+	PR     string `json:"pr"`
+	Method string `json:"method"`
+	Phase  string `json:"phase"`
+	Merged bool   `json:"merged,omitempty"`
+}
+
+// mergePrompt is what the agent is asked. Every step in it is a command
+// the agent runs; dispatch only reads what came back.
 //
-// ctx is dispatch's own, so a shutdown ends the wait rather than leaving a
-// goroutine holding the thread; the close at the end runs on a context
-// that outlives it, the way persist does, because a merge that happened
-// must still be recorded.
-func (c *Coordinator) runMerge(ctx context.Context, s surface.Surface, it surface.MergePR, w work.State, method string) {
-	defer c.endMerge(it.Thread)
-	th := it.Thread
-
-	// Registered before the line is posted and emptied after it. Both
-	// halves matter, and the order is the whole point. Registering first
-	// means our own turn's end cannot be announced into a waiter that is
-	// not there yet. Emptying afterwards drops the *previous* turn's end
-	// — which the post gave a Slack round-trip's worth of time to arrive
-	// in, and which on the warm path is the same task, so the id below
-	// cannot tell it from ours. It cannot cost us our own: the prompt
-	// below has not been sent.
-	ends := c.awaitTurnEnd(th)
-	defer c.dropTurnWaiter(th, ends)
-	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: fmt.Sprintf("🚢 asking the agent to merge %s (%s)…", prLink(w), method)}, s)
-	drainEnds(ends)
-	task, started := c.followUp(ctx, s, surface.FollowUp{Thread: th, Text: mergePrompt(w, method), User: it.User})
-	if !started {
-		// followUp reports its own failures, but not all of them, so say
-		// something rather than going quiet on a thread that just asked.
-		c.Log.Info("merge: no turn to wait for", "thread", th)
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "· nothing here could be asked to merge it — start a task with `run` first"}, s)
-		return
-	}
-	if !c.waitForTurn(ctx, s, th, task, ends) {
-		return
-	}
-
-	// The turn is over; record and close on a context a shutdown cannot
-	// take away.
-	ctx = context.WithoutCancel(ctx)
-	after := c.overview(ctx, th)
-	merged := after != nil && after.Merged
-	c.append(ctx, task, th, "merge", map[string]any{"pr": prURL(w), "method": method, "merged": merged})
-	if !merged {
-		c.Log.Info("merge: the log does not say it merged", "thread", th, "pr", prURL(w))
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "the log does not show " + prLink(w) + " merged — the thread stays open. `merge` again, or `close` if you merged it elsewhere"}, s)
-		return
-	}
-	c.Log.Info("merged", "thread", th, "pr", prURL(w), "method", method)
-	c.closeThread(ctx, s, surface.CloseThread{Thread: th})
-}
-
-// waitForTurn blocks until task's turn ends, false when it never did:
-// dispatch is going down, or the turn outlasted mergeTimeout. Ends of
-// *other* turns go past — a thread's previous turn can be torn down after
-// this one was asked for, and settling on that would read the log before
-// the agent had touched it.
-func (c *Coordinator) waitForTurn(ctx context.Context, s surface.Surface, th transport.ThreadID, task executor.TaskID, ends chan executor.TaskID) bool {
-	deadline := time.After(mergeTimeout)
-	for {
-		select {
-		case ended := <-ends:
-			if ended == task {
-				return true
-			}
-		case <-ctx.Done():
-			return false
-		case <-deadline:
-			c.Log.Warn("merge: the turn never ended", "thread", th, "task", task, "after", mergeTimeout)
-			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th, Text: "· the merging turn is still going — the thread stays open"}, s)
-			return false
-		}
-	}
+// It says twice what not to do, because the difference between a conflict
+// and a refusal is the whole of dispatch's opinion here: a conflict is a
+// mechanical obstacle and gets fixed, while a red check, a missing review
+// or a branch protection rule is somebody's decision and is a thing to
+// report.
+func mergePrompt(w work.State, method string) string {
+	var b strings.Builder
+	b.WriteString("Get " + prURL(w) + " merged.\n\n")
+	b.WriteString("1. If anything belonging to this change is uncommitted, commit it and push. ")
+	b.WriteString("Leave scratch files and debris out of the commit, and say what you left out.\n")
+	b.WriteString("2. Ask GitHub whether it can merge (`gh pr view --json mergeStateStatus,mergeable`). ")
+	b.WriteString("If it conflicts with the base branch, merge the base branch in, resolve the conflicts and push.\n")
+	b.WriteString("3. Merge it: `gh pr merge " + prArg(w) + " --" + method + " --delete-branch`.\n")
+	b.WriteString("4. Report what happened, and paste what gh said.\n\n")
+	b.WriteString("Do not try to get past a failing check, a missing review or a branch protection rule — ")
+	b.WriteString("those are decisions somebody made, so report the refusal and stop. ")
+	b.WriteString("Do not close, reopen or retarget the pull request, and do not force-push over anyone.")
+	return b.String()
 }
 
 // turnRunning says the thread has a turn in flight — not merely a process
@@ -262,29 +232,6 @@ func (c *Coordinator) answering(th transport.ThreadID) bool {
 	return ok
 }
 
-// mergePrompt is what the agent is asked. Every step in it is a command
-// the agent runs; dispatch only reads what came back.
-//
-// It says twice what not to do, because the difference between a conflict
-// and a refusal is the whole of dispatch's opinion here: a conflict is a
-// mechanical obstacle and gets fixed, while a red check, a missing review
-// or a branch protection rule is somebody's decision and is a thing to
-// report.
-func mergePrompt(w work.State, method string) string {
-	var b strings.Builder
-	b.WriteString("Get " + prURL(w) + " merged.\n\n")
-	b.WriteString("1. If anything belonging to this change is uncommitted, commit it and push. ")
-	b.WriteString("Leave scratch files and debris out of the commit, and say what you left out.\n")
-	b.WriteString("2. Ask GitHub whether it can merge (`gh pr view --json mergeStateStatus,mergeable`). ")
-	b.WriteString("If it conflicts with the base branch, merge the base branch in, resolve the conflicts and push.\n")
-	b.WriteString("3. Merge it: `gh pr merge " + prArg(w) + " --" + method + " --delete-branch`.\n")
-	b.WriteString("4. Report what happened, and paste what gh said.\n\n")
-	b.WriteString("Do not try to get past a failing check, a missing review or a branch protection rule — ")
-	b.WriteString("those are decisions somebody made, so report the refusal and stop. ")
-	b.WriteString("Do not close, reopen or retarget the pull request, and do not force-push over anyone.")
-	return b.String()
-}
-
 // startMerge claims the thread for one merge, false when another has it.
 func (c *Coordinator) startMerge(th transport.ThreadID) bool {
 	c.mu.Lock()
@@ -300,72 +247,6 @@ func (c *Coordinator) endMerge(th transport.ThreadID) {
 	c.mu.Lock()
 	delete(c.merging, th)
 	c.mu.Unlock()
-}
-
-// awaitTurnEnd returns a channel that every turn ending on the thread is
-// announced on, well or badly (taskSink.OnEvent and drive call turnEnded).
-// It names the task, because the caller is waiting for one turn and the
-// thread may end another first; it is buffered so an end is never lost
-// while the caller is between selects, and turnEnded never blocks on a
-// waiter that has gone away.
-func (c *Coordinator) awaitTurnEnd(th transport.ThreadID) chan executor.TaskID {
-	ch := make(chan executor.TaskID, turnEndBuffer)
-	c.mu.Lock()
-	c.turnEnds[th] = append(c.turnEnds[th], ch)
-	c.mu.Unlock()
-	return ch
-}
-
-// dropTurnWaiter removes a waiter that gave up, so a thread nobody is
-// waiting on keeps no channels.
-func (c *Coordinator) dropTurnWaiter(th transport.ThreadID, ch chan executor.TaskID) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	kept := c.turnEnds[th][:0]
-	for _, w := range c.turnEnds[th] {
-		if w != ch {
-			kept = append(kept, w)
-		}
-	}
-	if len(kept) == 0 {
-		delete(c.turnEnds, th)
-		return
-	}
-	c.turnEnds[th] = kept
-}
-
-// turnEndBuffer is how many turn ends one waiter can fall behind by. A
-// waiter is interested in one turn and hears about at most a handful
-// before it: past this the oldest are what it has already skipped.
-const turnEndBuffer = 8
-
-// drainEnds empties a waiter of the ends it has already been told about.
-// Not "drain", which in this codebase is the shutdown letting in-flight
-// tool calls finish.
-func drainEnds(ends chan executor.TaskID) {
-	for {
-		select {
-		case <-ends:
-		default:
-			return
-		}
-	}
-}
-
-// turnEnded tells everything waiting on this thread that task's turn is
-// over. Waiters are left registered — the one that cares removes itself
-// (dropTurnWaiter) — and a full one is dropped rather than blocking the
-// agent's event loop behind a reader that is not there.
-func (c *Coordinator) turnEnded(th transport.ThreadID, task executor.TaskID) {
-	c.mu.Lock()
-	waiters := append([]chan executor.TaskID(nil), c.turnEnds[th]...)
-	c.mu.Unlock()
-	for _, ch := range waiters {
-		select {
-		case ch <- task:
-		default:
-		}
-	}
 }
 
 // noPullRequest says why there is nothing to act on, using whatever the

@@ -18,6 +18,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/transport"
 	"github.com/cleanunicorn/dispatch/internal/work"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 // Surface interprets inbound traffic and renders coordinator events.
@@ -124,6 +125,50 @@ func MergeMethod(s string) (string, bool) {
 	return "", false
 }
 
+// RunWorkflow starts the workflow Name on Thread, with Ask as what the
+// human wants done — the {{.Ask}} every step's prompt is rendered
+// against. An empty Name asks for one from a list.
+//
+// A workflow is steps dispatch runs and then checks for itself
+// (internal/workflow); it is not a longer prompt. The thread it starts on
+// is its home: progress is posted there, and a step that did not ask for
+// a thread of its own runs there.
+type RunWorkflow struct {
+	Thread transport.ThreadID
+	Name   string
+	Ask    string
+	User   string
+}
+
+// PlanWorkflow writes a workflow for this one message instead of looking
+// one up: the human says what they want and how they want it done, and
+// dispatch composes the steps out of the agents that exist.
+//
+// The plan is the same struct a config workflow parses into and goes
+// through the same workflow.Validate, so there is no second, looser path
+// for a generated one — and it is shown and confirmed before it runs.
+type PlanWorkflow struct {
+	Thread transport.ThreadID
+	Ask    string
+	User   string
+}
+
+// SaveWorkflow writes the plan last made on Thread into config.toml
+// under Name, turning "that worked" into a workflow that can be started
+// by name tomorrow. A workflow made from chat that is not written back is
+// lost on the next restart, which is why this exists at all.
+type SaveWorkflow struct {
+	Thread transport.ThreadID
+	Name   string
+}
+
+// StopWorkflow ends the workflow running on Thread, leaving the thread
+// and whatever the last step did exactly where they are.
+type StopWorkflow struct{ Thread transport.ThreadID }
+
+// ListWorkflows asks for the workflows that can be started.
+type ListWorkflows struct{ Thread transport.ThreadID }
+
 // ListAgents asks for the agent definitions.
 type ListAgents struct{ Thread transport.ThreadID }
 
@@ -165,21 +210,26 @@ type Say struct {
 	Text   string
 }
 
-func (RunTask) isIntent()      {}
-func (FollowUp) isIntent()     {}
-func (Cancel) isIntent()       {}
-func (CloseThread) isIntent()  {}
-func (Status) isIntent()       {}
-func (ReviewPR) isIntent()     {}
-func (MergePR) isIntent()      {}
-func (ListAgents) isIntent()   {}
-func (ListCommands) isIntent() {}
-func (AddAgent) isIntent()     {}
-func (EditAgent) isIntent()    {}
-func (DeleteAgent) isIntent()  {}
-func (SetDefault) isIntent()   {}
-func (Decide) isIntent()       {}
-func (Say) isIntent()          {}
+func (RunTask) isIntent()       {}
+func (FollowUp) isIntent()      {}
+func (Cancel) isIntent()        {}
+func (CloseThread) isIntent()   {}
+func (Status) isIntent()        {}
+func (ReviewPR) isIntent()      {}
+func (MergePR) isIntent()       {}
+func (RunWorkflow) isIntent()   {}
+func (PlanWorkflow) isIntent()  {}
+func (SaveWorkflow) isIntent()  {}
+func (StopWorkflow) isIntent()  {}
+func (ListWorkflows) isIntent() {}
+func (ListAgents) isIntent()    {}
+func (ListCommands) isIntent()  {}
+func (AddAgent) isIntent()      {}
+func (EditAgent) isIntent()     {}
+func (DeleteAgent) isIntent()   {}
+func (SetDefault) isIntent()    {}
+func (Decide) isIntent()        {}
+func (Say) isIntent()           {}
 
 // EventKind classifies coordinator events.
 type EventKind string
@@ -197,6 +247,7 @@ const (
 	EventReply      EventKind = "reply"      // Text answers a Status/ListAgents/Say
 	EventNotice     EventKind = "notice"     // Text is dispatch's own word on Task that asks the human to act (a restart left it for them)
 	EventError      EventKind = "error"      // Text explains a failure
+	EventWorkflow   EventKind = "workflow"   // a workflow moved: Workflow carries the run, Text says what happened
 )
 
 // Event is what the coordinator tells surfaces about.
@@ -223,4 +274,9 @@ type Event struct {
 	// to go and look: the end of a turn, and an answered `status`. Nil
 	// when the thread has touched no repository, which is most of them.
 	Work *work.State
+	// Workflow is the run this event is about, on EventWorkflow: which
+	// step it is on, what each one did, and whether it is still going.
+	// The chat surface renders it as a progress line on the workflow's
+	// home thread; the feed renders every one.
+	Workflow *workflow.State
 }

@@ -20,6 +20,12 @@ const overviewRecords = 1500
 //
 // It reads the log rather than remembering: a restart, a new container and
 // a task that ended all leave the references exactly where they were.
+//
+// It is the whole thread, always. A workflow step is graded on the records
+// it produced rather than on the thread's, but that window is cut in the
+// runner (workflow.go's evidence), which is scanning records it already
+// had to read for other reasons — a second, floored overview here would
+// read the thread back twice for one answer.
 func (c *Coordinator) overview(ctx context.Context, th transport.ThreadID) *work.State {
 	if th == "" {
 		return nil

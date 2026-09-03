@@ -197,6 +197,23 @@ func (f *fakeTransport) waitForN(t *testing.T, th transport.ThreadID, sub string
 // runs the same command and is turned down by GitHub.
 type fakeAgent struct{ merge string }
 
+// fakePlan is what the fake planner answers. "nonsense" asks for a plan
+// that parses and is then refused by workflow.Validate — an agent nobody
+// defined — which is the case that must leave the thread with a message
+// and nothing started.
+func fakePlan(prompt string) string {
+	if strings.Contains(prompt, "nonsense") {
+		return `{"name":"x","steps":[{"name":"a","agent":"ghost","prompt":"do it"}]}`
+	}
+	if strings.Contains(prompt, "garbage") {
+		return "I could not work out any steps for that."
+	}
+	return `{"name":"x","description":"implement then approve","steps":[
+		{"name":"implement","agent":"coder","prompt":"{{.Ask}}","expect":"pr"},
+		{"name":"approve","gate":"Merge {{.PR}}?"}
+	]}`
+}
+
 func (fakeAgent) Kind() agent.Kind { return "fake" }
 func (f fakeAgent) Start(ctx context.Context, env environment.Environment, def agent.Definition, prompt string) (agent.Run, error) {
 	r := newFakeRun()
@@ -217,6 +234,19 @@ func (f fakeAgent) Start(ctx context.Context, env environment.Environment, def a
 		}()
 		return r, nil
 	}
+	// The planning turn (plan.go). It is recognised by its own prompt,
+	// which is what dispatch really sends, and it answers with JSON the
+	// way a model does: prose around one object, which ParsePlan reads
+	// past. What it plans depends on the ask, so one fake covers a plan
+	// that holds up and one that does not.
+	if strings.Contains(prompt, "composing a dispatch workflow") {
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: "sess-plan"})
+			r.emit(agent.Event{Type: agent.EventText, Text: "Here you go:\n\n" + fakePlan(prompt)})
+			r.emit(agent.Event{Type: agent.EventResult, Text: "planned", Session: "sess-plan"})
+		}()
+		return r, nil
+	}
 	// "botch": a turn that opened a pull request and then failed. The
 	// half-finished work it left behind is what a human has to deal with.
 	if strings.HasPrefix(prompt, "botch") {
@@ -227,6 +257,16 @@ func (f fakeAgent) Start(ctx context.Context, env environment.Environment, def a
 			r.emit(agent.Event{Type: agent.EventToolUse, Tool: "Bash", ToolID: "b-2", ToolInput: map[string]any{"command": "gh pr create --title wip"}})
 			r.emit(agent.Event{Type: agent.EventToolResult, ToolID: "b-2", Text: "https://github.com/cleanunicorn/dispatch/pull/60"})
 			r.emit(agent.Event{Type: agent.EventError, Text: "the build fell over", Session: "sess-b"})
+		}()
+		return r, nil
+	}
+	// "slow": a turn that only ends when its process is stopped — the
+	// shape of a turn a restart cuts short, with nothing racy about how
+	// its records land.
+	if strings.HasPrefix(prompt, "slow") {
+		go func() {
+			r.emit(agent.Event{Type: agent.EventInit, Session: "sess-slow"})
+			<-r.done
 		}()
 		return r, nil
 	}

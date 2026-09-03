@@ -49,6 +49,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/surface"
 	"github.com/cleanunicorn/dispatch/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 // Coordinator wires transports, surfaces, executor and store together.
@@ -119,30 +120,49 @@ type Coordinator struct {
 	// Empty — the default — means every prompt reaches a person, whatever
 	// the decider thinks.
 	AutoAllow []string
+	// PlannerAgent is the definition that writes on-demand workflows
+	// (`plan <what you want>`, see plan.go). Empty — the default — means
+	// dispatch has no such word: composing a workflow with a model is a
+	// deliberate, configured step, and without it dispatch runs only the
+	// workflows somebody wrote down. A message beginning "plan" is then
+	// an ordinary message and reaches the thread's agent unchanged;
+	// `workflows` is where the unset feature says it exists.
+	PlannerAgent string
+	// SaveWorkflow persists a workflow made from chat outside the store
+	// (the config file), so it survives a restart. Nil keeps it in
+	// memory only, and says so when asked to save one.
+	SaveWorkflow func(ctx context.Context, d workflow.Definition) error
 	// AgentKinds are the agent kinds the executor has a driver for, in
 	// agent.Kinds order. The add-agent wizard asks which one to use when
 	// there is more than one; the first is the default.
 	AgentKinds []agent.Kind
+	// Workflows are the workflow definitions config seeded, startable by
+	// name (see workflow.go — the runner) — and the built-ins the bare
+	// end-of-thread words run as do not come from here (finish.go).
+	Workflows []workflow.Definition
 
 	drives sync.WaitGroup
 
 	transports map[string]transport.Transport
 
-	mu       sync.Mutex
-	threads  map[transport.ThreadID]executor.TaskID        // live task per thread
-	owner    map[executor.TaskID]string                    // task -> surface that started it
-	pending  map[string]chan transport.Decision            // prompt base id -> waiter
-	askText  map[transport.ThreadID]string                 // thread -> prompt base id accepting a typed answer
-	wizards  map[transport.ThreadID]context.CancelFunc     // open question flows (agent add/edit/delete, run picker)
-	closed   map[transport.ThreadID]bool                   // threads a human ended; projection of the store
-	merging  map[transport.ThreadID]bool                   // threads with a merge in flight (finish.go)
-	turnEnds map[transport.ThreadID][]chan executor.TaskID // waiters for a turn's end (finish.go)
-	sinks    map[executor.TaskID]*taskSink                 // live tasks, for follow-up heartbeats
-	marks    map[transport.ThreadID]string                 // reaction currently on a thread's root message
-	markMu   map[transport.ThreadID]*sync.Mutex            // serializes a thread's mark swap (see mark)
-	outMu    map[transport.ThreadID]*sync.Mutex            // serializes render+send per thread (keyed messages need order)
-	hosts    map[transport.ThreadID]string                 // transport hosting a thread, once known (see threads.go)
-	titles   map[transport.ThreadID]string                 // first human line of a thread, once read
+	mu        sync.Mutex
+	threads   map[transport.ThreadID]executor.TaskID     // live task per thread
+	owner     map[executor.TaskID]string                 // task -> surface that started it
+	pending   map[string]chan transport.Decision         // prompt base id -> waiter
+	askText   map[transport.ThreadID]string              // thread -> prompt base id accepting a typed answer
+	wizards   map[transport.ThreadID]context.CancelFunc  // open question flows (agent add/edit/delete, run picker)
+	closed    map[transport.ThreadID]bool                // threads a human ended; projection of the store
+	plans     map[transport.ThreadID]workflow.Definition // last plan made on a thread, for `workflow save` (plan.go)
+	merging   map[transport.ThreadID]bool                // threads with a merge in flight (finish.go)
+	workflows map[transport.ThreadID]*workflowRun        // named workflow runs (workflow.go)
+	turnEnds  map[transport.ThreadID][]chan turnEnd      // waiters for a turn's end (turns.go)
+	sinks     map[executor.TaskID]*taskSink              // live tasks, for follow-up heartbeats
+	cutShort  map[executor.TaskID]bool                   // tasks the previous process left mid-turn (seedCutShort)
+	marks     map[transport.ThreadID]string              // reaction currently on a thread's root message
+	markMu    map[transport.ThreadID]*sync.Mutex         // serializes a thread's mark swap (see mark)
+	outMu     map[transport.ThreadID]*sync.Mutex         // serializes render+send per thread (keyed messages need order)
+	hosts     map[transport.ThreadID]string              // transport hosting a thread, once known (see threads.go)
+	titles    map[transport.ThreadID]string              // first human line of a thread, once read
 }
 
 // New returns a Coordinator.
@@ -160,13 +180,16 @@ func New(st store.Store, ex executor.Executor, transports []transport.Transport,
 		wizards:    map[transport.ThreadID]context.CancelFunc{},
 		closed:     map[transport.ThreadID]bool{},
 		merging:    map[transport.ThreadID]bool{},
-		turnEnds:   map[transport.ThreadID][]chan executor.TaskID{},
+		workflows:  map[transport.ThreadID]*workflowRun{},
+		turnEnds:   map[transport.ThreadID][]chan turnEnd{},
 		sinks:      map[executor.TaskID]*taskSink{},
+		cutShort:   map[executor.TaskID]bool{},
 		marks:      map[transport.ThreadID]string{},
 		markMu:     map[transport.ThreadID]*sync.Mutex{},
 		outMu:      map[transport.ThreadID]*sync.Mutex{},
 		hosts:      map[transport.ThreadID]string{},
 		titles:     map[transport.ThreadID]string{},
+		plans:      map[transport.ThreadID]workflow.Definition{},
 	}
 	for _, t := range transports {
 		c.transports[t.Name()] = t
@@ -187,11 +210,15 @@ func (c *Coordinator) Run(ctx context.Context) error {
 	if err := c.seedMarks(ctx); err != nil {
 		return err
 	}
+	if err := c.seedCutShort(ctx); err != nil {
+		return err
+	}
 	if err := c.recover(ctx); err != nil {
 		return err
 	}
 	c.seedThreads(ctx)
 	c.resumeFlows(ctx)
+	c.resumeWorkflows(ctx)
 	inbox := make(chan transport.Inbound, 64)
 	var wg sync.WaitGroup
 	for _, t := range c.Transports {
@@ -254,6 +281,58 @@ func (c *Coordinator) shutdown(ctx context.Context) {
 	case <-time.After(timeout + 10*time.Second):
 		c.Log.Warn("shutdown: tasks still running after drain timeout")
 	}
+}
+
+// seedCutShort remembers which tasks the previous process left mid-turn,
+// before recover() normalises them.
+//
+// It exists because a result record is not proof that a turn finished. An
+// agent being drained reports one on its way out and it lands in the log
+// like any other, so a window cannot tell "the turn answered" from "the
+// turn was cut off mid-sentence" — and a workflow step graded on that
+// window would be passed for work that never happened.
+//
+// The task row knows: drive persists `interrupted` for a turn the stop
+// caught before it answered, and `idle` for one it did not. But recover()
+// runs first and, when a task is not going to continue by itself, marks it
+// idle — the knowledge is gone by the time a workflow is resumed. So it is
+// read here, once, in the moment between the previous process and this
+// one's. That is the same thing seedMarks does with the reactions the last
+// process left on Slack.
+func (c *Coordinator) seedCutShort(ctx context.Context) error {
+	// running and waiting_permission are dispatch dying without writing
+	// anything else down; interrupted is a stop that caught a live turn;
+	// queued never started. None of them answered.
+	for _, status := range []string{store.StatusRunning, store.StatusWaitingPermission, store.StatusQueued, store.StatusInterrupted} {
+		tasks, err := c.Store.ListTasks(ctx, status)
+		if err != nil {
+			return err
+		}
+		for _, t := range tasks {
+			c.cutShort[t.ID] = true
+		}
+	}
+	if len(c.cutShort) > 0 {
+		c.Log.Info("tasks left mid-turn by the last process", "tasks", len(c.cutShort))
+	}
+	return nil
+}
+
+// wasCutShort reports whether the previous process left this task's turn
+// unfinished. It is only meaningful for the first grading after a start;
+// a task that has run since has a result of its own in the window.
+func (c *Coordinator) wasCutShort(id executor.TaskID) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cutShort[id]
+}
+
+// turnRan clears a task from the cut-short set: it has since run a turn of
+// its own under this process, so the window speaks for itself.
+func (c *Coordinator) turnRan(id executor.TaskID) {
+	c.mu.Lock()
+	delete(c.cutShort, id)
+	c.mu.Unlock()
 }
 
 // seedThreads tells thread-tracking transports about every stored task
@@ -547,9 +626,18 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 				text += " — " + v.Reason
 			}
 		}
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text, Work: c.overview(ctx, it.Thread)}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, TaskID: st.ID, Task: &st, Text: text, Work: c.overview(ctx, it.Thread), Workflow: c.workflowOf(it.Thread)}, s)
 	case surface.Cancel:
 		if c.cancelWizard(it.Thread) {
+			return
+		}
+		if c.stopWorkflow(ctx, it.Thread, "cancelled from the thread") {
+			// The run's step, if a turn is in flight, goes too.
+			if id, ok := c.lookup(it.Thread); ok {
+				if err := c.Executor.Cancel(ctx, id); err != nil && !errors.Is(err, execlocal.ErrNotRunning) {
+					c.Log.Warn("cancel: stopping the workflow's step", "task", id, "err", err)
+				}
+			}
 			return
 		}
 		id, ok := c.lookup(it.Thread)
@@ -569,6 +657,18 @@ func (c *Coordinator) execute(ctx context.Context, s surface.Surface, in transpo
 		c.reviewPR(ctx, s, it)
 	case surface.MergePR:
 		c.mergePR(ctx, s, it)
+	case surface.RunWorkflow:
+		c.startWorkflow(ctx, s, it)
+	case surface.StopWorkflow:
+		if !c.stopWorkflow(ctx, it.Thread, "stopped from the thread") {
+			c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no workflow running on this thread"}, s)
+		}
+	case surface.PlanWorkflow:
+		c.planWorkflow(ctx, s, it)
+	case surface.SaveWorkflow:
+		c.savePlan(ctx, s, it.Thread, it.Name)
+	case surface.ListWorkflows:
+		c.listWorkflows(ctx, s, it)
 	case surface.ListAgents:
 		defs, err := c.Store.ListDefinitions(ctx)
 		if err != nil || len(defs) == 0 {
@@ -666,6 +766,7 @@ func (c *Coordinator) closeThread(ctx context.Context, s surface.Surface, it sur
 		return
 	}
 	c.cancelWizard(it.Thread)
+	c.stopWorkflow(ctx, it.Thread, "the thread was closed")
 	id, running := c.lookup(it.Thread)
 	if running {
 		if err := c.Executor.Cancel(ctx, id); err != nil && !errors.Is(err, execlocal.ErrNotRunning) {
@@ -796,6 +897,13 @@ func (c *Coordinator) setDefault(ctx context.Context, s surface.Surface, it surf
 }
 
 func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface.RunTask) {
+	c.runTaskModel(ctx, s, it, "")
+}
+
+// runTaskModel starts a task, with a model override for the one turn that
+// asked for it — a workflow step's Model, which lands on the definition so
+// the first (and only) turn of the task runs it.
+func (c *Coordinator) runTaskModel(ctx context.Context, s surface.Surface, it surface.RunTask, model string) {
 	if _, busy := c.lookup(it.Thread); busy {
 		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "a task is already running on this thread — `cancel` it first or reply to it"}, s)
 		return
@@ -819,6 +927,9 @@ func (c *Coordinator) runTask(ctx context.Context, s surface.Surface, it surface
 	if err != nil {
 		c.emit(ctx, surface.Event{Kind: surface.EventError, Thread: it.Thread, Text: fmt.Sprintf("unknown agent %q — try `agents`", it.Agent)}, s)
 		return
+	}
+	if model != "" {
+		def.Model = model
 	}
 	if strings.TrimSpace(prompt) == "" && len(it.Files) == 0 {
 		// `run <agent>` without a prompt: ask for it. With attachments
@@ -975,6 +1086,9 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 	st.Status = store.StatusRunning
 	st.Prompt = prompt
 	_ = c.Store.PutTask(ctx, st)
+	// This process is running a turn for it now, so whatever the last one
+	// left mid-flight is no longer what the log's last word is about.
+	c.turnRan(st.ID)
 	sink := &taskSink{c: c, state: st}
 	c.mu.Lock()
 	c.sinks[st.ID] = sink
@@ -1037,10 +1151,12 @@ func (c *Coordinator) drive(ctx context.Context, st store.TaskState, prompt stri
 		c.broadcast(pctx, surface.Event{Kind: surface.EventFinished, Thread: st.Thread, TaskID: st.ID, Task: &final})
 	}
 	// A turn that never reached the agent at all (the environment would
-	// not come up) emits no result for the sink to wake waiters on, and
-	// `merge` would sit here until its own timeout. Once the process is
-	// gone there is certainly no turn left to wait for.
-	c.turnEnded(st.Thread, st.ID)
+	// not come up) emits no result for the sink to wake waiters on, and a
+	// waiter would sit here until its own timeout. Done says the process
+	// is gone, so there is certainly no turn left to wait for — which is
+	// what settles a waiter whose turn produced no record to outrank its
+	// floor.
+	c.turnEnded(st.Thread, turnEnd{Task: st.ID, Seq: final.LastSeq, Done: true})
 }
 
 // heartbeat is the event that says where a task stands right now.
@@ -1283,6 +1399,22 @@ func (s *taskSink) turnFinished() bool {
 	return s.answered
 }
 
+// setPin changes the task's ModelPin from outside the agent's event loop (a
+// workflow step's model override) and returns what it was. It goes through
+// putMu like every other state change, so a later OnEvent cannot persist a
+// copy from before it.
+func (s *taskSink) setPin(ctx context.Context, model string) string {
+	s.putMu.Lock()
+	defer s.putMu.Unlock()
+	s.mu.Lock()
+	prev := s.state.ModelPin
+	s.state.ModelPin = model
+	st := s.state
+	s.mu.Unlock()
+	s.persist(ctx, st)
+	return prev
+}
+
 func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Event) {
 	seq := s.c.append(ctx, id, s.state.Thread, "agent", ev)
 	s.putMu.Lock()
@@ -1346,7 +1478,7 @@ func (s *taskSink) OnEvent(ctx context.Context, id executor.TaskID, ev agent.Eve
 		// closing line, and a thread that reads "🔒 thread closed" above
 		// "✅ done" has been told the story backwards. So: after the
 		// scan, before the send.
-		s.c.turnEnded(st.Thread, id)
+		s.c.turnEnded(st.Thread, turnEnd{Task: id, Seq: seq})
 	}
 	s.c.broadcast(ctx, out)
 }

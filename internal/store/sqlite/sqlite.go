@@ -17,6 +17,7 @@ import (
 	"github.com/cleanunicorn/dispatch/internal/executor"
 	"github.com/cleanunicorn/dispatch/internal/store"
 	"github.com/cleanunicorn/dispatch/internal/transport"
+	"github.com/cleanunicorn/dispatch/internal/workflow"
 )
 
 const schema = `
@@ -51,6 +52,12 @@ CREATE TABLE IF NOT EXISTS definitions (
 );
 
 CREATE TABLE IF NOT EXISTS flows (
+	thread     TEXT PRIMARY KEY,
+	body       BLOB NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflows (
 	thread     TEXT PRIMARY KEY,
 	body       BLOB NOT NULL,
 	updated_at TEXT NOT NULL
@@ -498,6 +505,52 @@ func (s *Store) ListFlows(ctx context.Context) ([]store.FlowState, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// A workflow run, one per thread. It is the same shape as a flow — a
+// multi-step thing in progress on a thread, replaced in place and read
+// back on the next start — and a table of its own because the two are
+// resumed by different code and a `kind` column that decided which would
+// be one more thing to get wrong.
+func (s *Store) PutWorkflow(ctx context.Context, w workflow.State) error {
+	if w.Thread == "" {
+		return fmt.Errorf("sqlite: workflow thread is required")
+	}
+	w.UpdatedAt = time.Now().UTC()
+	body, err := json.Marshal(w)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO workflows(thread, body, updated_at) VALUES(?,?,?) ON CONFLICT(thread) DO UPDATE SET body=excluded.body, updated_at=excluded.updated_at`,
+		string(w.Thread), body, w.UpdatedAt.Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ListWorkflows(ctx context.Context) ([]workflow.State, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT body FROM workflows ORDER BY updated_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []workflow.State
+	for rows.Next() {
+		var body []byte
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		var w workflow.State
+		if err := json.Unmarshal(body, &w); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteWorkflow(ctx context.Context, thread transport.ThreadID) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM workflows WHERE thread = ?`, string(thread))
+	return err
 }
 
 func (s *Store) DeleteFlow(ctx context.Context, thread transport.ThreadID) error {

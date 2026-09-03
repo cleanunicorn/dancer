@@ -12,6 +12,10 @@ transports = ["slack"]      # "slack", "web", "terminal" — any mix; conversati
 auto_resume = true          # after a restart, continue cut-short tasks without waiting for a reply
 auto_resume_within = "12h"  # skip tasks last touched longer ago than this
 max_auto_resumes = 3        # consecutive automatic resumes of one task before it waits for a human
+# planner_agent = "coder"   # the agent that writes on-demand workflows for `plan <what you want>`.
+                            # Empty (the default) refuses the word: dispatch then runs only the
+                            # workflows written below. A plan is shown and confirmed before it runs,
+                            # and goes through the same validation a [[workflow]] does.
 # resume_prompt = "Continue where you left off."   # what an auto-resumed session is told
 
 # One section per agent CLI; a definition's `kind` says which one runs it.
@@ -81,13 +85,24 @@ agent = "sandbox"
 [[definitions]]
 name = "coder"
 kind = "claude"                            # claude (default) | codex | opencode — which CLI runs it
-model = "sonnet"                          # haiku | sonnet | opus | fable, or a full model id
+model = "sonnet"                           # haiku | sonnet | opus | fable, or a full model id
 permission_mode = "manual"                 # manual | acceptEdits | auto | bypassPermissions
 allowed_tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"]
 system_prompt = "You are working inside a git repository. Commit when done."
 [definitions.environment]
 kind = "local"
 workdir = "/home/me/projects/app"          # empty = fresh dir under workdir_root per task
+
+[[definitions]]
+name = "reviewer"                          # the second reader the workflow below uses
+kind = "claude"
+model = "opus"                             # a different model is the other half of the point
+permission_mode = "manual"
+allowed_tools = ["Read", "Glob", "Grep", "Bash(git diff:*)"]
+[definitions.environment]
+kind = "local"
+workdir = ""                               # a fresh checkout per review
+
 
 [[definitions]]
 name = "sandbox"
@@ -125,3 +140,48 @@ kind = "ssh"
 host = "me@buildbox"                       # user@host or a ~/.ssh/config alias
 key_path = ""                              # empty = ssh agent / config
 workdir = "/srv/work/app"
+
+# A workflow is a piece of work broken into steps dispatch runs and then
+# checks for itself (WORKFLOWS.md). Each step is one agent turn, judged on
+# what the step's own records show — a pull request it opened, a branch it
+# pushed, a merge gh confirmed — never on the agent's say-so. Start one
+# from chat with `workflow <name> <what you want>`; `cancel` stops it.
+#
+# With server.planner_agent set, `plan <what you want, and how>` composes one
+# for a single message instead: dispatch shows the steps, and runs them if you
+# say so. `workflow save <name>` writes that plan into this file, below.
+[[workflow]]
+name = "feature"
+description = "implement, review with a second reader, fix, approve, merge"
+
+  [[workflow.step]]
+  name = "implement"
+  agent = "coder"                          # empty = the thread's current agent
+  prompt = "{{.Ask}}\n\nWhen the change is done and the tests pass, open a pull request."
+  expect = "pr"                            # none | report | pr | push | merged | judge
+
+  [[workflow.step]]
+  name = "review"
+  agent = "reviewer"                       # a different definition = a different model
+  thread = "new"                           # a fresh thread and session beside this one
+  prompt = "Review {{.PR}}. Report only — do not push, commit or merge."
+  expect = "report"
+
+  [[workflow.step]]
+  name = "fix"
+  prompt = """A second reviewer said this about {{.PR}}:
+
+{{.Steps.review.Report}}
+
+Fix what is real and push. Say plainly what you rejected and why."""
+  expect = "push"
+  on_fail = "retry"                        # ask (default) | retry | stop
+  max_retries = 1
+
+  [[workflow.step]]
+  name = "approve"
+  gate = "{{.PR}} has been reviewed and fixed. Merge it?"   # a human, not a turn
+
+  [[workflow.step]]
+  name = "merge"
+  builtin = "merge"                        # the end-of-thread word, as a step
