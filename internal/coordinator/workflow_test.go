@@ -334,3 +334,71 @@ func TestWorkflowModelOverrideIsRestored(t *testing.T) {
 		t.Errorf("model pin outlived its step: %q", ts.ModelPin)
 	}
 }
+
+// TestWorkflowStepRunsTheAgentItNames: a step that names an agent gets that
+// agent on the workflow's own thread too, not just in a thread of its own.
+// A follow-up resumes whatever definition started the thread's session, so
+// the named one has to be started in its place — and the progress line says
+// which agent is being asked, which was a lie for as long as the step's
+// `agent` was quietly ignored here.
+func TestWorkflowStepRunsTheAgentItNames(t *testing.T) {
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	_, st, _ := workflowFixture(t, tr, fakeAgent{}, workflow.Definition{
+		Name: "handover",
+		Steps: []workflow.Step{
+			{Name: "one", Agent: "coder", Prompt: "{{.Ask}}"},
+			{Name: "two", Agent: "other", Prompt: "carry on"},
+		},
+	})
+	if err := st.PutDefinition(context.Background(), agent.Definition{Name: "other", Kind: "fake"}); err != nil {
+		t.Fatal(err)
+	}
+	th := transport.ThreadID("C-dev/1.0")
+
+	tr.say(th, "workflow handover ship it")
+	tr.waitFor(t, th, "▶️ 2/2 *two* — asking *other*")
+	tr.waitFor(t, th, "started with agent *other*")
+	task, err := st.LatestTaskForThread(context.Background(), th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Definition.Name != "other" {
+		t.Errorf("step two ran on definition %q, not the one it named", task.Definition.Name)
+	}
+}
+
+// TestStatusDuringARunReadsAPublishedCopy: `status` arrives on the inbox
+// goroutine while the run is writing its state between steps, so what it
+// renders is the copy the run published, never the state itself — whose
+// Steps array the next step writes into. It is the race detector that
+// makes this one fail.
+func TestStatusDuringARunReadsAPublishedCopy(t *testing.T) {
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	workflowFixture(t, tr, fakeAgent{}, workflow.Definition{
+		Name: "several",
+		Steps: []workflow.Step{
+			{Name: "a", Agent: "coder", Prompt: "{{.Ask}}"},
+			{Name: "b", Prompt: "again"},
+			{Name: "c", Prompt: "again"},
+			{Name: "d", Prompt: "again"},
+		},
+	})
+	th := transport.ThreadID("C-dev/1.0")
+
+	tr.say(th, "workflow several ship it")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tr.waitFor(t, th, "🏁 workflow *several*")
+	}()
+	for {
+		select {
+		case <-done:
+			tr.waitFor(t, th, "🧗 workflow *several*") // `status` answered with the run
+			return
+		default:
+			tr.say(th, "status")
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+}

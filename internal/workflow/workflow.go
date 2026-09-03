@@ -70,7 +70,10 @@ type Step struct {
 	Name string `json:"name"`
 	// Agent is the definition to run this step; empty is the one the
 	// thread is already using. Naming a different definition is how a
-	// step runs on a different model, or a different agent kind.
+	// step runs on a different model, or a different agent kind — on a
+	// thread of its own and on the workflow's own thread alike, where the
+	// runner ends the process the previous definition left warm and
+	// starts the named one in its place.
 	Agent string `json:"agent,omitempty"`
 	// Model overrides that definition's model for this step only. It is
 	// carried as the task's ModelPin, so a resume asks for it again.

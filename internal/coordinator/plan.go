@@ -32,11 +32,17 @@ import (
 // Three more things bound it, each borrowed from something that already
 // works here:
 //
-//   - It is opt-in. Without server.planner_agent the word is refused, and
-//     dispatch behaves as it does today. Every failure — no planner, a
-//     turn that would not start, a reply with no JSON in it, a plan
-//     Validate refuses — leaves the thread with an ordinary message and
-//     nothing started.
+//   - It is opt-in, and where it is not turned on it is not a word at all.
+//     Without server.planner_agent `plan …` is not dispatch's, so the
+//     message goes to the thread's agent unchanged — "plan the migration
+//     before you touch anything" is a prompt, and a word dispatch does not
+//     have must not eat one. That is the rule the other end-of-thread
+//     words follow ("review the auth code" stays a prompt); planning
+//     cannot be an exception to it just because the word takes an
+//     argument. `workflows` is where the feature is discoverable
+//     instead. Every other failure — a turn that would not start, a reply
+//     with no JSON in it, a plan Validate refuses — leaves the thread with
+//     an ordinary message and nothing started.
 //   - It is shown before it runs. The steps are posted and confirmed with
 //     a button, on the same cross-surface question machinery a gate uses.
 //     Five agent turns on somebody's repository is not something to start
@@ -59,8 +65,13 @@ const planTimeout = 3 * time.Minute
 // planWorkflow composes a workflow for one message and offers it.
 func (c *Coordinator) planWorkflow(ctx context.Context, s surface.Surface, it surface.PlanWorkflow) {
 	if strings.TrimSpace(c.PlannerAgent) == "" {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread,
-			Text: "`plan` needs an agent to write the plan — set `planner_agent` in `[server]`, or run a workflow `workflows` already lists"}, s)
+		// Not configured, so not dispatch's word: the human wrote a
+		// sentence that happens to start with "plan" and it belongs to
+		// the agent, exactly as it did before this file existed. Routed
+		// the way execute routes any other message, whole — the word is
+		// part of what they asked for.
+		c.reopenThread(ctx, s, it.Thread)
+		_, _ = c.followUp(ctx, s, surface.FollowUp{Thread: it.Thread, Text: "plan " + it.Ask, User: it.User})
 		return
 	}
 	if reason := c.workflowBlocked(it.Thread); reason != "" {
@@ -363,13 +374,4 @@ func (c *Coordinator) savePlan(ctx context.Context, s surface.Surface, th transp
 	c.Log.Info("workflow saved from chat", "name", name, "thread", th, "steps", len(def.Steps))
 	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: th,
 		Text: fmt.Sprintf("💾 saved as workflow *%s* — `workflow %s <what you want>` runs it", name, name)}, s)
-}
-
-// quoted flattens what a human asked into one quotable line.
-func quoted(s string) string {
-	s = oneLine(s)
-	if len(s) > 240 {
-		return strings.TrimSpace(s[:240]) + "…"
-	}
-	return s
 }

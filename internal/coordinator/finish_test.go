@@ -479,3 +479,36 @@ func TestMergeOfAPullRequestWithNoURL(t *testing.T) {
 		t.Fatalf("closed threads = %v, want [%s]", closed, th)
 	}
 }
+
+// TestFailedBareMergeAsksTheThreadNothing: a bare word is one message, and
+// its own line is the whole of what a failure says. The retry/skip/stop
+// question a named run puts to the thread would be one nothing here can
+// clear — a quiet run holds no slot in c.workflows, so `cancel` cannot find
+// it, it has no timeout, and c.askText would swallow the thread's next
+// message instead of letting it reach the agent.
+func TestFailedBareMergeAsksTheThreadNothing(t *testing.T) {
+	tr := &hostTransport{fakeTransport: fakeTransport{name: "slack", ready: make(chan struct{})}, channels: []string{"C-dev"}}
+	c, _, th, cancel := finishFixture(t, tr, fakeAgent{merge: "refused"})
+	defer cancel()
+	<-tr.ready
+
+	tr.say(th, "merge")
+	tr.waitFor(t, th, "the log does not show")
+
+	// The run is over by the time it has said that, but give the ask it
+	// used to post the time it would have taken to arrive.
+	time.Sleep(200 * time.Millisecond)
+	c.mu.Lock()
+	base, asking := c.askText[th]
+	c.mu.Unlock()
+	if asking {
+		t.Errorf("a bare `merge` left a question open on the thread: %s", base)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	for _, o := range tr.out {
+		if o.Thread == th && o.Prompt != nil {
+			t.Errorf("a bare `merge` prompted the thread: %q", o.Text)
+		}
+	}
+}

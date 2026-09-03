@@ -364,10 +364,13 @@ files first — they carry the contract, the concrete packages under them are im
   `workflow.Definition`, it goes through the same `workflow.Validate`, it runs on the same runner,
   so a plan naming an agent nobody defined or an `expect` nobody implements is refused exactly as
   a `[[workflow]]` would be. There is no second, looser road for a plan a model wrote. Three things
-  bound it, each borrowed from something that already works here. It is **opt-in**: without
-  `planner_agent` the word is refused, and every failure — no planner, a turn that would not start,
-  a reply with no JSON in it, a plan `Validate` refuses — leaves the thread with a message and
-  nothing started, which is dispatch as it is today. It is **shown before it runs**
+  bound it, each borrowed from something that already works here. It is **opt-in, and where it is
+  not turned on it is not a word at all**: without `planner_agent` a message beginning "plan" is a
+  message, and goes to the thread's agent unchanged — the rule the other words follow ("review the
+  auth code" stays a prompt), which a word that takes an argument does not get to be an exception
+  to. `workflows` is where the unset feature says it exists. Every other failure — a turn that
+  would not start, a reply with no JSON in it, a plan `Validate` refuses — leaves the thread with a
+  message and nothing started, which is dispatch as it is today. It is **shown before it runs**
   (`workflow.Describe`: what each step is, who runs it, where, and what will make it count as
   done), confirmed on the same cross-surface question machinery a gate uses, and the refusals are
   re-checked after the button because that question has no timeout. And it **plans in an empty

@@ -694,9 +694,6 @@ func AppendDefinition(path string, d Definition) error {
 	return appendBlock(path, "# added from chat on "+time.Now().Format("2006-01-02"), snippet)
 }
 
-// AppendChannel records a per-channel default agent by appending a
-// [[channels]] block to the config file at path (later blocks win, see
-// Channel). The result is validated before the file is touched.
 // AppendWorkflow writes a workflow into config.toml. It is what turns a
 // plan somebody approved in a thread into one that can be started by name
 // tomorrow — the same step AppendDefinition is for an agent, and for the
@@ -724,6 +721,9 @@ func workflowSnippet(w Workflow) ([]byte, error) {
 	}{[]Workflow{w}})
 }
 
+// AppendChannel records a per-channel default agent by appending a
+// [[channels]] block to the config file at path (later blocks win, see
+// Channel). The result is validated before the file is touched.
 func AppendChannel(path string, ch Channel) error {
 	cfg, err := Load(path)
 	if err != nil {

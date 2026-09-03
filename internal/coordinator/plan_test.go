@@ -29,16 +29,29 @@ func planFixture(t *testing.T, tr *fakeTransport, tune func(*Coordinator), defs 
 	return c
 }
 
-// Without a planner configured the word is refused and nothing happens:
-// composing a workflow with a model is opt-in, and dispatch without it
-// behaves exactly as it does today.
-func TestPlanIsRefusedWithoutAPlanner(t *testing.T) {
+// Without a planner configured `plan` is not dispatch's word, so a message
+// that starts with it is a message: it reaches the agent whole, the way
+// "review the auth code" always has. Swallowing it for a config hint would
+// have taken the sentence away from every user who never asked for
+// planning.
+func TestPlanWithoutAPlannerReachesTheAgent(t *testing.T) {
 	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
-	workflowFixture(t, tr, fakeAgent{})
+	_, st, _ := workflowFixture(t, tr, fakeAgent{})
 	th := transport.ThreadID("C-dev/1.0")
 
-	tr.say(th, "plan build it and review it")
-	tr.waitFor(t, th, "needs an agent to write the plan")
+	tr.say(th, "plan the migration before you touch anything")
+	tr.waitFor(t, th, "started with agent *coder*")
+	task, err := st.LatestTaskForThread(context.Background(), th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Prompt != "plan the migration before you touch anything" {
+		t.Errorf("the agent was asked %q, not what the human typed", task.Prompt)
+	}
+	// And the feature is still discoverable where somebody would look for
+	// it, which is the list of what dispatch can run.
+	tr.say(th, "workflows")
+	tr.waitFor(t, th, "set `planner_agent` in `[server]`")
 }
 
 // The whole path: a message, a plan, the steps shown, a button, and the

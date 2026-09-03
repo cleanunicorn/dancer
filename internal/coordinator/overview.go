@@ -20,20 +20,13 @@ const overviewRecords = 1500
 //
 // It reads the log rather than remembering: a restart, a new container and
 // a task that ended all leave the references exactly where they were.
-func (c *Coordinator) overview(ctx context.Context, th transport.ThreadID) *work.State {
-	return c.overviewSince(ctx, th, 0)
-}
-
-// overviewSince is overview over the records a thread wrote *after* since,
-// which is how one step of a workflow — or one `merge` — is graded on its
-// own evidence rather than on the whole thread's.
 //
-// Without the floor a workflow walks to its end on one real result: step
-// three asks for a pull request, the scan finds the one step one opened,
-// and nothing was checked. since is the seq of the record the caller
-// wrote before asking for the turn, which is the same number the turn
-// itself is recognised by (turns.go).
-func (c *Coordinator) overviewSince(ctx context.Context, th transport.ThreadID, since int64) *work.State {
+// It is the whole thread, always. A workflow step is graded on the records
+// it produced rather than on the thread's, but that window is cut in the
+// runner (workflow.go's evidence), which is scanning records it already
+// had to read for other reasons — a second, floored overview here would
+// read the thread back twice for one answer.
+func (c *Coordinator) overview(ctx context.Context, th transport.ThreadID) *work.State {
 	if th == "" {
 		return nil
 	}
@@ -48,15 +41,6 @@ func (c *Coordinator) overviewSince(ctx context.Context, th transport.ThreadID, 
 	if err != nil {
 		c.Log.Debug("overview: reading the thread back failed", "thread", th, "err", err)
 		return nil
-	}
-	if since > 0 {
-		kept := recs[:0]
-		for _, r := range recs {
-			if r.Seq > since {
-				kept = append(kept, r)
-			}
-		}
-		recs = kept
 	}
 	st := work.Scan(recs)
 	if st.Empty() {

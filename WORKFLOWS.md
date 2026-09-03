@@ -202,10 +202,13 @@ plan a model wrote, which is what makes this worth having at all.
 
 Three things bound it, each borrowed from something that already works here.
 
-**It is opt-in, and every failure is a no-op.** Without `server.planner_agent` the word is refused.
-No planner, a turn that would not start, a reply with no JSON in it, a plan `Validate` refuses —
-each leaves the thread with a message and nothing started, which is dispatch exactly as it is
-without the feature.
+**It is opt-in, and every failure is a no-op.** Without `server.planner_agent` there is no such
+word: a message beginning "plan" is a message and reaches the thread's agent unchanged, the way
+"review the auth code" always has — a word dispatch does not have must not eat a sentence, and
+taking an argument does not earn `plan` an exception the other end-of-thread words do not get.
+`workflows` is where the feature says it exists when nobody has turned it on. A turn that would
+not start, a reply with no JSON in it, a plan `Validate` refuses — each leaves the thread with a
+message and nothing started, which is dispatch exactly as it is without the feature.
 
 **It is shown before it runs.** `workflow.Describe` writes out what each step *is* — who runs it,
 where, what will make it count as done — rather than quoting a page of template back:

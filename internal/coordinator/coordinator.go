@@ -121,10 +121,12 @@ type Coordinator struct {
 	// the decider thinks.
 	AutoAllow []string
 	// PlannerAgent is the definition that writes on-demand workflows
-	// (`plan <what you want>`, see plan.go). Empty — the default —
-	// refuses the word: composing a workflow with a model is a
+	// (`plan <what you want>`, see plan.go). Empty — the default — means
+	// dispatch has no such word: composing a workflow with a model is a
 	// deliberate, configured step, and without it dispatch runs only the
-	// workflows somebody wrote down.
+	// workflows somebody wrote down. A message beginning "plan" is then
+	// an ordinary message and reaches the thread's agent unchanged;
+	// `workflows` is where the unset feature says it exists.
 	PlannerAgent string
 	// SaveWorkflow persists a workflow made from chat outside the store
 	// (the config file), so it survives a restart. Nil keeps it in

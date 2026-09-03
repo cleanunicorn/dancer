@@ -85,6 +85,17 @@ type workflowRun struct {
 	// functions post them), it is over when its step is, and it is not
 	// resumable — the merge record finish.go writes is what says what it
 	// was in the middle of.
+	//
+	// It asks nothing, either. A quiet run reports and exits: `merge` and
+	// `review` are one message each, and the word's own line — "the log
+	// does not show #51 merged — the thread stays open" — is the whole of
+	// what a failure has to say. The retry/skip/stop question a named run
+	// puts to the thread would be a question nothing can clear here,
+	// because a quiet run holds no slot in c.workflows: `cancel` would not
+	// find it, there is no timeout, and the thread's next message would be
+	// swallowed as the answer instead of reaching the agent. So `ask`
+	// refuses for a quiet run, wherever it is called from — stepFailed,
+	// askJudge, gate.
 	quiet bool
 	// resumed marks a run replayed by resumeWorkflows, whose current step
 	// is graded before anything is asked for again.
@@ -104,6 +115,35 @@ type workflowRun struct {
 	// the way out of the loop.
 	stopMu     sync.Mutex
 	stopReason string
+	// stMu guards pub, the run's state as anything outside its goroutine
+	// may read it. st itself belongs to the run: it writes into st.Status,
+	// st.Step and st.Steps[i] between every step, and `status` arriving on
+	// the inbox goroutine mid-step would read them as they are written.
+	// So nothing outside is ever handed st — it is handed pub, deep-copied
+	// here by the run itself after every transition and never written to
+	// again.
+	stMu sync.Mutex
+	pub  *workflow.State
+}
+
+// publish takes the copy the rest of dispatch reads the run from. It is
+// called on the run's own goroutine, which is what makes the copy itself
+// race-free; past it, pub is immutable and can be handed anywhere.
+func (r *workflowRun) publish() {
+	cp := *r.st
+	cp.Steps = append([]workflow.StepState(nil), r.st.Steps...)
+	cp.Def.Steps = append([]workflow.Step(nil), r.st.Def.Steps...)
+	r.stMu.Lock()
+	r.pub = &cp
+	r.stMu.Unlock()
+}
+
+// published is the last copy the run took, for a reader on another
+// goroutine. A run that has not published yet has nothing to show.
+func (r *workflowRun) published() *workflow.State {
+	r.stMu.Lock()
+	defer r.stMu.Unlock()
+	return r.pub
 }
 
 // stop records why the run is ending, for exit to read.
@@ -219,8 +259,9 @@ func (c *Coordinator) beginWorkflow(ctx context.Context, w workflowStart) *workf
 	r := &workflowRun{c: c, s: w.s, st: w.st, id: newID(), quiet: w.quiet, resumed: w.resumed,
 		mergeClaimed: w.mergeClaimed, mergeMethod: w.mergeMethod}
 	// Said here, while this goroutine still owns the state: past the `go`
-	// below it belongs to the run, and rendering a line from it — even a
-	// copy of it, whose Steps slice is the same backing array — races.
+	// below it belongs to the run, and reading it from anywhere else is
+	// only ever the copy the run publishes for that purpose.
+	r.publish()
 	if w.opening != "" {
 		r.event(ctx, w.opening)
 	}
@@ -360,35 +401,27 @@ func (r *workflowRun) runStep(ctx context.Context, step *workflow.Step) bool {
 		// ask again, ask nothing of the agent.
 		return r.stepFailed(ctx, step, cs.Detail)
 	}
-	for {
-		ok, detail, cont := r.stepAttempts(ctx, step)
-		if !cont {
-			return false
-		}
-		if ok {
-			r.passed(step)
-			return true
-		}
-		switch step.Failure() {
-		case workflow.OnFailStop:
-			if cs := st.CurrentState(); cs != nil {
-				cs.Status = workflow.StepFailed
-				cs.Detail = detail
-			}
-			st.Status = workflow.RunFailed
-			r.save(ctx)
-			r.event(ctx, fmt.Sprintf("❌ workflow *%s* step *%s* failed — %s; stopping", st.Def.Name, step.Name, detail))
-			return false
-		case workflow.OnFailRetry:
-			// stepAttempts already spent the tries; falling to the thread
-			// is what a step that kept failing has earned.
-		}
-		if cs := st.CurrentState(); cs != nil {
-			cs.Status = workflow.StepFailed
-			cs.Detail = detail
-		}
-		return r.stepFailed(ctx, step, detail)
+	ok, detail, cont := r.stepAttempts(ctx, step)
+	if !cont {
+		return false
 	}
+	if ok {
+		r.passed(step)
+		return true
+	}
+	if cs := st.CurrentState(); cs != nil {
+		cs.Status = workflow.StepFailed
+		cs.Detail = detail
+	}
+	if step.Failure() == workflow.OnFailStop {
+		st.Status = workflow.RunFailed
+		r.save(ctx)
+		r.event(ctx, fmt.Sprintf("❌ workflow *%s* step *%s* failed — %s; stopping", st.Def.Name, step.Name, detail))
+		return false
+	}
+	// on_fail retry has already spent its tries in stepAttempts; falling to
+	// the thread is what a step that kept failing has earned.
+	return r.stepFailed(ctx, step, detail)
 }
 
 // stepFailed puts a failed step to the thread: retry, skip or stop. A typed
@@ -430,24 +463,22 @@ func (r *workflowRun) stepFailed(ctx context.Context, step *workflow.Step, detai
 		cs.Detail = ""
 		st.Status = workflow.RunRunning
 		r.save(ctx)
-		for {
-			ok, detail, cont := r.stepAttempts(ctx, step)
-			if !cont {
-				return false
-			}
-			if ok {
-				r.passed(step)
-				return true
-			}
-			if step.Failure() == workflow.OnFailStop {
-				cs.Status, cs.Detail = workflow.StepFailed, detail
-				st.Status = workflow.RunFailed
-				r.save(ctx)
-				r.event(ctx, fmt.Sprintf("❌ workflow *%s* step *%s* failed — %s; stopping", st.Def.Name, step.Name, detail))
-				return false
-			}
-			return r.stepFailed(ctx, step, detail)
+		ok, detail, cont := r.stepAttempts(ctx, step)
+		if !cont {
+			return false
 		}
+		if ok {
+			r.passed(step)
+			return true
+		}
+		if step.Failure() == workflow.OnFailStop {
+			cs.Status, cs.Detail = workflow.StepFailed, detail
+			st.Status = workflow.RunFailed
+			r.save(ctx)
+			r.event(ctx, fmt.Sprintf("❌ workflow *%s* step *%s* failed — %s; stopping", st.Def.Name, step.Name, detail))
+			return false
+		}
+		return r.stepFailed(ctx, step, detail)
 	}
 }
 
@@ -519,21 +550,33 @@ func (r *workflowRun) attemptPromptSame(ctx context.Context, step *workflow.Step
 	// waiter that does not exist yet is an end nobody hears (turns.go).
 	ends := c.awaitTurnEnd(st.Thread)
 	defer c.dropTurnWaiter(st.Thread, ends)
+
+	// A human's turn may be in flight; the step queues behind it. Waited
+	// for *before* the floor is written, the way attemptMerge does it. A
+	// floor written first is a floor the human's turn is still writing
+	// records under — so its end settles this wait (on the warm path it is
+	// the same task id, and nothing tells the two apart), and its records
+	// land inside the window the step is then graded on.
+	if !r.awaitIdle(ctx, st.Thread, ends, c.lastSeq(ctx, st.Thread)) {
+		return false, "", false
+	}
 	ss.Since = c.append(ctx, ss.Task, st.Thread, recordWorkflow, wfRecord{st.Def.Name, step.Name, "running", ""})
 	r.event(ctx, fmt.Sprintf("▶️ %d/%d *%s* — asking %s", st.Step+1, len(st.Steps), step.Name, agentLabel(step)))
 	r.save(ctx)
 
-	// A human's turn may be in flight; the step queues behind it, and its
-	// own turn is the next end past the floor.
-	if !r.awaitIdle(ctx, st.Thread, ends, ss.Since) {
-		return false, "", false
-	}
-
-	// A step that names a model gets it by resuming the session with it
-	// (drive reads ModelPin); a warm process keeps its session's model, so
-	// it is stopped first — the cancelled line is the process ending, not
-	// the step.
-	if step.Model != "" {
+	// Who runs the step. Naming an agent means that agent even here: a
+	// follow-up resumes the session the thread already has, which belongs
+	// to whichever definition started it, so the named one is started in
+	// its place — the same move the model override below makes, and for
+	// the same reason. The thread keeps it afterwards, as it would after
+	// any `run <agent>`.
+	fresh := step.Agent != "" && step.Agent != c.agentOf(ctx, r.s, st.Thread)
+	if !fresh && step.Model != "" {
+		// A step that names a model gets it by resuming the session with
+		// it (drive reads ModelPin); a warm process keeps its session's
+		// model, so it is stopped first — the cancelled line is the
+		// process ending, not the step. A step that is starting a fresh
+		// task needs none of this: runTaskModel carries the model in.
 		if id, bound := c.lookup(st.Thread); bound {
 			prev := c.pinModel(ctx, id, step.Model)
 			if prev != step.Model {
@@ -542,27 +585,32 @@ func (r *workflowRun) attemptPromptSame(ctx context.Context, step *workflow.Step
 					defer cancel()
 					c.pinModel(rctx, id, prev)
 				}()
-				if c.Executor.IsRunning(id) {
-					if err := c.Executor.Cancel(ctx, id); err == nil || errors.Is(err, execlocal.ErrNotRunning) {
-						c.awaitGone(st.Thread, id, goneTimeout)
-					}
-				}
+				c.stopWarm(ctx, st.Thread, id)
 			}
 		}
 	}
 
 	var task executor.TaskID
-	if c.taskOnThread(ctx, st.Thread) || step.Agent == "" {
+	if !fresh && (c.taskOnThread(ctx, st.Thread) || step.Agent == "") {
 		var started bool
 		task, started = c.followUp(ctx, r.s, surface.FollowUp{Thread: st.Thread, Text: text, User: st.User})
 		if !started {
 			return false, "nothing here could be asked — start a task with `run` first", true
 		}
 	} else {
+		// runTaskModel refuses a thread that still holds a task, and a
+		// finished turn holds one for the whole of idle_timeout, so the
+		// previous definition's process goes first. If the thread is
+		// still on it afterwards, nothing was started and the step says
+		// so rather than waiting for a turn nobody asked for.
+		prev, bound := c.lookup(st.Thread)
+		if bound {
+			c.stopWarm(ctx, st.Thread, prev)
+		}
 		c.runTaskModel(ctx, r.s, surface.RunTask{Thread: st.Thread, Agent: step.Agent, Prompt: text, User: st.User}, step.Model)
-		var bound bool
-		task, bound = c.lookup(st.Thread)
-		if !bound {
+		var started bool
+		task, started = c.lookup(st.Thread)
+		if !started || (bound && task == prev) {
 			return false, "the agent " + strconv.Quote(step.Agent) + " could not be started", true
 		}
 	}
@@ -786,7 +834,10 @@ func (r *workflowRun) judgeStep(ctx context.Context, step *workflow.Step, ss *wo
 // check in the environment the turn worked in.
 func (r *workflowRun) evidence(ctx context.Context, step *workflow.Step, ss *workflow.StepState) workflow.Evidence {
 	c := r.c
-	ev := workflow.Evidence{}
+	// What the workflow is already on, read before this step's own window
+	// can add to it: a merge is only this workflow's merge when gh's
+	// confirmation names the pull request the run has been carrying.
+	ev := workflow.Evidence{Carried: r.st.PR}
 	recs, err := c.Store.ThreadRecords(ctx, ss.Thread, overviewRecords)
 	if err != nil {
 		c.Log.Warn("workflow: reading the step's window", "thread", ss.Thread, "err", err)
@@ -947,7 +998,16 @@ func (r *workflowRun) gate(ctx context.Context, step *workflow.Step) bool {
 // machinery agents and wizards use (pending + askText), so a button or a
 // typed reply answers it, on any surface. No timeout: a gate can wait a
 // day, and a restart re-asks.
+//
+// A quiet run asks nothing and ends instead (see workflowRun.quiet): a
+// question it opened would set c.askText on a thread nothing can clear it
+// from, and the human's next message would answer it rather than reach the
+// agent. cont is false, which every caller reads as "the run is over" — and
+// for a bare word it is: its own line has already been posted.
 func (r *workflowRun) ask(ctx context.Context, text string, choices []string) (answer, note string, cont bool) {
+	if r.quiet {
+		return "", "", false
+	}
 	c, st := r.c, r.st
 	r.asks++
 	base := fmt.Sprintf("workflow-%s#%d", r.id, r.asks)
@@ -1046,12 +1106,17 @@ func (r *workflowRun) say(ctx context.Context, text string) {
 
 // event broadcasts a workflow move. Quiet runs say nothing: their lines are
 // the step's own.
+//
+// The state it carries is the published copy, not st: rendering is
+// synchronous, but a surface that kept the pointer — or read Steps out of
+// it a moment later — would be reading an array the next step writes into.
 func (r *workflowRun) event(ctx context.Context, text string) {
 	if r.quiet {
 		return
 	}
-	st := *r.st
-	r.c.broadcast(ctx, surface.Event{Kind: surface.EventWorkflow, Thread: st.Thread, Text: text, Workflow: &st})
+	r.publish()
+	st := r.published()
+	r.c.broadcast(ctx, surface.Event{Kind: surface.EventWorkflow, Thread: st.Thread, Text: text, Workflow: st})
 }
 
 // record appends a workflow transition to the log. Quiet runs write none:
@@ -1067,6 +1132,7 @@ func (r *workflowRun) record(ctx context.Context, event, detail string) {
 // save persists the run's state — the row a restart resumes from, so a
 // shutdown's own save runs on a context the shutdown cannot take away.
 func (r *workflowRun) save(ctx context.Context) {
+	r.publish() // every transition ends in a save; that is where `status` catches up
 	if r.quiet {
 		return
 	}
@@ -1090,7 +1156,7 @@ func (r *workflowRun) note(ctx context.Context, step, text string) {
 func (c *Coordinator) listWorkflows(ctx context.Context, s surface.Surface, it surface.ListWorkflows) {
 	all := c.workflowList()
 	if len(all) == 0 {
-		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no workflows in config — see WORKFLOWS.md for what one is"}, s)
+		c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: "no workflows in config — see WORKFLOWS.md for what one is" + plannerHint(c.PlannerAgent)}, s)
 		return
 	}
 	var b strings.Builder
@@ -1102,19 +1168,34 @@ func (c *Coordinator) listWorkflows(ctx context.Context, s surface.Surface, it s
 		fmt.Fprintf(&b, " (%d steps)\n", len(w.Steps))
 	}
 	b.WriteString("start one with `workflow <name> <what you want>`")
+	b.WriteString(plannerHint(c.PlannerAgent))
 	c.emit(ctx, surface.Event{Kind: surface.EventReply, Thread: it.Thread, Text: b.String()}, s)
 }
 
-// workflowOf returns a copy of the run on th, for `status`.
+// plannerHint is where `plan` is discoverable when nobody has turned it on.
+// The word itself cannot say so — without a planner it is not dispatch's
+// word and the message goes to the agent (plan.go) — so the list of what
+// dispatch can run says it instead, which is where somebody looking for it
+// is already standing.
+func plannerHint(planner string) string {
+	if strings.TrimSpace(planner) != "" {
+		return "\n· `plan <what you want>` writes one for a single message"
+	}
+	return "\n· set `planner_agent` in `[server]` and `plan <what you want>` writes one for a single message"
+}
+
+// workflowOf is the run on th as `status` reads it: the copy the run
+// published after its last transition, which is a step behind at worst and
+// is nobody's to write to. Reading r.st here — even copying it, whose Steps
+// slice is the same backing array — races the run goroutine.
 func (c *Coordinator) workflowOf(th transport.ThreadID) *workflow.State {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	r := c.workflows[th]
+	c.mu.Unlock()
 	if r == nil {
 		return nil
 	}
-	st := *r.st
-	return &st
+	return r.published()
 }
 
 // resumeWorkflows picks up the runs a restart left behind. A run whose step
@@ -1258,6 +1339,22 @@ func (c *Coordinator) pinModel(ctx context.Context, id executor.TaskID, model st
 	return prev
 }
 
+// stopWarm ends the thread's process and waits for the thread to let go of
+// it. A finished turn keeps its process warm for the whole of idle_timeout,
+// and a warm process is the definition *and* the model the previous turn
+// ran — so a step that wants either changed has to end it first. Nothing
+// running is nothing to stop and nothing to wait for.
+func (c *Coordinator) stopWarm(ctx context.Context, th transport.ThreadID, id executor.TaskID) {
+	if !c.Executor.IsRunning(id) {
+		return
+	}
+	if err := c.Executor.Cancel(ctx, id); err != nil && !errors.Is(err, execlocal.ErrNotRunning) {
+		c.Log.Warn("workflow: stopping the thread's process", "thread", th, "task", id, "err", err)
+		return
+	}
+	c.awaitGone(th, id, goneTimeout)
+}
+
 // awaitGone waits for a cancelled task to let go of the thread.
 func (c *Coordinator) awaitGone(th transport.ThreadID, id executor.TaskID, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
@@ -1271,7 +1368,9 @@ func (c *Coordinator) awaitGone(th transport.ThreadID, id executor.TaskID, timeo
 	return false
 }
 
-// agentLabel names who a step runs, for the progress line.
+// agentLabel names who a step runs, for the progress line. It is the truth
+// on either kind of thread: a named agent is the one that runs, whether
+// the step opened a thread for it or took over the workflow's own.
 func agentLabel(step *workflow.Step) string {
 	if step.Agent != "" {
 		return "*" + step.Agent + "*"
