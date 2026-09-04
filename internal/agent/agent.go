@@ -27,11 +27,15 @@
 // Permission modes. PermissionMode is dispatch's vocabulary; each driver maps
 // it onto its own flags:
 //
-//	dispatch            Claude Code            Codex                          OpenCode
-//	manual              default                approval untrusted             every tool: ask
+//	dispatch            Claude Code            Codex app-server               OpenCode
+//	manual              default                untrusted + read-only          every tool: ask
 //	acceptEdits         acceptEdits            on-request + workspace-write   edit/write: allow, rest: ask
-//	auto                auto                   on-failure                     allowed_tools: allow, rest: ask
+//	auto                auto                   on-request + workspace-write   allowed_tools: allow, rest: ask
 //	bypassPermissions   bypassPermissions      never + danger-full-access     every tool: allow
+//
+// Codex app-server currently exposes untrusted, on-request and never
+// approval policies; it has no on-failure counterpart. Its on-request policy
+// is therefore the closest safe mapping for dispatch's auto mode.
 //
 // Whatever the mode, a tool the driver is asked about reaches dispatch as
 // EventNeedsPermission and is answered through Run.Decide: a driver must

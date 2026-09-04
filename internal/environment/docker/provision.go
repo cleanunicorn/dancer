@@ -15,8 +15,9 @@ import (
 )
 
 // ProvisionedHome is $HOME inside an image dispatch provisioned. It is a real
-// writable directory owned by the container user, so `~/.claude` (login,
-// session history, settings) has somewhere to live.
+// writable directory owned by the container user, so agent login, session
+// history and settings (for example `~/.claude` and `~/.codex`) have somewhere
+// to live.
 const ProvisionedHome = "/home/dispatch"
 
 // homeSkeleton is where provisioning stashes a copy of ProvisionedHome, so a

@@ -57,12 +57,18 @@ func runSetup(cfgPath string) error {
 	cfg.Server.IdleTimeout = config.Duration{Duration: 10 * time.Minute}
 	cfg.Server.DrainTimeout = config.Duration{Duration: 2 * time.Minute}
 
-	fmt.Println("\n2/4  Claude Code")
+	fmt.Println("\n2/4  Agent CLIs")
 	cfg.Claude.Binary = ask("claude binary", "claude")
 	if _, err := exec.LookPath(cfg.Claude.Binary); err != nil {
 		fmt.Printf("  ! %s not found in PATH — install Claude Code first: https://code.claude.com/docs/en/setup\n", cfg.Claude.Binary)
 	} else {
 		fmt.Println("  ✔ found. Make sure it is logged in (run `claude` once, then /login) under the user that will run dispatch.")
+	}
+	cfg.Codex.Binary = ask("codex binary", "codex")
+	if _, err := exec.LookPath(cfg.Codex.Binary); err != nil {
+		fmt.Printf("  ! %s not found in PATH — install Codex first: https://developers.openai.com/codex/\n", cfg.Codex.Binary)
+	} else {
+		fmt.Println("  ✔ found. Make sure it is logged in (`codex login`) under the user that will run dispatch.")
 	}
 
 	fmt.Println("\n3/4  Slack (Socket Mode)")
@@ -85,9 +91,19 @@ func runSetup(cfgPath string) error {
 
 	fmt.Println("\n4/4  First agent definition")
 	name := ask("Agent name", "coder")
-	model := ask("Model (haiku/sonnet/opus/fable or full id)", "sonnet")
+	kind := strings.ToLower(ask("Agent kind (claude/codex)", "claude"))
+	if kind != "codex" {
+		kind = "claude"
+	}
+	modelDefault := "sonnet"
+	modelLabel := "Model (haiku/sonnet/opus/fable or full id)"
+	if kind == "codex" {
+		modelDefault = ""
+		modelLabel = "Model (empty = Codex default, or a full model id)"
+	}
+	model := ask(modelLabel, modelDefault)
 	envKind := strings.ToLower(ask("Environment kind (local/docker/ssh)", "local"))
-	def := config.Definition{Name: name, Kind: "claude", Model: model}
+	def := config.Definition{Name: name, Kind: kind, Model: model}
 	def.Environment.Kind = envKind
 	switch envKind {
 	case "docker":

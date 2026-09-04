@@ -429,17 +429,18 @@ image = "ubuntu:24.04"
 reuse = "thread"
 ```
 
-The container runs with your login. A container has no `~/.claude` of its
-own, so before every turn dispatch copies the host's
-`~/.claude/.credentials.json` (the login of the user running dispatch) into
-the container's `$HOME/.claude`; the CLI inside refreshes the token itself
-from there, and a copy the container refreshed more recently than the host
-is left alone. To give a container its own identity instead, put a key in
-its env — dispatch then lends nothing:
+The container runs with your login. A container has no agent login of its own,
+so before every turn dispatch copies the host's Claude
+`~/.claude/.credentials.json` or Codex `~/.codex/auth.json` (the login of the
+user running dispatch) into its matching home directory. The CLI inside
+refreshes the token itself, and a copy the container refreshed more recently
+than the host is left alone. To give a container its own identity instead, put
+a key in its env — dispatch then lends nothing:
 
 ```toml
 [definitions.environment.env]
 CLAUDE_CODE_OAUTH_TOKEN = "…"     # from `claude setup-token` on a logged-in machine, or use ANTHROPIC_API_KEY
+# CODEX_API_KEY = "…"              # or OPENAI_API_KEY; otherwise run `codex login` on the dispatch host
 ```
 
 When neither exists the turn ends with `Not logged in`, and dispatch says so
@@ -541,9 +542,9 @@ task starts instantly. Watch for `docker: provisioning image` in the log.
 | `definition`          | one container shared by every conversation running that agent          |
 
 A reused container keeps `$HOME` on a named volume, so anything the agent
-installed mid-task, its `~/.claude` login and its session history survive
-between messages — which is what makes `claude --resume` work in docker at
-all. Reused containers and their workdirs are keyed to the scope, so two
+installed mid-task, its login and its session history survive between messages
+— which is what makes Claude and Codex resumes work in Docker at all. Reused
+containers and their workdirs are keyed to the scope, so two
 threads never share a filesystem.
 
 Containers nobody has touched for `docker.reuse_ttl` (default 24h) are

@@ -16,8 +16,8 @@
 //
 //   - Reuse (Spec.Reuse / Spec.ReuseKey). A container can outlive its task
 //     and be shared by every task with the same key — one per thread, say.
-//     Its $HOME is a named volume, so `~/.claude` (login, session history)
-//     survives container restarts and `claude --resume` keeps working.
+//     Its $HOME is a named volume, so agent login and session history
+//     (`~/.claude` or `~/.codex`) survive container restarts and resumes.
 package docker
 
 import (
@@ -256,7 +256,7 @@ func (e *Env) Start(ctx context.Context) error {
 	}
 	if _, ok := e.spec.Env["HOME"]; !ok {
 		// Non-root users usually have no home in an unprovisioned image;
-		// claude needs a writable one for ~/.claude.json.
+		// Agent CLIs need a writable home for login and session state.
 		h := e.home
 		if h == "" {
 			h = "/tmp"
@@ -334,7 +334,7 @@ func (e *Env) adopt(ctx context.Context) (string, error) {
 // ensureVolume creates the persistent $HOME volume and seeds it from the
 // image's home skeleton, owned by the container user. Without this the
 // volume would be an empty root-owned directory and the agent could not
-// write ~/.claude.
+// write their login/session state.
 func (e *Env) ensureVolume(ctx context.Context) error {
 	if e.volume == "" || e.home == "" {
 		return nil
