@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Slack channel with dispatch task threads</title>
+  <desc id="desc">A sanitized Slack channel screenshot showing dispatch task threads marked as running, waiting and idle.</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#1d1c1d" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="760" fill="#f6f3ef"/>
+  <rect x="60" y="54" width="1080" height="652" rx="18" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="60" y="54" width="276" height="652" rx="18" fill="#4a154b"/>
+  <rect x="60" y="54" width="276" height="72" rx="18" fill="#3f0e40"/>
+  <text x="90" y="99" font-family="Arial, sans-serif" font-size="23" font-weight="700" fill="#ffffff">Acme Engineering</text>
+  <text x="92" y="164" font-family="Arial, sans-serif" font-size="15" fill="#d8bfd9">Channels</text>
+  <rect x="82" y="184" width="230" height="34" rx="6" fill="#1164a3"/>
+  <text x="102" y="207" font-family="Arial, sans-serif" font-size="16" fill="#ffffff"># dispatch</text>
+  <text x="102" y="250" font-family="Arial, sans-serif" font-size="16" fill="#e8d7e8"># backend</text>
+  <text x="102" y="291" font-family="Arial, sans-serif" font-size="16" fill="#e8d7e8"># review-queue</text>
+  <text x="102" y="332" font-family="Arial, sans-serif" font-size="16" fill="#e8d7e8"># incidents</text>
+  <text x="92" y="396" font-family="Arial, sans-serif" font-size="15" fill="#d8bfd9">Direct messages</text>
+  <text x="102" y="438" font-family="Arial, sans-serif" font-size="16" fill="#e8d7e8">dispatch</text>
+  <rect x="336" y="54" width="804" height="72" fill="#ffffff"/>
+  <line x1="336" y1="126" x2="1140" y2="126" stroke="#ddd8df"/>
+  <text x="369" y="99" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#1d1c1d"># dispatch</text>
+  <text x="496" y="99" font-family="Arial, sans-serif" font-size="14" fill="#616061">task threads for agent work</text>
+
+  <g font-family="Arial, sans-serif">
+    <circle cx="386" cy="174" r="18" fill="#2f80ed"/>
+    <text x="380" y="181" font-size="18" font-weight="700" fill="#ffffff">M</text>
+    <text x="418" y="168" font-size="15" font-weight="700" fill="#1d1c1d">Maya</text>
+    <text x="466" y="168" font-size="13" fill="#616061">10:14 AM</text>
+    <text x="418" y="193" font-size="16" fill="#1d1c1d">@dispatch add retries to the HTTP client and run the tests</text>
+    <rect x="418" y="211" width="64" height="28" rx="14" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="435" y="230" font-size="15" fill="#1d1c1d">⏳ 1</text>
+    <rect x="498" y="211" width="144" height="28" rx="14" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="516" y="230" font-size="14" fill="#1d1c1d">3 replies · running</text>
+
+    <circle cx="386" cy="287" r="18" fill="#2eb67d"/>
+    <text x="380" y="294" font-size="18" font-weight="700" fill="#ffffff">D</text>
+    <text x="418" y="281" font-size="15" font-weight="700" fill="#1d1c1d">dispatch</text>
+    <text x="486" y="281" font-size="13" fill="#616061">10:15 AM</text>
+    <text x="418" y="306" font-size="16" fill="#1d1c1d">▶️ task `a1b2c3d4` started with agent *coder* (local)</text>
+    <text x="418" y="331" font-size="16" fill="#1d1c1d">🔧 Bash `go test ./...` · 1m05s · 6 tool calls</text>
+
+    <line x1="370" y1="374" x2="1104" y2="374" stroke="#ece8ee"/>
+
+    <circle cx="386" cy="426" r="18" fill="#8a63d2"/>
+    <text x="381" y="433" font-size="18" font-weight="700" fill="#ffffff">A</text>
+    <text x="418" y="420" font-size="15" font-weight="700" fill="#1d1c1d">Ari</text>
+    <text x="450" y="420" font-size="13" fill="#616061">10:28 AM</text>
+    <text x="418" y="445" font-size="16" fill="#1d1c1d">@dispatch review the logging branch and open a PR</text>
+    <rect x="418" y="463" width="64" height="28" rx="14" fill="#fff8e5" stroke="#e7c76d"/>
+    <text x="437" y="482" font-size="15" fill="#1d1c1d">✋ 1</text>
+    <rect x="498" y="463" width="193" height="28" rx="14" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="516" y="482" font-size="14" fill="#1d1c1d">waiting for permission</text>
+
+    <circle cx="386" cy="551" r="18" fill="#e01e5a"/>
+    <text x="380" y="558" font-size="18" font-weight="700" fill="#ffffff">J</text>
+    <text x="418" y="545" font-size="15" font-weight="700" fill="#1d1c1d">Jules</text>
+    <text x="464" y="545" font-size="13" fill="#616061">10:41 AM</text>
+    <text x="418" y="570" font-size="16" fill="#1d1c1d">@dispatch tighten the web auth tests</text>
+    <rect x="418" y="588" width="64" height="28" rx="14" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="436" y="607" font-size="15" fill="#1d1c1d">📬 1</text>
+    <rect x="498" y="588" width="153" height="28" rx="14" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="516" y="607" font-size="14" fill="#1d1c1d">answered · idle</text>
+  </g>
+</svg>

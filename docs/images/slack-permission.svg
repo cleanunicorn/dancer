@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Slack thread with a dispatch permission prompt</title>
+  <desc id="desc">A sanitized Slack thread screenshot showing an agent asking for permission to run a shell command with Allow and Deny buttons.</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#1d1c1d" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="760" fill="#f6f3ef"/>
+  <rect x="92" y="54" width="1016" height="652" rx="18" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="92" y="54" width="1016" height="70" rx="18" fill="#ffffff"/>
+  <line x1="92" y1="124" x2="1108" y2="124" stroke="#ddd8df"/>
+  <text x="128" y="97" font-family="Arial, sans-serif" font-size="23" font-weight="700" fill="#1d1c1d">Thread</text>
+  <text x="210" y="97" font-family="Arial, sans-serif" font-size="14" fill="#616061">#dispatch · add retries to the HTTP client</text>
+  <text x="1038" y="96" font-family="Arial, sans-serif" font-size="26" fill="#616061">×</text>
+
+  <g font-family="Arial, sans-serif">
+    <circle cx="146" cy="174" r="18" fill="#2f80ed"/>
+    <text x="140" y="181" font-size="18" font-weight="700" fill="#ffffff">M</text>
+    <text x="178" y="168" font-size="15" font-weight="700" fill="#1d1c1d">Maya</text>
+    <text x="226" y="168" font-size="13" fill="#616061">10:14 AM</text>
+    <text x="178" y="193" font-size="16" fill="#1d1c1d">@dispatch add retries to the HTTP client and run the tests</text>
+
+    <circle cx="146" cy="265" r="18" fill="#2eb67d"/>
+    <text x="140" y="272" font-size="18" font-weight="700" fill="#ffffff">D</text>
+    <text x="178" y="259" font-size="15" font-weight="700" fill="#1d1c1d">dispatch</text>
+    <text x="246" y="259" font-size="13" fill="#616061">10:14 AM</text>
+    <text x="178" y="284" font-size="16" fill="#1d1c1d">▶️ task `a1b2c3d4` started with agent *coder* (local)</text>
+    <text x="178" y="314" font-size="16" fill="#1d1c1d">🤖 `claude-sonnet-4-5` · acceptEdits · local /srv/work/a1b2c3d4</text>
+
+    <circle cx="146" cy="392" r="18" fill="#2eb67d"/>
+    <text x="140" y="399" font-size="18" font-weight="700" fill="#ffffff">D</text>
+    <text x="178" y="386" font-size="15" font-weight="700" fill="#1d1c1d">dispatch</text>
+    <text x="246" y="386" font-size="13" fill="#616061">10:15 AM</text>
+    <text x="178" y="412" font-size="16" font-weight="700" fill="#1d1c1d">@Maya 🔐 Bash wants to run:</text>
+    <rect x="178" y="432" width="684" height="82" rx="8" fill="#f8f8f8" stroke="#dedede"/>
+    <text x="202" y="465" font-family="Menlo, Consolas, monospace" font-size="16" fill="#1d1c1d">go test ./...</text>
+    <text x="202" y="492" font-family="Menlo, Consolas, monospace" font-size="16" fill="#1d1c1d">go test -race -count=1 ./internal/coordinator</text>
+    <rect x="178" y="532" width="94" height="38" rx="8" fill="#007a5a"/>
+    <text x="207" y="557" font-size="15" font-weight="700" fill="#ffffff">Allow</text>
+    <rect x="284" y="532" width="84" height="38" rx="8" fill="#ffffff" stroke="#8d8d8d"/>
+    <text x="312" y="557" font-size="15" font-weight="700" fill="#1d1c1d">Deny</text>
+
+    <rect x="178" y="615" width="544" height="38" rx="19" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="200" y="639" font-size="15" fill="#1d1c1d">🔧 Bash `go test ./...` · 1m05s · 6 tool calls</text>
+    <text x="128" y="677" font-size="13" fill="#616061">dispatch also shows this status above the composer when Slack's assistant status is enabled.</text>
+  </g>
+</svg>

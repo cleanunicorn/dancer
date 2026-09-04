@@ -18,6 +18,18 @@ restarts — a restarted dispatch resumes the tasks it cut short by itself.
   ▰▰▰▱▱▱▱▱▱▱ 28% · 7d
 ```
 
+## Screenshots
+
+Sanitized Slack screenshots of the main loop: task threads in a channel, a
+permission prompt with buttons, and the finished turn with work summary and
+usage.
+
+![Slack channel with dispatch task threads](docs/images/slack-channel.svg)
+
+![Slack thread with a permission prompt](docs/images/slack-permission.svg)
+
+![Slack thread after a completed task](docs/images/slack-complete.svg)
+
 While the agent works, the last message in the thread is a live status line
 (`🔧 Bash \`go test ./...\` · 1m05s · 6 tool calls`) that is edited in place
 every few seconds, and your message carries ⏳ — ✋ while the agent waits for
