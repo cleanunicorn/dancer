@@ -21,6 +21,7 @@ import (
 
 	"github.com/cleanunicorn/dispatch/internal/agent"
 	agentclaude "github.com/cleanunicorn/dispatch/internal/agent/claude"
+	agentcodex "github.com/cleanunicorn/dispatch/internal/agent/codex"
 	"github.com/cleanunicorn/dispatch/internal/config"
 	"github.com/cleanunicorn/dispatch/internal/coordinator"
 	"github.com/cleanunicorn/dispatch/internal/decider"
@@ -244,7 +245,8 @@ func runServer(cfgPath string, forceTerminal, forceWeb bool) error {
 func drivers(cfg *config.Config) map[agent.Kind]agent.Agent {
 	return map[agent.Kind]agent.Agent{
 		agent.KindClaude: &agentclaude.Agent{Binary: cfg.Claude.Binary},
-		// codex and opencode drivers: issues #45 and #46.
+		agent.KindCodex:  &agentcodex.Agent{Binary: cfg.Codex.Binary},
+		// opencode driver: issue #46.
 	}
 }
 

@@ -22,9 +22,9 @@ max_auto_resumes = 3        # consecutive automatic resumes of one task before i
 [claude]
 binary = "claude"
 [codex]
-binary = "codex"            # driver not built in yet: a definition with kind = "codex" is refused at start
+binary = "codex"
 [opencode]
-binary = "opencode"         # same; kind = "opencode" will take any provider (GLM, DeepSeek, Kimi, …)
+binary = "opencode"         # kind = "opencode" will take any provider (GLM, DeepSeek, Kimi, …)
 
 # --- decider (optional) ------------------------------------------------------
 # A small model that answers dispatch's judgement calls; see DECIDER.md. Off by
@@ -88,6 +88,9 @@ kind = "claude"                            # claude (default) | codex | opencode
 model = "sonnet"                           # haiku | sonnet | opus | fable, or a full model id
 permission_mode = "manual"                 # manual | acceptEdits | auto | bypassPermissions
 allowed_tools = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git:*)"]
+# allowed_tools, mcp_config and sub_agents are claude-only: the other CLIs have
+# no equivalent, so dispatch refuses them on a definition of another kind rather
+# than accepting a setting that would do nothing.
 system_prompt = "You are working inside a git repository. Commit when done."
 [definitions.environment]
 kind = "local"
@@ -119,15 +122,17 @@ setup = []                                 # extra root shell commands, run last
 reuse = "thread"                           # task (default) | thread | definition
                                            # thread: one container per conversation, kept warm
                                            # between messages, with a persistent $HOME so
-                                           # `claude --resume` and any login survive.
+                                           # agent session resumes and logins survive.
 workdir = ""                               # host dir mounted at /work; empty = dispatch manages it
-# The container runs with the host's claude login: dispatch copies the host's
-# ~/.claude/.credentials.json in before every turn. It borrows the host's
+# The container runs with the host's Claude or Codex login: dispatch copies the
+# matching ~/.claude/.credentials.json or ~/.codex/auth.json in before every
+# turn. It borrows the host's
 # GitHub login the same way (~/.config/gh/hosts.yml, else `gh auth token`)
 # and the git identity that goes with it, so `gh`, `git commit` and
 # `git push` in the container are you. Give it its own instead:
 # [definitions.environment.env]
 # CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-..."   # from `claude setup-token`; or ANTHROPIC_API_KEY
+# CODEX_API_KEY = "..."                           # alternatively, `codex login` on the dispatch host is lent to Docker
 # GH_TOKEN = "github_pat_..."                    # a GitHub token of its own; dispatch then lends none
 # GIT_AUTHOR_EMAIL = "bot@example.com"           # a committer of its own; dispatch then lends no identity
 

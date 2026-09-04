@@ -503,6 +503,9 @@ func (c *Config) validate() error {
 		if !agent.Kind(d.Kind).Valid() {
 			return fmt.Errorf("config: definition %q: unknown agent kind %q (%s)", d.Name, d.Kind, kindNames())
 		}
+		if err := claudeOnly(d); err != nil {
+			return err
+		}
 		switch environment.Kind(d.Environment.Kind) {
 		case environment.KindLocal:
 		case environment.KindDocker:
@@ -593,6 +596,31 @@ func (c *Config) validate() error {
 		}
 	}
 	return nil
+}
+
+// claudeOnly refuses the definition keys only the claude driver can honour.
+// allowed_tools, mcp_config and sub_agents become claude CLI flags; codex and
+// opencode have no equivalent, so a definition of another kind carrying them
+// is a setting that would silently do nothing — including the permission
+// pre-approval allowed_tools looks like it is granting.
+func claudeOnly(d Definition) error {
+	if !agent.Kind(d.Kind).DropsClaudeFlags() {
+		return nil
+	}
+	var keys []string
+	if len(d.AllowedTools) > 0 {
+		keys = append(keys, "allowed_tools")
+	}
+	if d.MCPConfig != "" {
+		keys = append(keys, "mcp_config")
+	}
+	if len(d.SubAgents) > 0 {
+		keys = append(keys, "sub_agents")
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config: definition %q: %s only apply to kind \"claude\", not %q", d.Name, strings.Join(keys, ", "), d.Kind)
 }
 
 // AgentDefinitions converts config definitions to agent.Definition.

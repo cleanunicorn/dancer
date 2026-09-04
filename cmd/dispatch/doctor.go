@@ -271,6 +271,12 @@ func checkAgent(kind agent.Kind, bin string) check {
 	info := strings.TrimSpace(string(ver)) + " at " + path
 	switch kind {
 	case agent.KindCodex:
+		// dispatch uses the stateful app-server protocol, not `codex exec`:
+		// a version alone is not enough proof that this Codex install can
+		// stream approvals and follow-up turns.
+		if err := exec.CommandContext(ctx, path, "app-server", "--help").Run(); err != nil {
+			return check{name: name, ok: false, info: info + " — Codex app-server is unavailable; upgrade Codex"}
+		}
 		for _, k := range []string{"OPENAI_API_KEY", "CODEX_API_KEY"} {
 			if os.Getenv(k) != "" {
 				return check{name: name, ok: true, info: info + ", " + k + " in the environment"}
