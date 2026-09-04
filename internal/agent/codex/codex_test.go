@@ -3,8 +3,10 @@ package codex
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,11 +108,10 @@ func TestAppServerRoundTrip(t *testing.T) {
 	}
 	f.wrote(t, `"method":"turn/start"`)
 	f.say(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-1","turn":{"id":"turn-1"}}}`)
+	// A delta is not an event: item/completed carries the same text whole,
+	// and a surface that posted both would post a message per word.
 	f.say(`{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"thr-1","itemId":"msg-1","delta":"hello"}}`)
-	if e := next(t, r); e.Type != agent.EventText || !e.Partial || e.Text != "hello" {
-		t.Fatalf("delta = %+v", e)
-	}
-	f.say(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-1","item":{"id":"cmd-1","type":"commandExecution","command":"git status"}}}`)
+	f.say(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-1","item":{"id":"cmd-1","type":"commandExecution","command":"/usr/bin/zsh -lc 'git status'"}}}`)
 	if e := next(t, r); e.Type != agent.EventToolUse || e.Tool != agent.ToolBash || e.ToolInput["command"] != "git status" {
 		t.Fatalf("tool use = %+v", e)
 	}
@@ -188,6 +189,197 @@ func TestLiveAppServer(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatal("Codex app-server did not complete")
+		}
+	}
+}
+
+func TestShellCommand(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{`/usr/bin/zsh -lc 'git status'`, "git status"},
+		{`bash -c 'gh pr create --title x'`, "gh pr create --title x"},
+		{`/bin/sh -lic 'echo '\''hi'\'''`, "echo 'hi'"},
+		{`git status`, "git status"},                     // not wrapped
+		{`node -c 'x'`, `node -c 'x'`},                   // not a shell
+		{`zsh -lc 'a' && 'b'`, `zsh -lc 'a' && 'b'`},     // not one quoted word
+		{`zsh -l 'a'`, `zsh -l 'a'`},                     // no -c
+		{`zsh -lc "git status"`, `zsh -lc "git status"`}, // only single quotes are unwrapped
+	} {
+		if got := shellCommand(tt.in); got != tt.want {
+			t.Errorf("shellCommand(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// A resumed thread inherits nothing from the thread it resumes: Codex falls
+// back to the host's own config, so a manual definition would come back from
+// an idle timeout with a full-access sandbox unless resume says so again.
+func TestResumeCarriesThreadOptions(t *testing.T) {
+	f := newFakeProc()
+	def := agent.Definition{Kind: agent.KindCodex, Model: "gpt-test", PermissionMode: agent.PermissionManual, SystemPrompt: "be brief"}
+	if _, err := (&Agent{Binary: "codex"}).Resume(context.Background(), fakeEnv{f}, def, "thr-old", "again"); err != nil {
+		t.Fatal(err)
+	}
+	f.wrote(t, `"method":"initialize"`)
+	f.say(`{"jsonrpc":"2.0","id":1,"result":{}}`)
+	got := f.wrote(t, `"method":"thread/resume"`)
+	for _, want := range []string{`"threadId":"thr-old"`, `"approvalPolicy":"untrusted"`, `"sandbox":"read-only"`, `"model":"gpt-test"`, "be brief"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("thread/resume missing %s: %s", want, got)
+		}
+	}
+	f.exit()
+}
+
+// A steer races the turn it steers: when the turn ends first Codex rejects
+// expectedTurnId, and the message has to arrive as a turn of its own rather
+// than taking the warm session down with it.
+func TestSteerLosesRaceAndBecomesTurn(t *testing.T) {
+	f := newFakeProc()
+	r := ready(t, f)
+	if err := r.Send(context.Background(), "and also this"); err != nil {
+		t.Fatal(err)
+	}
+	steer := f.wrote(t, `"method":"turn/steer"`)
+	f.say(`{"jsonrpc":"2.0","id":` + itoa(requestID(t, steer)) + `,"error":{"code":-32602,"message":"expectedTurnId does not match"}}`)
+	got := f.wrote(t, `"method":"turn/start"`)
+	if !strings.Contains(got, "and also this") {
+		t.Fatalf("re-sent turn = %s", got)
+	}
+	select {
+	case e := <-r.Events():
+		t.Fatalf("a lost steer must not end the session: %+v", e)
+	case <-time.After(200 * time.Millisecond):
+	}
+	f.exit()
+}
+
+// Codex waits for an answer to every request it sends. A method dispatch does
+// not implement must still be answered or the turn hangs forever.
+func TestUnknownServerRequestIsRefused(t *testing.T) {
+	f := newFakeProc()
+	r := ready(t, f)
+	f.say(`{"jsonrpc":"2.0","id":77,"method":"item/permissions/requestApproval","params":{"threadId":"thr-1","itemId":"p-1"}}`)
+	got := f.wrote(t, `"id":77`)
+	if !strings.Contains(got, `"error"`) || !strings.Contains(got, "item/permissions/requestApproval") {
+		t.Fatalf("refusal = %s", got)
+	}
+	// The session is untouched by a request it could not answer.
+	f.say(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-1","item":{"id":"m-1","type":"agentMessage","text":"carrying on"}}}`)
+	if e := next(t, r); e.Type != agent.EventText || e.Text != "carrying on" {
+		t.Fatalf("event = %+v", e)
+	}
+	f.exit()
+}
+
+// A fileChange approval carries ids only; the changes came with the item.
+func TestFileChangeApprovalKeepsTheChanges(t *testing.T) {
+	f := newFakeProc()
+	r := ready(t, f)
+	f.say(`{"jsonrpc":"2.0","method":"item/started","params":{"threadId":"thr-1","item":{"id":"fc-1","type":"fileChange","changes":[{"path":"/w/a.go","kind":"update","diff":"@@"}]}}}`)
+	if e := next(t, r); e.Type != agent.EventToolUse || e.Tool != agent.ToolEdit || e.ToolInput["file_path"] != "/w/a.go" {
+		t.Fatalf("tool use = %+v", e)
+	}
+	f.say(`{"jsonrpc":"2.0","id":12,"method":"item/fileChange/requestApproval","params":{"threadId":"thr-1","itemId":"fc-1","turnId":"turn-1"}}`)
+	e := next(t, r)
+	if e.Type != agent.EventNeedsPermission || e.Tool != agent.ToolEdit || e.ToolInput["file_path"] != "/w/a.go" {
+		t.Fatalf("permission = %+v", e)
+	}
+	f.exit()
+}
+
+// A sub-agent runs as a thread of its own on the same connection; its
+// turn/completed is not this run's turn ending.
+func TestOtherThreadNotificationsIgnored(t *testing.T) {
+	f := newFakeProc()
+	r := ready(t, f)
+	f.say(`{"jsonrpc":"2.0","method":"turn/completed","params":{"threadId":"thr-other","turn":{"id":"t-x","status":"completed"}}}`)
+	f.say(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-1","item":{"id":"m-1","type":"agentMessage","text":"mine"}}}`)
+	if e := next(t, r); e.Type != agent.EventText || e.Text != "mine" {
+		t.Fatalf("event = %+v", e)
+	}
+	f.exit()
+}
+
+// ready drives the handshake up to a started turn and returns the run.
+func ready(t *testing.T, f *fakeProc) agent.Run {
+	t.Helper()
+	r, err := (&Agent{Binary: "codex"}).Start(context.Background(), fakeEnv{f}, agent.Definition{Kind: agent.KindCodex, PermissionMode: agent.PermissionManual}, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.wrote(t, `"method":"initialize"`)
+	f.say(`{"jsonrpc":"2.0","id":1,"result":{}}`)
+	f.wrote(t, `"method":"thread/start"`)
+	f.say(`{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"thr-1"}}}`)
+	if e := next(t, r); e.Type != agent.EventInit {
+		t.Fatalf("init = %+v", e)
+	}
+	f.wrote(t, `"method":"turn/start"`)
+	f.say(`{"jsonrpc":"2.0","method":"turn/started","params":{"threadId":"thr-1","turn":{"id":"turn-1"}}}`)
+	// turn/started emits nothing, so wait on a message behind it: the reader
+	// is one goroutine, and an event from a later line proves it got there.
+	f.say(`{"jsonrpc":"2.0","method":"item/completed","params":{"threadId":"thr-1","item":{"id":"m-0","type":"agentMessage","text":"working"}}}`)
+	if e := next(t, r); e.Type != agent.EventText || e.Text != "working" {
+		t.Fatalf("turn did not start: %+v", e)
+	}
+	return r
+}
+
+func requestID(t *testing.T, line string) int64 {
+	t.Helper()
+	var m struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		t.Fatalf("bad request %q: %v", line, err)
+	}
+	return m.ID
+}
+func itoa(i int64) string { return strconv.FormatInt(i, 10) }
+
+// TestLiveShellUnwrap pins the one protocol detail that no fixture can keep
+// honest: app-server reports a command as the shell invocation it runs, and
+// everything above this package reads a command by what it begins with.
+func TestLiveShellUnwrap(t *testing.T) {
+	if os.Getenv("DISPATCH_LIVE") != "1" {
+		t.Skip("set DISPATCH_LIVE=1 to run against the real Codex CLI")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/hello.txt", []byte("hi\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env, err := envlocal.Factory{}.New(environment.Spec{Kind: environment.KindLocal, Workdir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New().Start(context.Background(), env, agent.Definition{Kind: agent.KindCodex, PermissionMode: agent.PermissionBypass},
+		"Run exactly `cat hello.txt` in the shell, then reply DONE.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Stop()
+	deadline := time.After(120 * time.Second)
+	for {
+		select {
+		case ev, ok := <-r.Events():
+			if !ok {
+				t.Fatal("Codex ended without running the command")
+			}
+			if ev.Type == agent.EventToolUse && ev.Tool == agent.ToolBash {
+				cmd, _ := ev.ToolInput["command"].(string)
+				if !strings.HasPrefix(cmd, "cat ") {
+					t.Fatalf("command reached dispatch wrapped: %q", cmd)
+				}
+				return
+			}
+			if ev.Type == agent.EventError {
+				t.Fatalf("Codex error: %s", ev.Text)
+			}
+		case <-deadline:
+			t.Fatal("Codex did not run a command")
 		}
 	}
 }

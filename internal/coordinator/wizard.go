@@ -475,6 +475,9 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 		return def, err
 	}
 	for _, f := range editFields {
+		if f.only != nil && !f.only(def) {
+			continue
+		}
 		if err := f.ask(w, ctx, &def); err != nil {
 			return def, err
 		}
@@ -500,27 +503,31 @@ func (w *wizard) run(ctx context.Context) (agent.Definition, error) {
 	return def, nil
 }
 
-// editFields are the choices of the edit menu, in order.
+// editFields are the choices of the edit menu, in order. A field with an
+// `only` predicate is asked, and shown, for the kinds that can honour it —
+// pre-approved tools are a claude CLI flag, so asking a codex agent for them
+// would collect an answer its driver drops and its config refuses.
 var editFields = []struct {
 	label string
 	ask   func(*wizard, context.Context, *agent.Definition) error
 	show  func(agent.Definition) string
+	only  func(agent.Definition) bool
 }{
-	{"Model", (*wizard).askModel, func(d agent.Definition) string { return d.Model }},
-	{"Environment", (*wizard).askEnvironment, describeEnvironment},
-	{"Permissions", (*wizard).askPermissions, func(d agent.Definition) string { return string(d.PermissionMode) }},
+	{"Model", (*wizard).askModel, func(d agent.Definition) string { return d.Model }, nil},
+	{"Environment", (*wizard).askEnvironment, describeEnvironment, nil},
+	{"Permissions", (*wizard).askPermissions, func(d agent.Definition) string { return string(d.PermissionMode) }, nil},
 	{"Tools", (*wizard).askTools, func(d agent.Definition) string {
 		if len(d.AllowedTools) == 0 {
 			return "none"
 		}
 		return strings.Join(d.AllowedTools, ", ")
-	}},
+	}, func(d agent.Definition) bool { return !d.Kind.DropsClaudeFlags() }},
 	{"System prompt", (*wizard).askSystemPrompt, func(d agent.Definition) string {
 		if d.SystemPrompt == "" {
 			return "none"
 		}
 		return truncate(d.SystemPrompt, 60)
-	}},
+	}, nil},
 }
 
 // edit shows the definition and a menu of fields; each pick re-asks that
@@ -531,6 +538,9 @@ func (w *wizard) edit(ctx context.Context, def *agent.Definition) (changed bool,
 	for {
 		q := agent.Question{Header: "Edit " + def.Name, Text: summarize("What do you want to change?", *def)}
 		for _, f := range editFields {
+			if f.only != nil && !f.only(*def) {
+				continue
+			}
 			q.Options = append(q.Options, agent.Option{Label: f.label, Description: truncate(f.show(*def), 70)})
 		}
 		q.Options = append(q.Options,

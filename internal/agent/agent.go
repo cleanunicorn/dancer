@@ -37,6 +37,13 @@
 // approval policies; it has no on-failure counterpart. Its on-request policy
 // is therefore the closest safe mapping for dispatch's auto mode.
 //
+// Three Definition keys are claude flags and nothing else: AllowedTools,
+// MCPConfig and SubAgents become --allowedTools, --mcp-config and --agents.
+// Codex and OpenCode have no equivalent, so a definition of those kinds is
+// refused with them rather than silently dropping them (Kind.DropsClaudeFlags,
+// enforced in config.validate and skipped by the wizard) — allowed_tools most
+// of all, which would otherwise read as a pre-approval nothing honoured.
+//
 // Whatever the mode, a tool the driver is asked about reaches dispatch as
 // EventNeedsPermission and is answered through Run.Decide: a driver must
 // never run its vendor's non-interactive mode that auto-approves or
@@ -73,6 +80,15 @@ func (k Kind) Valid() bool {
 	}
 	return false
 }
+
+// DropsClaudeFlags reports whether k's driver has nowhere to put the three
+// definition keys that are claude CLI flags: AllowedTools, MCPConfig and
+// SubAgents. Codex's app-server and opencode have no equivalent, so config
+// refuses them on such a definition and the wizard never asks — accepting
+// them would leave allowed_tools looking like it pre-approved tools it did
+// not. A kind with no driver in the build answers false; the registry is
+// what refuses that definition.
+func (k Kind) DropsClaudeFlags() bool { return k == KindCodex || k == KindOpenCode }
 
 // Canonical tool names: what Event.Tool says for the tools dispatch reasons
 // about, whatever the vendor calls them (see the package doc).

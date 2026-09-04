@@ -489,3 +489,40 @@ func TestDeciderConfigValidation(t *testing.T) {
 		t.Fatal("openai without a model was accepted because of a default")
 	}
 }
+
+// allowed_tools, mcp_config and sub_agents become claude CLI flags. On a
+// definition of another kind they would do nothing — and allowed_tools looks
+// like it pre-approves tools, so accepting it silently is worse than refusing.
+func TestClaudeOnlyKeysRefused(t *testing.T) {
+	load := func(src string) error {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		return err
+	}
+	for _, tt := range []struct {
+		src  string
+		want string
+	}{
+		{"[[definitions]]\nname = \"c\"\nkind = \"codex\"\nallowed_tools = [\"Read\"]\n", "allowed_tools"},
+		{"[[definitions]]\nname = \"c\"\nkind = \"opencode\"\nmcp_config = \"/tmp/mcp.json\"\n", "mcp_config"},
+		{"[[definitions]]\nname = \"c\"\nkind = \"codex\"\n[definitions.sub_agents.x]\nname = \"z\"\n", "sub_agents"},
+	} {
+		err := load(tt.src)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("Load(%q) = %v, want an error naming %s", tt.src, err, tt.want)
+		}
+	}
+	// The same keys on a claude definition, and the same kinds without them.
+	for _, src := range []string{
+		"[[definitions]]\nname = \"c\"\nkind = \"claude\"\nallowed_tools = [\"Read\"]\n",
+		"[[definitions]]\nname = \"c\"\nallowed_tools = [\"Read\"]\n",
+		"[[definitions]]\nname = \"c\"\nkind = \"codex\"\n",
+	} {
+		if err := load(src); err != nil {
+			t.Errorf("Load(%q) = %v, want nil", src, err)
+		}
+	}
+}
