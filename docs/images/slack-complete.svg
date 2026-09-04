@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Slack thread after a dispatch task completes</title>
+  <desc id="desc">A sanitized Slack thread screenshot showing a completed task, pull request link and subscription usage bars.</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#1d1c1d" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="760" fill="#f6f3ef"/>
+  <rect x="92" y="54" width="1016" height="652" rx="18" fill="#ffffff" filter="url(#shadow)"/>
+  <rect x="92" y="54" width="1016" height="70" rx="18" fill="#ffffff"/>
+  <line x1="92" y1="124" x2="1108" y2="124" stroke="#ddd8df"/>
+  <text x="128" y="97" font-family="Arial, sans-serif" font-size="23" font-weight="700" fill="#1d1c1d">Thread</text>
+  <text x="210" y="97" font-family="Arial, sans-serif" font-size="14" fill="#616061">#dispatch · tighten the web auth tests</text>
+  <text x="1038" y="96" font-family="Arial, sans-serif" font-size="26" fill="#616061">×</text>
+
+  <g font-family="Arial, sans-serif">
+    <circle cx="146" cy="174" r="18" fill="#e01e5a"/>
+    <text x="140" y="181" font-size="18" font-weight="700" fill="#ffffff">J</text>
+    <text x="178" y="168" font-size="15" font-weight="700" fill="#1d1c1d">Jules</text>
+    <text x="224" y="168" font-size="13" fill="#616061">10:41 AM</text>
+    <text x="178" y="193" font-size="16" fill="#1d1c1d">@dispatch tighten the web auth tests</text>
+    <rect x="178" y="211" width="64" height="28" rx="14" fill="#f8f8f8" stroke="#ddd8df"/>
+    <text x="196" y="230" font-size="15" fill="#1d1c1d">📬 1</text>
+
+    <circle cx="146" cy="286" r="18" fill="#2eb67d"/>
+    <text x="140" y="293" font-size="18" font-weight="700" fill="#ffffff">D</text>
+    <text x="178" y="280" font-size="15" font-weight="700" fill="#1d1c1d">dispatch</text>
+    <text x="246" y="280" font-size="13" fill="#616061">10:46 AM</text>
+    <text x="178" y="305" font-size="16" fill="#1d1c1d">Added session expiry coverage and password-change regression tests.</text>
+    <text x="178" y="335" font-size="16" fill="#1d1c1d">Opened pull request: &lt;https://github.com/cleanunicorn/dispatch/pull/64|#64&gt;</text>
+
+    <circle cx="146" cy="421" r="18" fill="#2eb67d"/>
+    <text x="140" y="428" font-size="18" font-weight="700" fill="#ffffff">D</text>
+    <text x="178" y="415" font-size="15" font-weight="700" fill="#1d1c1d">dispatch</text>
+    <text x="246" y="415" font-size="13" fill="#616061">10:46 AM</text>
+    <text x="178" y="440" font-size="16" font-weight="700" fill="#1d1c1d">@Jules ✅ done · 5m12s · 14 tool calls · claude-sonnet-4-5</text>
+    <text x="178" y="470" font-size="16" fill="#1d1c1d">📍 cleanunicorn/dispatch · branch `web-auth-tests` · PR #64</text>
+
+    <circle cx="146" cy="552" r="18" fill="#2eb67d"/>
+    <text x="140" y="559" font-size="18" font-weight="700" fill="#ffffff">D</text>
+    <text x="178" y="546" font-size="15" font-weight="700" fill="#1d1c1d">dispatch</text>
+    <text x="246" y="546" font-size="13" fill="#616061">10:46 AM</text>
+    <text x="178" y="571" font-size="16" fill="#1d1c1d">📊 max plan</text>
+    <text x="178" y="602" font-size="18" fill="#1d1c1d">▰▰▱▱▱▱▱▱▱▱ 15% · 5h</text>
+    <text x="178" y="633" font-size="18" fill="#1d1c1d">▰▰▰▱▱▱▱▱▱▱ 28% · 7d</text>
+  </g>
+</svg>
