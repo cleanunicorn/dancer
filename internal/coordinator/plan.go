@@ -71,7 +71,7 @@ func (c *Coordinator) planWorkflow(ctx context.Context, s surface.Surface, it su
 		// the way execute routes any other message, whole — the word is
 		// part of what they asked for.
 		c.reopenThread(ctx, s, it.Thread)
-		_, _ = c.followUp(ctx, s, surface.FollowUp{Thread: it.Thread, Text: "plan " + it.Ask, User: it.User})
+		_, _ = c.followUp(ctx, s, surface.FollowUp{Thread: it.Thread, Text: "plan " + it.Ask, User: it.User, Files: it.Files})
 		return
 	}
 	if reason := c.workflowBlocked(it.Thread); reason != "" {

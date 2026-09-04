@@ -585,7 +585,15 @@ func (r *workflowRun) attemptPromptSame(ctx context.Context, step *workflow.Step
 					defer cancel()
 					c.pinModel(rctx, id, prev)
 				}()
-				c.stopWarm(ctx, st.Thread, id)
+				if c.stopWarm(ctx, st.Thread, id) {
+					// The process we just stopped announces its own end,
+					// under this same task id — the session is resumed,
+					// not replaced. Left in the waiter it settles the
+					// wait below before the step's turn has said
+					// anything, and the step is failed for a turn that
+					// is still running.
+					c.awaitProcessEnd(ctx, id, ends, goneTimeout)
+				}
 			}
 		}
 	}
@@ -604,8 +612,8 @@ func (r *workflowRun) attemptPromptSame(ctx context.Context, step *workflow.Step
 		// still on it afterwards, nothing was started and the step says
 		// so rather than waiting for a turn nobody asked for.
 		prev, bound := c.lookup(st.Thread)
-		if bound {
-			c.stopWarm(ctx, st.Thread, prev)
+		if bound && c.stopWarm(ctx, st.Thread, prev) {
+			c.awaitProcessEnd(ctx, prev, ends, goneTimeout)
 		}
 		c.runTaskModel(ctx, r.s, surface.RunTask{Thread: st.Thread, Agent: step.Agent, Prompt: text, User: st.User}, step.Model)
 		var started bool
@@ -1344,15 +1352,20 @@ func (c *Coordinator) pinModel(ctx context.Context, id executor.TaskID, model st
 // and a warm process is the definition *and* the model the previous turn
 // ran — so a step that wants either changed has to end it first. Nothing
 // running is nothing to stop and nothing to wait for.
-func (c *Coordinator) stopWarm(ctx context.Context, th transport.ThreadID, id executor.TaskID) {
+//
+// It reports whether it stopped one, because a process that was stopped
+// still owes an end (awaitProcessEnd) and one that was never running does
+// not.
+func (c *Coordinator) stopWarm(ctx context.Context, th transport.ThreadID, id executor.TaskID) bool {
 	if !c.Executor.IsRunning(id) {
-		return
+		return false
 	}
 	if err := c.Executor.Cancel(ctx, id); err != nil && !errors.Is(err, execlocal.ErrNotRunning) {
 		c.Log.Warn("workflow: stopping the thread's process", "thread", th, "task", id, "err", err)
-		return
+		return false
 	}
 	c.awaitGone(th, id, goneTimeout)
+	return true
 }
 
 // awaitGone waits for a cancelled task to let go of the thread.

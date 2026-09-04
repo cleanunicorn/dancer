@@ -129,3 +129,32 @@ func (c *Coordinator) waitForTurn(ctx context.Context, task executor.TaskID, sin
 		}
 	}
 }
+
+// awaitProcessEnd takes the end announced by a process the caller has just
+// stopped out of ends, so it cannot settle the wait for the turn the caller
+// is about to ask for.
+//
+// Stopping a warm process to change its model or its agent is the one place
+// where the two are genuinely indistinguishable downstream: drive announces
+// Done for the task on its way out, a resumed task keeps its id, and Done
+// settles a waiter whatever the floor says — it has to, because a turn that
+// never reached the agent writes no record to outrank one. So the end is
+// consumed here, by the only code that knows the process it belongs to was
+// asked to go. Call it only when something really was stopped; there is
+// otherwise no end coming and this would wait out its whole timeout.
+func (c *Coordinator) awaitProcessEnd(ctx context.Context, task executor.TaskID, ends chan turnEnd, timeout time.Duration) {
+	deadline := time.After(timeout)
+	for {
+		select {
+		case end := <-ends:
+			if end.Task == task && end.Done {
+				return
+			}
+		case <-ctx.Done():
+			return
+		case <-deadline:
+			c.Log.Warn("workflow: the stopped process never announced its end", "task", task, "after", timeout)
+			return
+		}
+	}
+}

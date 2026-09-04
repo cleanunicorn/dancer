@@ -151,6 +151,13 @@ type PlanWorkflow struct {
 	Thread transport.ThreadID
 	Ask    string
 	User   string
+	// Files are the attachments the message carried. A command has no use
+	// for attachments and the chat surface drops them — but this one is
+	// only a command where a planner is configured, and where none is the
+	// message goes to the agent as it was written (coordinator/plan.go).
+	// Dropping what somebody attached to it on the way would be the same
+	// silent loss as dropping the words.
+	Files []transport.File
 }
 
 // SaveWorkflow writes the plan last made on Thread into config.toml

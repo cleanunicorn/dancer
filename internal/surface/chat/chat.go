@@ -203,7 +203,7 @@ func (s *Surface) Handle(ctx context.Context, in transport.Inbound) ([]surface.I
 		if rest == "" {
 			return []surface.Intent{surface.Say{Thread: in.Thread, Text: "usage: `plan <what you want, and how you want it done>` — dispatch works out the steps and asks before running them"}}, true
 		}
-		return []surface.Intent{surface.PlanWorkflow{Thread: in.Thread, Ask: rest, User: in.UserID}}, true
+		return []surface.Intent{surface.PlanWorkflow{Thread: in.Thread, Ask: rest, User: in.UserID, Files: in.Files}}, true
 	case "agents", "defs", "definitions":
 		return []surface.Intent{surface.ListAgents{Thread: in.Thread}}, true
 	case "commands", "cmds":

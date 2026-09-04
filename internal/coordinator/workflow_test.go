@@ -402,3 +402,29 @@ func TestStatusDuringARunReadsAPublishedCopy(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkflowModelStepWaitsForItsOwnTurn: a step that names a model stops
+// the process the previous turn left warm, because a warm process keeps the
+// model it was started with. That stopped process announces an end of its
+// own — under the same task id, since the session is resumed rather than
+// replaced, and with Done set, which settles a waiter whatever the floor
+// says. Left in the waiter it settles *this* step's wait before the turn it
+// asked for has said anything, and the step is failed for work that is
+// still running.
+func TestWorkflowModelStepWaitsForItsOwnTurn(t *testing.T) {
+	tr := &fakeTransport{name: "slack", ready: make(chan struct{})}
+	workflowFixture(t, tr, fakeAgent{}, workflow.Definition{
+		Name: "pinned",
+		Steps: []workflow.Step{
+			// The first step leaves a warm process on the thread; only
+			// then does the second have one to stop.
+			{Name: "one", Agent: "coder", Prompt: "{{.Ask}}"},
+			{Name: "two", Model: "opus", Prompt: "second step"},
+		},
+	})
+	th := transport.ThreadID("C-dev/1.0")
+
+	tr.say(th, "workflow pinned ship it")
+	tr.waitFor(t, th, "▶️ 2/2 *two*")
+	tr.waitFor(t, th, "🏁 workflow *pinned*")
+}

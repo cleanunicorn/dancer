@@ -394,3 +394,25 @@ func TestFormatDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanCarriesItsAttachments: `plan …` is only dispatch's word where a
+// planner is configured, and where none is the message goes to the agent as
+// it was written — so unlike every other command it keeps what was attached
+// to it. Dropping the files would lose what somebody sent as silently as
+// dropping the words would.
+func TestPlanCarriesItsAttachments(t *testing.T) {
+	s := New("chat", "slack", false)
+	th := transport.ThreadID("C1/1.0")
+	files := []transport.File{{Name: "mock.png", Data: []byte("x")}}
+	got, ok := s.Handle(context.Background(), transport.Inbound{Thread: th, UserID: "u1", Text: "plan the redesign", Files: files})
+	if !ok || len(got) != 1 {
+		t.Fatalf("Handle = %v, %v", got, ok)
+	}
+	plan, isPlan := got[0].(surface.PlanWorkflow)
+	if !isPlan {
+		t.Fatalf("intent = %T, want surface.PlanWorkflow", got[0])
+	}
+	if len(plan.Files) != 1 || plan.Files[0].Name != "mock.png" {
+		t.Errorf("the attachment did not survive: %+v", plan.Files)
+	}
+}
